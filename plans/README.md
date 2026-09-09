@@ -21,7 +21,7 @@ honor its STOP conditions, and update your row when done.
 | Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
 |------|-------|-------|----------|--------|------|------|------------|--------|
 | 001  | Foundation + remove TS scaffold | 0 | P1 | M | LOW | @medium + strict TDD | — | DONE |
-| 002  | COM lifecycle + DAO/ADO/ODBC backends + doctor | 1 | P1 | L | HIGH | @medium + strict TDD (orchestrator verifies gates in-shell) | 001 | TODO |
+| 002  | COM lifecycle + DAO/ADO/ODBC backends + doctor | 1 | P1 | L | HIGH | @medium + strict TDD (orchestrator verifies gates in-shell) | 001 | DONE |
 | 003  | Shared database use cases + argparse CLI | 2 | P1 | L | MED | @medium + strict TDD | 002 | TODO |
 | 004  | MCP core profile over stdio | 3 | P1 | M | MED | @medium + strict TDD | 003 | TODO |
 | 005  | Installer + OpenCode registration | 4 | P1 | M | MED | **SDD cycle** (spec-driven; apply tasks via @medium) | 004 | TODO |
