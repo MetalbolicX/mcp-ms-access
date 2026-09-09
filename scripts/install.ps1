@@ -53,11 +53,38 @@ $ErrorActionPreference = 'Stop'
 # Constants
 # ---------------------------------------------------------------------------
 
-$ASTRAL_SH_URL = 'https://astral.sh/uv/install.ps1'
-$UV_RELEASES_URL = 'https://github.com/astral-sh/uv/releases/latest'
+$DEFAULT_UV_VERSION = '0.12.11'
 $TOOL_NAME = 'ms-access-mcp'
 $PYTHON_VERSION = '3.11'
 $TOOL_DIR_BIN_ARG = @('tool', 'dir', '--bin')
+
+# ---------------------------------------------------------------------------
+# Helper: Get-UvBootstrapUrls
+# ---------------------------------------------------------------------------
+# Returns a hashtable of URLs for the given uv version.
+# If -Version is not supplied, uses $DEFAULT_UV_VERSION.
+
+function Get-UvBootstrapUrls {
+    <#
+    .SYNOPSIS
+        Returns installer, zip, and sha256 URLs for a given uv version.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [string]$Version
+    )
+
+    if (-not $Version) {
+        $Version = $DEFAULT_UV_VERSION
+    }
+
+    return @{
+        InstallerUrl = 'https://astral.sh/uv/{0}/install.ps1' -f $Version
+        ZipUrl       = 'https://github.com/astral-sh/uv/releases/download/{0}/uv-x86_64-pc-windows-msvc.zip' -f $Version
+        ShaUrl       = 'https://github.com/astral-sh/uv/releases/download/{0}/uv-x86_64-pc-windows-msvc.zip.sha256' -f $Version
+    }
+}
 
 # ---------------------------------------------------------------------------
 # Helper: Invoke-External
@@ -228,23 +255,30 @@ function Invoke-UvBootstrap {
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
     try {
+        # Resolve URLs based on version
+        if (-not $Version) {
+            $Version = $DEFAULT_UV_VERSION
+        }
+        $urls = Get-UvBootstrapUrls -Version $Version
+        $installerUrl = $urls.InstallerUrl
+        $zipUrl = $urls.ZipUrl
+        $shaUrl = $urls.ShaUrl
+
         # Try official installer first
         $installerPath = Join-Path $tmpDir 'install.ps1'
 
-        if ($PSCmdlet.ShouldProcess("Downloading uv installer from $ASTRAL_SH_URL", '')) {
+        if ($PSCmdlet.ShouldProcess("Downloading uv installer from $installerUrl", '')) {
             try {
-                Invoke-WebRequest -Uri $ASTRAL_SH_URL -OutFile $installerPath -TimeoutSec 30 -ErrorAction Stop
+                Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -TimeoutSec 30 -ErrorAction Stop
             }
             catch {
                 Write-Verbose "Official installer download failed: $_"
                 Write-Verbose 'Falling back to GitHub releases zip'
 
                 # Fallback: download zip + sha256 from GitHub releases
-                $fallbackUrl = 'https://github.com/astral-sh/uv/releases/download/0.4.0/uv-x86_64-pc-windows-msvc.zip'
-                $shaUrl = 'https://github.com/astral-sh/uv/releases/download/0.4.0/uv-x86_64-pc-windows-msvc.zip.sha256'
                 $zipPath = Join-Path $tmpDir 'uv.zip'
 
-                Invoke-WebRequest -Uri $fallbackUrl -OutFile $zipPath -TimeoutSec 60 -ErrorAction Stop
+                Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -TimeoutSec 60 -ErrorAction Stop
                 Invoke-WebRequest -Uri $shaUrl -OutFile "$zipPath.sha256" -TimeoutSec 30 -ErrorAction Stop
 
                 $expectedSha = (Get-Content "$zipPath.sha256" -Raw).Trim().Split(' ')[0]
@@ -464,7 +498,7 @@ function Invoke-Install {
     # Step 3: Bootstrap uv if not on PATH
     if (-not (Test-CommandOnPath 'uv')) {
         Write-Host 'uv not found on PATH. Bootstrapping...'
-        Invoke-UvBootstrap -WhatIf:$WhatIfPreference
+        Invoke-UvBootstrap -Version $UvVersion -WhatIf:$WhatIfPreference
     }
 
     # Step 4: Install Python if not skipped
