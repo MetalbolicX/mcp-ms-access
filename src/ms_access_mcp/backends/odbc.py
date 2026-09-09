@@ -350,3 +350,62 @@ class OdbcAdapter:
 
     def export_data(self, sql: str, file_path: str, format: str = "csv", **options) -> dict:
         return {"success": False, "error": "Export not supported via ODBC"}
+
+    # ------------------------------------------------------------------ #
+    # Versioning stubs (COM-only — SaveAsText / LoadFromText / VBE)
+    # ------------------------------------------------------------------ #
+
+    def compile_vba(self) -> dict:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def export_form_to_text(self, form_name: str) -> str:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def import_form_from_text(self, form_name: str, text_data: str) -> bool:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def export_report_to_text(self, report_name: str) -> str:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def import_report_from_text(self, report_name: str, text_data: str) -> bool:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def export_macro_to_text(self, macro_name: str) -> str:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def import_macro_from_text(self, macro_name: str, text_data: str) -> bool:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def export_query_to_text(self, query_name: str) -> str:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def import_query_from_text(self, query_name: str, text_data: str) -> bool:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def export_module_to_text(self, module_name: str) -> str:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )
+
+    def import_module_from_text(self, module_name: str, code: str) -> bool:
+        raise NotImplementedError(
+            "Versioning operations require COM automation; use the access backend."
+        )

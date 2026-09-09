@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 @dataclass
@@ -127,3 +128,60 @@ class DatabasePropertyInfo:
     value: str
     type: str  # "Text" | "Long" | "Boolean" | "Double" | "Date" | "Byte"
     built_in: bool = False
+
+
+@dataclass
+class ObjectTextRef:
+    kind: Literal["form", "report", "module", "macro", "query"]
+    name: str
+
+
+@dataclass
+class ObjectKind:
+    kind: Literal["form", "report", "module", "macro", "query"]
+    save_as_text_code: int | None
+
+    @classmethod
+    def KIND_MAP(cls) -> dict[str, ObjectKind]:
+        return {
+            "form": cls(kind="form", save_as_text_code=2),
+            "report": cls(kind="report", save_as_text_code=4),
+            "module": cls(kind="module", save_as_text_code=None),
+            "macro": cls(kind="macro", save_as_text_code=8),
+            "query": cls(kind="query", save_as_text_code=5),
+        }
+
+
+@dataclass
+class ExportAllResult:
+    success: bool
+    exported: dict[str, list[str]]
+    output_dir: str
+    file_count: int
+    error: str | None = None
+
+
+@dataclass
+class ImportAllResult:
+    success: bool
+    imported: dict[str, list[str]]
+    errors: list[str] | None = None
+    error: str | None = None
+
+
+@dataclass
+class CompareResult:
+    new: list[ObjectTextRef]
+    missing: list[ObjectTextRef]
+    changed: list[ObjectTextRef]
+    unchanged: list[ObjectTextRef]
+
+
+@dataclass
+class SchemaDdlResult:
+    success: bool
+    ddl_tables: str | None = None
+    ddl_relationships: str | None = None
+    tables_exported: int = 0
+    relationships_exported: int = 0
+    error: str | None = None
