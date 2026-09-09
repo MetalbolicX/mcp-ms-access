@@ -9,6 +9,7 @@ from typing import Any
 
 from .application.database import DatabaseUseCases, Err, Ok
 from .doctor import doctor_main
+from .server import main as mcp_main
 
 # =============================================================================
 # Result Formatting
@@ -452,6 +453,22 @@ def main() -> int:
     links_list.set_defaults(links_action="list")
     _add_global_flags(links_list)
 
+    # mcp — stdio MCP server
+    mcp_parser = subparsers.add_parser("mcp", help="Run the MCP server over stdio")
+    mcp_parser.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        help=(
+            "MCP tool profile to expose. "
+            "Token-cost rationale: core <= 30 tools keeps LLM context lean; "
+            "additional profiles (automation, maintenance, versioning) are opt-in. "
+            "Valid values: core, automation, maintenance, versioning, full. "
+            "Default: core. Can also be set via ACCESS_MCP_PROFILE env var."
+        ),
+    )
+    mcp_parser.set_defaults(command="mcp")
+
     # Parse and execute
     opts = parser.parse_args()
 
@@ -528,6 +545,10 @@ def main() -> int:
 
     elif cmd == "links":
         return _cmd_links(opts, db)
+
+    elif cmd == "mcp":
+        # mcp server has its own entry point
+        return mcp_main(["--profile", opts.profile] if opts.profile else None)
 
     return 0
 
