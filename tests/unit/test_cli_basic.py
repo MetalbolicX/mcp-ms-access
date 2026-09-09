@@ -33,5 +33,7 @@ class TestDoctorPlaceholder:
             text=True,
             check=False,
         )
+        # Doctor exits 1 when some checks fail (expected on machines without Access)
         assert result.returncode == 1, f"expected exit 1, got {result.returncode}"
-        assert "not implemented" in result.stdout or "not implemented" in result.stderr
+        # Should show actionable remediation text
+        assert "Remediation" in result.stdout or "FAIL" in result.stdout

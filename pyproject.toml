@@ -30,3 +30,30 @@ markers = [
     "odbc_integration: requires Access ODBC driver",
     "slow: long-running",
 ]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "W",     # warnings
+    "I",     # isort
+    "N",     # pep8-naming
+    "C4",    # comprehensions
+    "UP",    # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled separately)
+    "N802",   # function name in class
+    "N803",   # argument name
+    "N806",   # variable in function
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ANN", "D", "ARG002", "PLR", "BLE", "EM", "TRY003", "FBT"]
+"src/ms_access_mcp/backends/**" = ["S101", "ANN", "D", "ARG002", "PLR", "BLE", "EM", "TRY003", "FBT", "SLF001"]
+"src/ms_access_mcp/doctor.py" = ["S101", "ANN", "D", "ARG002", "PLR", "BLE", "EM", "TRY003", "FBT"]
+
