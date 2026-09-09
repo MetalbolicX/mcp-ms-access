@@ -43,11 +43,11 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: installer.ps1
 
-- [ ] 3.1 RED threat WhatIf: `-WhatIf` mutates zero files
-- [ ] 3.2 RED threat `uv tool install`: failed install aborts; `opencode.json` unchanged
-- [ ] 3.3 RED threat doctor: `ms-access-mcp doctor --json` failure aborts before registration
-- [ ] 3.4 GREEN: create `scripts/install.ps1` — detect-then-bootstrap uv (checksum zip fallback), `uv tool install --python 3.11 --force .`, doctor gate, validation delegated to CLI, `-Global`/`-Remove`/`-Force`/`-NoRegister`/`-WhatIf`
-- [ ] 3.5 Verify: `pwsh -NoProfile -File scripts/install.ps1 -NoRegister -WhatIf` exits 0
+- [x] 3.1 RED threat WhatIf: `-WhatIf` mutates zero files
+- [x] 3.2 RED threat `uv tool install`: failed install aborts; `opencode.json` unchanged
+- [x] 3.3 RED threat doctor: `ms-access-mcp doctor --json` failure aborts before registration
+- [x] 3.4 GREEN: create `scripts/install.ps1` — detect-then-bootstrap uv (checksum zip fallback), `uv tool install --python 3.11 --force .`, doctor gate, validation delegated to CLI, `-Global`/`-Remove`/`-Force`/`-NoRegister`/`-WhatIf`
+- [x] 3.5 Verify: `pwsh -NoProfile -File scripts/install.ps1 -NoRegister -WhatIf` exits 0
 
 ## Phase 4: end-to-end drill (orchestrator)
 
