@@ -9,10 +9,8 @@ pytestmark = [
         __import__("os").name != "nt",
         reason="Windows-only test",
     ),
-    pytest.mark.skipif(
-        not pytest.importorskip("win32com", reason="Requires pywin32"),
-        reason="",
-    ),
+    pytest.mark.com_integration,
+    pytest.mark.odbc_integration,
 ]
 
 

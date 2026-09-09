@@ -12,6 +12,7 @@ pytestmark = [
         __import__("os").name != "nt",
         reason="Windows-only test",
     ),
+    pytest.mark.com_integration,
 ]
 
 
