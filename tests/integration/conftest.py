@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -22,15 +23,31 @@ def _has_pywin32() -> bool:
         return False
 
 
+def _resolve_test_db() -> str:
+    """Resolve the canonical .accdb fixture path.
+
+    Resolution order:
+    1. ``ACCESS_TEST_DB`` environment variable (absolute path to .accdb)
+    2. ``tests/fixtures/test_db.accdb`` (project root)
+    3. ``tests/integration/fixtures/test_db.accdb`` (legacy)
+    """
+    raw = os.environ.get("ACCESS_TEST_DB")
+    if raw:
+        candidate = Path(raw).expanduser()
+        if candidate.exists():
+            return str(candidate)
+    for rel in ("tests/fixtures/test_db.accdb", "fixtures/test_db.accdb"):
+        p = Path(__file__).resolve().parents[1] / rel
+        if p.exists():
+            return str(p)
+    return ""
+
+
 def _has_db_file() -> bool:
-    fixture_dir = Path(__file__).parent / "fixtures"
-    test_db = fixture_dir / "test_db.accdb"
-    return test_db.exists()
+    return bool(_resolve_test_db())
 
 
-# Fixture database path
-FIXTURE_DB = Path(__file__).parent / "fixtures" / "test_db.accdb"
-TEST_DB = str(FIXTURE_DB) if FIXTURE_DB.exists() else ""
+TEST_DB = _resolve_test_db()
 
 skip_unless_windows = pytest.mark.skipif(not IS_WINDOWS, reason="Windows-only test")
 skip_unless_pywin32 = pytest.mark.skipif(not _has_pywin32(), reason="Requires pywin32")
@@ -61,7 +78,6 @@ def temp_db_copy():
         shutil.copy2(src_path, clone_path)
         yield str(clone_path)
     finally:
-        import time
         time.sleep(0.25)
         try:
             shutil.rmtree(tmpdir, ignore_errors=True)
