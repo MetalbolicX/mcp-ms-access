@@ -245,10 +245,17 @@ def register(
 
     On validation failure, rolls back to the original content and returns
     Err with the backup_path set if a backup was taken.
+    On malformed existing JSON, returns Err with a clean message.
     """
     backup_exists = target.exists()
 
-    existing = load(target) if backup_exists else {}
+    try:
+        existing = load(target) if backup_exists else {}
+    except json.JSONDecodeError as exc:
+        return Err(
+            message=f"opencode.json is not valid JSON: {exc.msg} at line {exc.lineno} col {exc.colno}",
+            backup_path=None,
+        )
 
     # Deep-equality conflict detection — normalise both sides to tuple
     if "mcp" in existing and "ms-access" in existing.get("mcp", {}):
@@ -295,7 +302,13 @@ def remove(
     if not target.exists():
         return Err(message="target missing", backup_path=None)
 
-    existing = load(target)
+    try:
+        existing = load(target)
+    except json.JSONDecodeError as exc:
+        return Err(
+            message=f"opencode.json is not valid JSON: {exc.msg} at line {exc.lineno} col {exc.colno}",
+            backup_path=None,
+        )
 
     if "mcp" not in existing or "ms-access" not in existing.get("mcp", {}):
         return Ok(message="mcp.ms-access not registered", backup_path=None)

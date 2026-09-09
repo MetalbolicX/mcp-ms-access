@@ -642,6 +642,74 @@ class TestU2OracleShape:
         )
 
 
+# =============================================================================
+# U6 — Broken JSON: register/remove return Err instead of raising JSONDecodeError
+# =============================================================================
+
+
+class TestU6BrokenJson:
+    """U6: Corrupted opencode.json must not produce a raw Python traceback.
+
+    Both register() and remove() load the existing file to check for conflicts
+    or to read the entry. When the file contains invalid JSON, they must return
+    Err with a clean message — not raise json.JSONDecodeError.
+    """
+
+    def test_register_on_broken_json_returns_err(self, tmp_path: Path) -> None:
+        """register() on a file with truncated JSON returns Err, not raises."""
+        target = tmp_path / "opencode.json"
+        # Broken JSON: valid prefix then truncated (no closing braces)
+        target.write_text('{"$schema": "x", "mcp": {')
+
+        entry = McpEntry(command=("python", "-m", "ms_access_mcp.cli"), profile="core")
+
+        # Must return Err — no exception propagated
+        result = register(target, entry)
+
+        assert isinstance(result, Err), f"expected Err, got {result!r}"
+        assert "json" in result.message.lower() or "not valid" in result.message.lower(), (
+            f"error message must mention JSON validity, got {result.message!r}"
+        )
+
+    def test_remove_on_broken_json_returns_err(self, tmp_path: Path) -> None:
+        """remove() on a file with truncated JSON returns Err, not raises."""
+        target = tmp_path / "opencode.json"
+        # Broken JSON: valid prefix then truncated
+        target.write_text('{"$schema": "x", "mcp": {')
+
+        result = remove(target)
+
+        assert isinstance(result, Err), f"expected Err, got {result!r}"
+        assert "json" in result.message.lower() or "not valid" in result.message.lower(), (
+            f"error message must mention JSON validity, got {result.message!r}"
+        )
+
+    def test_broken_json_file_unchanged_after_failed_register(self, tmp_path: Path) -> None:
+        """register() failure must not modify the corrupted file."""
+        target = tmp_path / "opencode.json"
+        original_content = '{"$schema": "x", "mcp": {'
+        target.write_text(original_content)
+
+        entry = McpEntry(command=("python", "-m", "ms_access_mcp.cli"), profile="core")
+        register(target, entry)  # must not raise
+
+        assert target.read_text() == original_content, (
+            "broken JSON file content must be unchanged after failed register"
+        )
+
+    def test_broken_json_file_unchanged_after_failed_remove(self, tmp_path: Path) -> None:
+        """remove() failure must not modify the corrupted file."""
+        target = tmp_path / "opencode.json"
+        original_content = '{"$schema": "x", "mcp": {'
+        target.write_text(original_content)
+
+        remove(target)  # must not raise
+
+        assert target.read_text() == original_content, (
+            "broken JSON file content must be unchanged after failed remove"
+        )
+
+
 class TestResultType:
     def test_result_is_frozen_dataclass(self) -> None:
         ok = Ok(backup_path=Path("x"), message="ok")
