@@ -66,6 +66,11 @@ AUTOMATION_CAPS = (
     | BackendCapabilities.CAN_HANDLE_MACROS
 )
 
+MAINTENANCE_CAPS = (
+    BackendCapabilities.CAN_COMPACT
+    | BackendCapabilities.CAN_IMPORT_EXPORT_TEXT
+)
+
 
 def _normalize_backend(value: str) -> str:
     normalized = value.lower().strip()

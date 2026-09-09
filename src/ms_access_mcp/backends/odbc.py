@@ -61,6 +61,12 @@ class OdbcAdapter:
     def is_connected(self) -> bool:
         return self._connected
 
+    def compact_repair(self, path: str, mode: str) -> dict[str, Any]:
+        raise NotImplementedError(
+            "Compact/repair requires the access (COM) backend; "
+            "ODBC does not support DAO DBEngine.CompactDatabase."
+        )
+
     # ------------------------------------------------------------------ #
     # Parameterized CRUD
     # ------------------------------------------------------------------ #
