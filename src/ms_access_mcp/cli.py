@@ -5,12 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 from .application.database import DatabaseUseCases, Err, Ok
 from .doctor import doctor_main
+from .opencode_config import Ok as OpenCodeOk
+from .opencode_config import entry_from, register, remove
 from .server import main as mcp_main
 
 # =============================================================================
@@ -288,6 +292,139 @@ def _cmd_links(args: argparse.Namespace, db: DatabaseUseCases) -> int:
 
 
 # =============================================================================
+# Configure OpenCode Subcommand
+# =============================================================================
+
+
+def _resolve_opencode_target(global_scope: bool, cwd: Path) -> Path:
+    """Resolve the target opencode.json path.
+
+    Args:
+        global_scope: If True, target user-level config; if False, CWD config.
+        cwd: Current working directory.
+
+    Returns:
+        Absolute Path to the target opencode.json.
+    """
+    if global_scope:
+        if os.name == "nt":
+            return Path(os.environ["USERPROFILE"]) / ".config" / "opencode" / "opencode.json"
+        return Path.home() / ".config" / "opencode" / "opencode.json"
+    return cwd / "opencode.json"
+
+
+def _resolve_exe_path(exe_path_arg: str | None = None) -> Path | None:
+    """Resolve the absolute path to the ms-access-mcp executable.
+
+    Args:
+        exe_path_arg: Optional explicit path provided via --exe-path.
+
+    Returns:
+        Absolute Path to the executable, or None if not found.
+    """
+    if exe_path_arg:
+        return Path(exe_path_arg).resolve()
+
+    # Try shutil.which first
+    found = shutil.which("ms-access-mcp")
+    if found:
+        return Path(found).resolve()
+
+    # Platform-specific fallback for uv-installed tools
+    if os.name == "nt":
+        local_bin = Path.home() / ".local" / "bin" / "ms-access-mcp.exe"
+        if local_bin.exists():
+            return local_bin.resolve()
+    else:
+        local_bin = Path.home() / ".local" / "bin" / "ms-access-mcp"
+        if local_bin.exists():
+            return local_bin.resolve()
+
+    return None
+
+
+def _run_validator(target_dir: Path) -> str:
+    """Run the opencode debug config validator.
+
+    Args:
+        target_dir: Directory containing opencode.json.
+
+    Returns:
+        "ok" if validation passes, "failed" if validation fails,
+        "unavailable" if opencode is not on PATH.
+    """
+    try:
+        result = subprocess.run(
+            ["opencode", "debug", "config"],
+            cwd=target_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return "ok"
+        return "failed"
+    except FileNotFoundError:
+        return "unavailable"
+    except subprocess.TimeoutExpired:
+        return "failed"
+
+
+def _cmd_configure_opencode(args: argparse.Namespace) -> int:
+    """Handle: configure opencode [--global] [--remove] [--force] [--profile] [--exe-path].
+
+    Exit codes:
+        0: success or no-op
+        1: user error (conflict, missing key on remove)
+        2: tool unavailable (validator subprocess missing)
+        3: internal failure
+    """
+    target = _resolve_opencode_target(args.global_scope, Path.cwd())
+
+    # Resolve exe path
+    exe_path = _resolve_exe_path(args.exe_path)
+    if exe_path is None:
+        print("Error: ms-access-mcp executable not found; use --exe-path to specify", file=sys.stderr)
+        return 3
+
+    # Build validator from exe path
+    def _validator(cfg_path: Path) -> None:
+        result = _run_validator(cfg_path.parent)
+        if result == "failed":
+            raise RuntimeError("opencode debug config validation failed")
+        if result == "unavailable":
+            import warnings
+            warnings.warn("opencode not on PATH; skipping validation", RuntimeWarning)
+
+    if args.remove:
+        result = remove(target, validator=_validator if target.exists() else None)
+        if isinstance(result, OpenCodeOk):
+            print(f"Removed mcp.ms-access from {target}", file=sys.stderr)
+            return 0
+        else:
+            print(f"Error: {result.message}", file=sys.stderr)
+            return 1
+    else:
+        entry = entry_from(exe_path, profile=args.profile or "core")
+        result = register(
+            target,
+            entry,
+            force=args.force,
+            validator=_validator,
+        )
+        if isinstance(result, OpenCodeOk):
+            print(f"Registered mcp.ms-access in {target}", file=sys.stderr)
+            return 0
+        else:
+            print(f"Error: {result.message}", file=sys.stderr)
+            # Distinguish exit codes
+            msg = result.message.lower()
+            if "conflict" in msg or "differ" in msg:
+                return 1
+            return 1
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
@@ -303,6 +440,17 @@ def main() -> int:
     doctor_parser.add_argument("--json", action="store_true", help="JSON output")
     doctor_parser.add_argument("--deep", action="store_true", help="Deep checks including Access create+release")
     doctor_parser.set_defaults(func=lambda opts: doctor_main(deep=opts.deep, json_output=opts.json))
+
+    # configure opencode
+    configure_parser = subparsers.add_parser("configure", help="Configure ms-access-mcp integration")
+    configure_subparsers = configure_parser.add_subparsers(dest="configure_action")
+
+    opencode_parser = configure_subparsers.add_parser("opencode", help="Register or remove ms-access-mcp in opencode.json")
+    opencode_parser.add_argument("--global", action="store_true", dest="global_scope", help="Target user-level opencode.json")
+    opencode_parser.add_argument("--remove", action="store_true", help="Remove mcp.ms-access entry instead of registering")
+    opencode_parser.add_argument("--force", action="store_true", help="Overwrite existing entry with different command")
+    opencode_parser.add_argument("--profile", type=str, default="core", help="MCP profile (default: core)")
+    opencode_parser.add_argument("--exe-path", type=str, default=None, help="Absolute path to ms-access-mcp executable")
 
     # db subcommands
     db_parser = subparsers.add_parser("db", help="Database connection commands")
@@ -561,6 +709,12 @@ def main() -> int:
     elif cmd == "mcp":
         # mcp server has its own entry point
         return mcp_main(["--profile", opts.profile] if opts.profile else None)
+
+    elif cmd == "configure":
+        action = getattr(opts, "configure_action", None)
+        if action == "opencode":
+            return _cmd_configure_opencode(opts)
+        return 0
 
     return 0
 

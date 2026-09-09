@@ -35,11 +35,11 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: cli configure subcommand
 
-- [ ] 2.1 RED S5: no flag targets CWD `opencode.json`; `--global` targets user config
-- [ ] 2.2 RED S7: `--remove` deletes only `mcp.ms-access`; missing key is no-op exit 0
-- [ ] 2.3 RED S8: entry matches contract; `command[0]` absolute, never bare name
-- [ ] 2.4 GREEN: add `configure opencode` subparser + handler in `src/ms_access_mcp/cli.py`; exit codes 0/1
-- [ ] 2.5 REFACTOR: handler thin; logic in core
+- [x] 2.1 RED S5: no flag targets CWD `opencode.json`; `--global` targets user config
+- [x] 2.2 RED S7: `--remove` deletes only `mcp.ms-access`; missing key is no-op exit 0
+- [x] 2.3 RED S8: entry matches contract; `command[0]` absolute, never bare name
+- [x] 2.4 GREEN: add `configure opencode` subparser + handler in `src/ms_access_mcp/cli.py`; exit codes 0/1
+- [x] 2.5 REFACTOR: handler thin; logic in core
 
 ## Phase 3: installer.ps1
 
