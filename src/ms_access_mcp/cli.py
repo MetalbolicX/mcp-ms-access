@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from .application.database import DatabaseUseCases, Err, Ok
@@ -47,6 +49,15 @@ def _result_to_dict(result: Ok | Err) -> dict[str, Any]:
     if isinstance(result, Ok):
         return {"success": True, "data": result.data, "rowcount": result.rowcount}
     return {"success": False, "error": result.message}
+
+
+def _cli_allowed_dirs() -> list[Path]:
+    """Read ``ACCESS_MCP_ALLOWED_DIRS`` for the CLI subprocess (semicolon on Windows)."""
+    raw = os.environ.get("ACCESS_MCP_ALLOWED_DIRS", "")
+    if not raw:
+        return []
+    sep = ";" if os.name == "nt" else ":"
+    return [Path(p).expanduser() for p in raw.split(sep) if p.strip()]
 
 
 # =============================================================================
@@ -481,6 +492,7 @@ def main() -> int:
     db = DatabaseUseCases(
         backend=getattr(opts, "backend", "auto"),
         readonly=readonly,
+        allowed_dirs=_cli_allowed_dirs(),
     )
 
     # Auto-open database if --db provided

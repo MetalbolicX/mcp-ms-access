@@ -7,10 +7,9 @@ Unsupported operations raise BackendCapabilityMismatchError directly.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    import pyodbc
+import pyodbc
 
 from ..errors import BackendCapabilityMismatchError
 

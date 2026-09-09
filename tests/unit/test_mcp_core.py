@@ -4,44 +4,55 @@ from __future__ import annotations
 
 import json
 
+from mcp.types import TextContent
+
 from ms_access_mcp.mcp_tools.core import (
     _TOOLS,
     to_mcp_result,
 )
 
 
+def _text(result) -> str:
+    """Extract the single TextContent text from a CallToolResult.content list."""
+    block = result.content[0]
+    assert isinstance(block, TextContent)
+    return block.text
+
+
 class TestToMcpResult:
-    """Adapter: result dict -> (isError, content) tuple."""
+    """Adapter: result dict -> CallToolResult with proper isError."""
 
     def test_success_false_becomes_is_error_true(self):
-        """{success: false, error} → (True, json_stringified)."""
+        """{success: false, error} → CallToolResult(isError=True, text=json)."""
         result = {"success": False, "error": "connection failed"}
-        is_error, content = to_mcp_result(result)
-        assert is_error is True
-        parsed = json.loads(content)
+        out = to_mcp_result(result)
+        assert out.isError is True
+        assert len(out.content) == 1
+        parsed = json.loads(_text(out))
         assert parsed["success"] is False
         assert parsed["error"] == "connection failed"
 
     def test_success_true_becomes_is_error_false(self):
-        """{success: true, ...} → (False, json_stringified)."""
+        """{success: true, ...} → CallToolResult(isError=False, text=json)."""
         result = {"success": True, "data": ["tbl1", "tbl2"], "rowcount": 2}
-        is_error, content = to_mcp_result(result)
-        assert is_error is False
-        parsed = json.loads(content)
+        out = to_mcp_result(result)
+        assert out.isError is False
+        assert len(out.content) == 1
+        parsed = json.loads(_text(out))
         assert parsed["success"] is True
         assert parsed["data"] == ["tbl1", "tbl2"]
 
     def test_missing_success_key_defaults_to_not_error(self):
         """Result without 'success' key treated as success."""
         result = {"data": [1, 2, 3]}
-        is_error, content = to_mcp_result(result)
-        assert is_error is False
+        out = to_mcp_result(result)
+        assert out.isError is False
 
     def test_explicit_success_false_is_error(self):
         """Explicit success: False is always isError."""
         result = {"success": False, "error": "explicit false"}
-        is_error, _ = to_mcp_result(result)
-        assert is_error is True
+        out = to_mcp_result(result)
+        assert out.isError is True
 
 
 class TestToolNames:
@@ -91,12 +102,12 @@ class TestExecuteRawSqlGate:
     """execute_raw_sql requires confirm=True and write policy."""
 
     def test_execute_raw_sql_gate_returns_error_without_confirm(self):
-        """execute_raw_sql without confirm returns isError."""
+        """execute_raw_sql without confirm returns CallToolResult(isError=True)."""
         from ms_access_mcp.mcp_tools.core import execute_raw_sql
 
         result = execute_raw_sql("", params={"sql": "SELECT 1"}, confirm=False)
-        assert len(result) == 1
-        content = json.loads(result[0].text)
+        assert result.isError is True
+        content = json.loads(_text(result))
         assert content["success"] is False
         assert "confirm=True" in content["error"]
 
@@ -105,5 +116,5 @@ class TestExecuteRawSqlGate:
         from ms_access_mcp.mcp_tools.core import execute_raw_sql
 
         result = execute_raw_sql("", params={"sql": "SELECT 1"}, confirm=False)
-        content = json.loads(result[0].text)
+        content = json.loads(_text(result))
         assert "write policy" in content["error"].lower()

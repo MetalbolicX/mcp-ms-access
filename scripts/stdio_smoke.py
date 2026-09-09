@@ -7,86 +7,189 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 
+def _drain_stderr(proc: subprocess.Popen) -> str:
+    """Read any pending stderr bytes from the subprocess without blocking."""
+    if proc.stderr is None:
+        return ""
+    try:
+        data = proc.stderr.read(8192)
+    except Exception:
+        return ""
+    return data.decode("utf-8", errors="replace") if data else ""
+
+
+class _LineReader:
+    """Background reader that delivers newline-delimited lines via a queue."""
+
+    def __init__(self, stream) -> None:
+        self.stream = stream
+        self.queue: list[str] = []
+        self.lock = threading.Lock()
+        self._buf = b""
+        self._eof = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            while True:
+                chunk = self.stream.read(1)
+                if not chunk:
+                    self._eof = True
+                    if self._buf:
+                        with self.lock:
+                            self.queue.append(self._buf.decode("utf-8", errors="replace"))
+                            self._buf = b""
+                    return
+                if chunk == b"\n":
+                    with self.lock:
+                        self.queue.append(self._buf.decode("utf-8", errors="replace"))
+                        self._buf = b""
+                else:
+                    self._buf += chunk
+        except Exception:
+            self._eof = True
+
+    def get(self, timeout: float) -> str | None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self.lock:
+                if self.queue:
+                    return self.queue.pop(0)
+            time.sleep(0.05)
+        return None
+
+    def drain_stderr(self) -> str:
+        """Best-effort read of available stderr from the underlying process."""
+        try:
+            data = self.stream.read(4096)
+        except Exception:
+            return ""
+        return data.decode("utf-8", errors="replace") if data else ""
+
+
+class _Watchdog:
+    """Kills the subprocess if the main thread does not heartbeat in time."""
+
+    def __init__(self, proc: subprocess.Popen, timeout_s: float = 30.0) -> None:
+        self.proc = proc
+        self.timeout_s = timeout_s
+        self._lock = threading.Lock()
+        self._last_beat = time.time()
+        self._stopped = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def beat(self) -> None:
+        with self._lock:
+            self._last_beat = time.time()
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stopped = True
+
+    def _run(self) -> None:
+        while True:
+            with self._lock:
+                if self._stopped:
+                    return
+                idle = time.time() - self._last_beat
+            if idle > self.timeout_s:
+                try:
+                    if self.proc.poll() is None:
+                        self.proc.kill()
+                except Exception:
+                    pass
+                return
+            time.sleep(1.0)
+
+
 def main() -> int:
-    """Run stdio smoke test against the MCP server.
-
-    Spawns `uv run ms-access-mcp mcp`, sends JSON-RPC initialize ->
-    tools/list -> get_tables call, asserts responses, and proves clean
-    exit on stdin EOF (proving the shutdown path).
-
-    Returns:
-        0 on success, non-zero on failure
-    """
-    # Find fixture DB
+    """Run stdio smoke test against the MCP server."""
     fixture_db = Path(__file__).parent.parent / "tests" / "fixtures" / "test_db.accdb"
     if not fixture_db.exists():
         print("SKIP: test fixture not found", file=sys.stderr)
-        return 0  # Skip on missing fixture (CI environments)
+        return 0
 
-    # Create temp copy for the test
     tmpdir = tempfile.mkdtemp(prefix="acc_smoke_")
     tmp_db = Path(tmpdir) / fixture_db.name
     shutil.copy2(fixture_db, tmp_db)
 
+    proc: subprocess.Popen | None = None
     try:
-        # Spawn server process
         proc = subprocess.Popen(
-            ["uv", "run", "ms-access-mcp", "mcp"],
+            ["uv", "run", "python", "-u", "-m", "ms_access_mcp.server"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
+            bufsize=0,
+            env={**__import__("os").environ, "ACCESS_MCP_ALLOWED_DIRS": str(tmpdir)},
         )
+        watchdog = _Watchdog(proc, timeout_s=15.0)
 
-        results: dict[str, object] = {}
+        stdin = proc.stdin
+        stdout = proc.stdout
+        assert stdin is not None
+        assert stdout is not None
+        reader = _LineReader(stdout)
 
         def send(rpc: dict) -> None:
-            line = json.dumps(rpc) + "\n"
-            proc.stdin.write(line)  # type: ignore
-            proc.stdin.flush()
+            line = (json.dumps(rpc) + "\n").encode("utf-8")
+            stdin.write(line)
+            stdin.flush()
 
-        def recv() -> dict | None:
-            line = proc.stdout.readline()  # type: ignore
-            if not line:
+        def recv(timeout: float = 8.0) -> dict | None:
+            watchdog.beat()
+            line = reader.get(timeout)
+            if line is None:
                 return None
-            return json.loads(line.strip())
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                return None
 
-        # JSON-RPC handshake
-        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "smoke-test", "version": "0.1.0"},
-        }})
-        resp = recv()
+        # initialize
+        send({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "smoke-test", "version": "0.1.0"},
+            },
+        })
+        resp = recv(timeout=10.0)
         if resp is None:
-            print("FAIL: no response to initialize", file=sys.stderr)
+            err = _drain_stderr(proc)
+            print(f"FAIL: no initialize response; stderr={err[:600]}", file=sys.stderr)
+            proc.kill()
             return 1
         if "error" in resp:
-            print(f"FAIL: initialize error: {resp['error']}", file=sys.stderr)
+            err = _drain_stderr(proc)
+            print(f"FAIL: initialize error: {resp['error']}; stderr={err[:600]}", file=sys.stderr)
+            proc.kill()
             return 1
-        results["initialize"] = resp
-        print("OK: initialize handshake")
+        print("OK: initialize handshake", file=sys.stderr)
 
-        # Send initialized notification
         send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
 
         # tools/list
         send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
-        resp = recv()
+        resp = recv(timeout=10.0)
         if resp is None:
-            print("FAIL: no response to tools/list", file=sys.stderr)
+            err = _drain_stderr(proc)
+            print(f"FAIL: no tools/list response; stderr={err[:600]}", file=sys.stderr)
+            proc.kill()
             return 1
         if "error" in resp:
-            print(f"FAIL: tools/list error: {resp['error']}", file=sys.stderr)
+            err = _drain_stderr(proc)
+            print(f"FAIL: tools/list error: {resp['error']}; stderr={err[:600]}", file=sys.stderr)
+            proc.kill()
             return 1
-        results["tools_list"] = resp
-        print("OK: tools/list")
-
-        # Verify core tools present
         tools = resp.get("result", {}).get("tools", [])
         tool_names = [t["name"] for t in tools]
         expected = [
@@ -97,59 +200,61 @@ def main() -> int:
             "execute_raw_sql", "export_data", "get_database_statistics",
             "get_system_tables", "get_linked_tables",
         ]
-        for name in expected:
-            if name not in tool_names:
-                print(f"FAIL: missing tool {name}", file=sys.stderr)
-                return 1
-        print(f"OK: all {len(expected)} core tools present")
+        missing = [n for n in expected if n not in tool_names]
+        if missing:
+            print(f"FAIL: missing tools: {missing}", file=sys.stderr)
+            proc.kill()
+            return 1
+        print(f"OK: all {len(expected)} core tools present", file=sys.stderr)
 
-        # get_tables call on temp copy
+        # get_tables
         send({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "get_tables",
-                "arguments": {"path": str(tmp_db)},
-            },
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "get_tables", "arguments": {"path": str(tmp_db)}},
         })
-        resp = recv()
+        resp = recv(timeout=15.0)
         if resp is None:
-            print("FAIL: no response to get_tables call", file=sys.stderr)
+            err = _drain_stderr(proc)
+            print(f"FAIL: no get_tables response; stderr={err[:600]}", file=sys.stderr)
+            proc.kill()
             return 1
         if "error" in resp:
-            print(f"FAIL: get_tables error: {resp['error']}", file=sys.stderr)
+            err = _drain_stderr(proc)
+            print(f"FAIL: get_tables error: {resp['error']}; stderr={err[:600]}", file=sys.stderr)
+            proc.kill()
             return 1
-        results["get_tables"] = resp
-        print("OK: get_tables call succeeded")
+        result = resp.get("result", {})
+        if result.get("isError"):
+            err = _drain_stderr(proc)
+            print(f"FAIL: get_tables isError: {result}; stderr={err[:600]}", file=sys.stderr)
+            proc.kill()
+            return 1
+        print("OK: get_tables call succeeded", file=sys.stderr)
 
-        # Clean EOF: close stdin to signal shutdown
-        proc.stdin.close()  # type: ignore
-
-        # Wait for clean exit (with timeout)
+        # Clean EOF
+        stdin.close()
         try:
             exit_code = proc.wait(timeout=10.0)
         except subprocess.TimeoutExpired:
             proc.kill()
-            print("FAIL: server did not exit cleanly within 10s", file=sys.stderr)
+            print("FAIL: server did not exit within 10s after EOF", file=sys.stderr)
             return 1
-
         if exit_code != 0:
-            stderr_output = proc.stderr.read()  # type: ignore
-            print(f"FAIL: server exited with code {exit_code}: {stderr_output}", file=sys.stderr)
+            err = _drain_stderr(proc)
+            print(f"FAIL: server exit={exit_code}; stderr={err[:600]}", file=sys.stderr)
             return 1
-
-        print("OK: clean exit on stdin EOF")
+        watchdog.stop()
+        print("OK: clean exit on stdin EOF", file=sys.stderr)
         print("PASS: stdio smoke test")
-
-        # Verify no stdout pollution (all lines should be JSON-RPC)
-        # We already checked stderr is empty-ish
         return 0
 
     finally:
-        # Cleanup temp dir
-        import time as time_module
-        time_module.sleep(0.25)
+        try:
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+        except Exception:
+            pass
+        time.sleep(0.25)
         try:
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception:

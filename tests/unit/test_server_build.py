@@ -61,9 +61,10 @@ class TestLifespan:
     def test_lifespan_is_async_context_manager(self):
         """lifespan should be usable as an async context manager."""
         import asyncio
+        from typing import Any, cast
 
         async def test_lifespan():
-            server = type("MockServer", (), {})()
+            server = cast(Any, type("MockServer", (), {})())
             async with lifespan(server) as state:
                 assert state is not None
                 assert isinstance(state, _ServerState)
@@ -73,8 +74,9 @@ class TestLifespan:
     def test_lifespan_yields_state(self):
         """lifespan should yield a _ServerState instance (via asyncio.run)."""
         import asyncio
+        from typing import Any, cast
 
-        server = type("MockServer", (), {})()
+        server = cast(Any, type("MockServer", (), {})())
 
         async def _test():
             async with lifespan(server) as state:

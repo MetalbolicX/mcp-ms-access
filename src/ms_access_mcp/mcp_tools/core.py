@@ -14,11 +14,17 @@ import json
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import TextContent
+from mcp.types import CallToolResult, TextContent
 
 from ..application.database import DatabaseUseCases, Err, Ok
+from ..server import _allowed_dirs_from_env
 
 __all__ = ["register", "to_mcp_result"]
+
+
+def _new_db(readonly: bool = True) -> DatabaseUseCases:
+    """Construct a DatabaseUseCases honoring ACCESS_MCP_ALLOWED_DIRS."""
+    return DatabaseUseCases(readonly=readonly, allowed_dirs=_allowed_dirs_from_env())
 
 
 # =============================================================================
@@ -26,21 +32,25 @@ __all__ = ["register", "to_mcp_result"]
 # =============================================================================
 
 
-def to_mcp_result(result: dict[str, Any]) -> tuple[bool, str]:
-    """Convert use-case result dict to (isError, content) MCP response.
+def to_mcp_result(result: dict[str, Any]) -> CallToolResult:
+    """Convert a use-case result dict to an MCP ``CallToolResult``.
 
-    oracle plan-008 rule: {success: false, error} → isError: true with JSON text.
-    All other success dicts → isError: false.
+    oracle plan-008 rule: ``{success: false, error}`` envelopes must surface as
+    ``isError: true`` with the JSON-stringified envelope as the single text block.
+    Successful results return ``isError: false`` with the same JSON payload.
 
     Args:
-        result: Use-case dict with 'success' key
+        result: Use-case dict with a ``success`` key.
 
     Returns:
-        Tuple of (isError: bool, json_stringified_content: str)
+        ``CallToolResult`` with one ``TextContent`` block and the appropriate
+        ``isError`` flag, ready to be returned from a tool function.
     """
-    if not result.get("success", True):
-        return (True, json.dumps(result))
-    return (False, json.dumps(result))
+    payload = json.dumps(result)
+    return CallToolResult(
+        content=[TextContent(type="text", text=payload)],
+        isError=not result.get("success", True),
+    )
 
 
 def _result_to_dict(result: Ok | Err) -> dict[str, Any]:
@@ -70,7 +80,7 @@ def _make_tool(name: str, fn, *, write_op: bool = False):
         path: str,
         params: dict[str, Any] | None = None,
         confirm: bool = False,
-    ) -> list[TextContent]:
+    ) -> CallToolResult:
         # Create a fresh db instance for each call
         db = DatabaseUseCases(readonly=not write_op)
 
@@ -79,8 +89,7 @@ def _make_tool(name: str, fn, *, write_op: bool = False):
             result = db.open_database(path)
             if isinstance(result, Err):
                 dict_result = {"success": False, "error": result.message}
-                is_error, content = to_mcp_result(dict_result)
-                return [TextContent(type="text", text=content, is_error=is_error)]
+                return to_mcp_result(dict_result)
 
         # Execute the operation
         try:
@@ -100,24 +109,21 @@ def _make_tool(name: str, fn, *, write_op: bool = False):
                         "success": False,
                         "error": "write policy blocks this; pass confirm=True and enable writes",
                     }
-                    is_error, content = to_mcp_result(dict_result)
-                    return [TextContent(type="text", text=content, is_error=is_error)]
+                    return to_mcp_result(dict_result)
                 # Check write policy
                 if db._policy.readonly and not confirm:
                     dict_result = {
                         "success": False,
                         "error": "write policy blocks this; pass confirm=True and enable writes",
                     }
-                    is_error, content = to_mcp_result(dict_result)
-                    return [TextContent(type="text", text=content, is_error=is_error)]
+                    return to_mcp_result(dict_result)
 
             result = fn(db, **kwargs)
         except Exception as e:
             result = Err(message=str(e))
 
         dict_result = _result_to_dict(result)
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
 
     return wrapper
 
@@ -131,282 +137,250 @@ def connect_access(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Connect to an Access database."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     result = db.open_database(path)
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def disconnect_access(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Disconnect from an Access database."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     result = db.close_database()
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def list_connections(
     path: str = "",
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """List all open connections."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     result = db.list_connections()
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def get_tables(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Get list of user tables."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     result = db.get_tables()
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def get_table_schema(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Get schema for a table."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     table_name = params.get("table") if params else None
     if not table_name:
         dict_result = {"success": False, "error": "table name required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.get_table_schema(table_name)
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def get_indexes(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Get indexes for a table."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     table_name = params.get("table") if params else None
     if not table_name:
         dict_result = {"success": False, "error": "table name required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.get_indexes(table_name)
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def get_relationships(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Get all relationships."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     result = db.get_relationships()
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def get_queries(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Get list of saved queries."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     result = db.get_queries()
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def create_query(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Create a saved query."""
-    db = DatabaseUseCases(readonly=False)
+    db = _new_db(readonly=False)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     if not params or "name" not in params or "sql" not in params:
         dict_result = {"success": False, "error": "name and sql required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.create_query(params["name"], params["sql"], confirm=confirm)
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def set_query_sql(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Update SQL for a saved query."""
-    db = DatabaseUseCases(readonly=False)
+    db = _new_db(readonly=False)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     if not params or "name" not in params or "sql" not in params:
         dict_result = {"success": False, "error": "name and sql required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.set_query_sql(params["name"], params["sql"], confirm=confirm)
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def delete_query(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Delete a saved query."""
-    db = DatabaseUseCases(readonly=False)
+    db = _new_db(readonly=False)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     if not params or "name" not in params:
         dict_result = {"success": False, "error": "name required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.delete_query(params["name"], confirm=confirm)
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def query_data(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Execute a SELECT query."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     if not params or "sql" not in params:
         dict_result = {"success": False, "error": "sql required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.query_data(
         params["sql"],
         params=params.get("params"),
         limit=params.get("limit"),
     )
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def insert_data(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Insert a row into a table."""
-    db = DatabaseUseCases(readonly=False)
+    db = _new_db(readonly=False)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     if not params or "table" not in params or "data" not in params:
         dict_result = {"success": False, "error": "table and data required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.insert_data(params["table"], params["data"], confirm=confirm)
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def update_data(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Update rows in a table."""
-    db = DatabaseUseCases(readonly=False)
+    db = _new_db(readonly=False)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     if not params or "table" not in params or "data" not in params:
         dict_result = {"success": False, "error": "table and data required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.update_data(
         params["table"],
         params["data"],
@@ -414,146 +388,129 @@ def update_data(
         confirm=confirm,
     )
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def delete_data(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Delete rows from a table."""
-    db = DatabaseUseCases(readonly=False)
+    db = _new_db(readonly=False)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     if not params or "table" not in params:
         dict_result = {"success": False, "error": "table required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.delete_data(params["table"], where=params.get("where"), confirm=confirm)
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def execute_raw_sql(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Execute raw SQL (write policy blocks by default)."""
     if not confirm:
         dict_result = {
             "success": False,
             "error": "write policy blocks this; pass confirm=True and enable writes",
         }
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
 
-    db = DatabaseUseCases(readonly=False)
+    db = _new_db(readonly=False)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     if not params or "sql" not in params:
         dict_result = {"success": False, "error": "sql required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.query_data(params["sql"])
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def export_data(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Export table or query data to a file."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     if not params or "out" not in params or "source" not in params:
         dict_result = {"success": False, "error": "out and source (table or query) required"}
-        is_error, content = to_mcp_result(dict_result)
-        return [TextContent(type="text", text=content, is_error=is_error)]
+        return to_mcp_result(dict_result)
     result = db.export_data(
         params["source"],
         params["out"],
         format=params.get("format", "csv"),
     )
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def get_database_statistics(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Get database statistics."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     result = db.get_database_statistics()
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def get_system_tables(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Get list of system tables."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     result = db.get_system_tables()
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 def get_linked_tables(
     path: str,
     params: dict[str, Any] | None = None,
     confirm: bool = False,
-) -> list[TextContent]:
+) -> CallToolResult:
     """Get list of linked tables."""
-    db = DatabaseUseCases(readonly=True)
+    db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
         if isinstance(result, Err):
             dict_result = {"success": False, "error": result.message}
-            is_error, content = to_mcp_result(dict_result)
-            return [TextContent(type="text", text=content, is_error=is_error)]
+            return to_mcp_result(dict_result)
     result = db.get_linked_tables()
     dict_result = _result_to_dict(result)
-    is_error, content = to_mcp_result(dict_result)
-    return [TextContent(type="text", text=content, is_error=is_error)]
+    return to_mcp_result(dict_result)
 
 
 # =============================================================================

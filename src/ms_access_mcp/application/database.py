@@ -101,14 +101,15 @@ class DatabaseUseCases:
                 backend=cast(Literal["odbc", "com", "dao", "auto"] | None, self._backend_name),
                 capabilities=DATA_READ_CAPS,
             )
-            if self._adapter.connect(db_path):
-                self._db_path = db_path
-                self._connections[self._active_connection] = self._adapter
-                return _ok(data={"path": db_path, "connection": self._active_connection})
-            else:
-                return _err("Failed to connect to database")
+            self._adapter.connect(db_path)
+            self._db_path = db_path
+            self._connections[self._active_connection] = self._adapter
+            return _ok(data={"path": db_path, "connection": self._active_connection})
         except Exception as e:
-            return _err(str(e))
+            import traceback
+
+            traceback.print_exc()
+            return _err(f"connect failed: {e!r}")
 
     def close_database(self, connection_name: str = "default") -> Result:
         """Close a database connection.
@@ -460,9 +461,24 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.query_data(sql, params=params, limit=limit)
+            method = getattr(adapter, "query_data", None) or getattr(adapter, "execute_query", None)
+            if method is None:
+                return _err(f"{type(adapter).__name__} does not support query_data")
+            import inspect
+
+            sig = inspect.signature(method)
+            kwargs: dict[str, Any] = {}
+            if "params" in sig.parameters:
+                kwargs["params"] = params
+            if "limit" in sig.parameters:
+                kwargs["limit"] = limit
+            result = method(sql, **kwargs)
             if isinstance(result, dict):
-                return _ok(data=result.get("rows", []), rowcount=result.get("rowcount", 0))
+                if "rows" in result:
+                    return _ok(data=result.get("rows", []), rowcount=result.get("rowcount", 0))
+                if "data" in result:
+                    return _ok(data=result.get("data", []), rowcount=result.get("rowcount", 0))
+                return _ok(data=result, rowcount=len(result))
             return _ok(data=result, rowcount=len(result) if result else 0)
         except Exception as e:
             return _err(str(e))
