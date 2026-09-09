@@ -59,6 +59,13 @@ _COM_ONLY_CAPS = (
     | BackendCapabilities.CAN_IMPORT_EXPORT_TEXT
 )
 
+AUTOMATION_CAPS = (
+    BackendCapabilities.CAN_HANDLE_FORMS
+    | BackendCapabilities.CAN_HANDLE_REPORTS
+    | BackendCapabilities.CAN_HANDLE_VBA
+    | BackendCapabilities.CAN_HANDLE_MACROS
+)
+
 
 def _normalize_backend(value: str) -> str:
     normalized = value.lower().strip()
