@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -344,19 +345,62 @@ def _resolve_exe_path(exe_path_arg: str | None = None) -> Path | None:
 
 
 def _run_validator(target_dir: Path) -> str:
-    """Run the opencode debug config validator.
+    """Run the opencode debug config validator in an isolated sandbox.
+
+    The sandbox prevents opencode debug config (which can mutate opencode.json
+    by normalising it, e.g. adding $schema on read) from touching the user's
+    real ~/.config/opencode/opencode.json.
+
+    On Windows, bare "opencode" argv does not resolve through PATHEXT for
+    .CMD/.BAT via CreateProcessW with shell=False. We resolve the full path
+    via shutil.which first, then execute it directly.
 
     Args:
         target_dir: Directory containing opencode.json.
 
     Returns:
         "ok" if validation passes, "failed" if validation fails,
-        "unavailable" if opencode is not on PATH.
+        "unavailable" if opencode is not on PATH or executable not found.
     """
+    resolved = shutil.which("opencode")
+    if resolved is None:
+        return "unavailable"
+
+    sandbox_root = None
     try:
+        sandbox_root = tempfile.mkdtemp(prefix="opencode_validate_")
+
+        # Determine the target opencode.json to present to the sandboxed validator.
+        # Prefer target_dir / "opencode.json", falling back to the user-level config.
+        target_config = target_dir / "opencode.json"
+        if not target_config.exists():
+            if os.name == "nt":
+                user_config_path = Path(os.environ.get("USERPROFILE", Path.home())) / ".config" / "opencode" / "opencode.json"
+            else:
+                user_config_path = Path.home() / ".config" / "opencode" / "opencode.json"
+            target_config = user_config_path
+
+        # Create the sandboxed config directory structure.
+        sandbox_config_dir = Path(sandbox_root) / ".config" / "opencode"
+        sandbox_config_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy the target config into the sandbox so opencode can read it.
+        if target_config.exists():
+            shutil.copy2(target_config, sandbox_config_dir / "opencode.json")
+
+        # Create a stub .jsonc to prevent opencode from picking up any real config.
+        (sandbox_config_dir / "opencode.jsonc").touch()
+
+        # Build the sandboxed environment: redirect HOME/USERPROFILE/XDG_CONFIG_HOME.
+        sandbox_env = {**os.environ}
+        sandbox_env["HOME"] = sandbox_root
+        sandbox_env["USERPROFILE"] = sandbox_root
+        sandbox_env["XDG_CONFIG_HOME"] = str(Path(sandbox_root) / ".config")
+
         result = subprocess.run(
-            ["opencode", "debug", "config"],
-            cwd=target_dir,
+            [resolved, "debug", "config"],
+            cwd=sandbox_root,
+            env=sandbox_env,
             capture_output=True,
             text=True,
             timeout=30,
@@ -368,6 +412,9 @@ def _run_validator(target_dir: Path) -> str:
         return "unavailable"
     except subprocess.TimeoutExpired:
         return "failed"
+    finally:
+        if sandbox_root is not None:
+            shutil.rmtree(sandbox_root, ignore_errors=True)
 
 
 def _cmd_configure_opencode(args: argparse.Namespace) -> int:
@@ -387,7 +434,7 @@ def _cmd_configure_opencode(args: argparse.Namespace) -> int:
         print("Error: ms-access-mcp executable not found; use --exe-path to specify", file=sys.stderr)
         return 3
 
-    # Build validator from exe path
+    # Build validator — runs real opencode debug config via shutil.which resolution
     def _validator(cfg_path: Path) -> None:
         result = _run_validator(cfg_path.parent)
         if result == "failed":
