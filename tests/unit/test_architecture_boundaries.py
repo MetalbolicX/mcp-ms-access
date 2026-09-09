@@ -22,26 +22,16 @@ FORBIDDEN = [
 @pytest.mark.parametrize("module", ["ms_access_mcp", "ms_access_mcp.safety", "ms_access_mcp.models", "ms_access_mcp.errors"])
 def test_no_forbidden_frameworks_in_core(module: str):
     """After importing the core package, no web/CLI frameworks may be loaded."""
-    code = f"import sys; import importlib; importlib.import_module('{module}'); sys.exit(0)"
+    code = (
+        f"import sys; import importlib; importlib.import_module('{module}'); "
+        + "; ".join(f'assert "{pkg}" not in sys.modules, f"{{pkg}} should not be loaded in core"'
+        for pkg in FORBIDDEN)
+        + "; print('OK')"
+    )
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         check=False,
     )
-    assert result.returncode == 0, f"Import failed for {module}: {result.stderr}"
-
-    # Check sys.modules for forbidden packages
-    check_code = (
-        "import sys; "
-        + "; ".join(f'assert "{pkg}" not in sys.modules, f"{{pkg}} should not be loaded in core"'
-        for pkg in FORBIDDEN)
-        + "; print('OK')"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", check_code],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, f"Framework leak detected: {result.stderr}"
+    assert result.returncode == 0, f"Import or framework leak detected for {module}: {result.stderr}"
