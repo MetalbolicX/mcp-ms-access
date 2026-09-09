@@ -324,7 +324,10 @@ def _resolve_exe_path(exe_path_arg: str | None = None) -> Path | None:
         Absolute Path to the executable, or None if not found.
     """
     if exe_path_arg:
-        return Path(exe_path_arg).resolve()
+        candidate = Path(exe_path_arg).resolve()
+        if not candidate.exists():
+            return None
+        return candidate
 
     # Try shutil.which first
     found = shutil.which("ms-access-mcp")
@@ -421,10 +424,9 @@ def _cmd_configure_opencode(args: argparse.Namespace) -> int:
     """Handle: configure opencode [--global] [--remove] [--force] [--profile] [--exe-path].
 
     Exit codes:
-        0: success or no-op
+        0: success, no-op, or skipped (validator unavailable + warned)
         1: user error (conflict, missing key on remove)
-        2: tool unavailable (validator subprocess missing)
-        3: internal failure
+        3: internal failure (executable not found)
     """
     target = _resolve_opencode_target(args.global_scope, Path.cwd())
 
@@ -464,10 +466,6 @@ def _cmd_configure_opencode(args: argparse.Namespace) -> int:
             return 0
         else:
             print(f"Error: {result.message}", file=sys.stderr)
-            # Distinguish exit codes
-            msg = result.message.lower()
-            if "conflict" in msg or "differ" in msg:
-                return 1
             return 1
 
 

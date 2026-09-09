@@ -299,7 +299,7 @@ class TestConfigureOpencodeS8AbsoluteCommand:
 
 
 class TestConfigureOpencodeExitCodes:
-    """Exit codes: 0 success/no-op, 1 conflict/validation failure, 2 unavailable, 3 internal."""
+    """Exit codes: 0 success/no-op/skipped, 1 conflict/validation failure, 3 internal."""
 
     def test_exit_0_on_success(self, tmp_path, monkeypatch):
         """Successful registration returns exit 0."""
@@ -345,6 +345,24 @@ class TestConfigureOpencodeExitCodes:
         assert exit_code == 1, f"expected exit 1 for conflict, got {exit_code}"
         # Original file unchanged
         assert json.loads(config_path.read_text())["mcp"]["ms-access"]["command"][0] == "C:/different/path/ms-access-mcp.exe"
+
+    def test_exit_3_when_executable_is_not_found(self, tmp_path, monkeypatch):
+        """A missing executable returns exit 3."""
+        monkeypatch.chdir(tmp_path)
+
+        with patch.object(sys, "argv", [
+            "ms-access-mcp", "configure", "opencode",
+            "--exe-path", str(tmp_path / "missing-ms-access-mcp.exe"),
+        ]):
+            exit_code = cli.main()
+
+        assert exit_code == 3
+
+    def test_docstring_does_not_claim_exit_2(self):
+        """The command docstring documents only implemented exit codes."""
+        docstring = cli._cmd_configure_opencode.__doc__
+        assert docstring is not None
+        assert "exit 2" not in docstring.lower()
 
     def test_exit_0_on_conflict_with_force(self, tmp_path, monkeypatch):
         """Conflict with --force returns exit 0 (overwrites)."""
