@@ -24,7 +24,7 @@ honor its STOP conditions, and update your row when done.
 | 002  | COM lifecycle + DAO/ADO/ODBC backends + doctor | 1 | P1 | L | HIGH | @medium + strict TDD (orchestrator verifies gates in-shell) | 001 | DONE |
 | 003  | Shared database use cases + argparse CLI | 2 | P1 | L | MED | @medium + strict TDD | 002 | DONE |
 | 004  | MCP core profile over stdio | 3 | P1 | M | MED | @medium + strict TDD | 003 | DONE |
-| 005  | Installer + OpenCode registration | 4 | P1 | M | MED | **SDD cycle** (spec-driven; apply tasks via @medium) | 004 | TODO |
+| 005  | Installer + OpenCode registration | 4 | P1 | M | MED | **SDD cycle** (spec-driven; apply tasks via @medium) | 004 | DONE |
 | 006  | Automation profile (forms/reports/VBA/macros) | 5 | P2 | L | HIGH | @medium + strict TDD | 004 | TODO |
 | 007  | Versioning + maintenance profiles | 6 | P2 | L | MED | @medium + strict TDD | 004, 006 | TODO |
 | 008  | Windows x64 release qualification | 7 | P1 | M | MED | Orchestrator direct + @fast evidence collection | 001–007 | TODO |
