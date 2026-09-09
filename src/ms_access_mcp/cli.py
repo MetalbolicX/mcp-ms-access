@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .application.automation import AutomationUseCases
 from .application.database import DatabaseUseCases, Err, Ok
 from .doctor import doctor_main
 from .opencode_config import Ok as OpenCodeOk
@@ -289,6 +290,427 @@ def _cmd_export(args: argparse.Namespace, db: DatabaseUseCases) -> int:
 def _cmd_links(args: argparse.Namespace, db: DatabaseUseCases) -> int:
     """Handle: links list"""
     result = db.get_linked_tables()
+    return _format_result(result, args.json)
+
+
+# =============================================================================
+# Automation Subcommand Helpers
+# =============================================================================
+
+
+def _automation_use_cases(opts: argparse.Namespace) -> AutomationUseCases:
+    """Construct AutomationUseCases honoring --allow-write and --db."""
+    readonly = not getattr(opts, "allow_write", False)
+    return AutomationUseCases(readonly=readonly, db_path=getattr(opts, "db", None))
+
+
+# ---- Forms ----
+
+
+def _cmd_automation_forms_list(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms list"""
+    result = uc.list_objects("form")
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_exists(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms exists"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.object_exists("form", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_create(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms create"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.create_object("form", args.name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_rename(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms rename"""
+    if not args.old_name or not args.new_name:
+        print("Error: --old-name and --new-name required", file=sys.stderr)
+        return 2
+    result = uc.rename_object("form", args.old_name, args.new_name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_delete(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms delete"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.delete_object("form", args.name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_properties(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms properties"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.get_properties("form", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_controls(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms controls"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.get_controls("form", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_add_control(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms add-control"""
+    if not args.name or not args.type or not args.control_name:
+        print("Error: --name, --type, and --control-name required", file=sys.stderr)
+        return 2
+    result = uc.add_control(
+        "form",
+        args.name,
+        args.type,
+        args.control_name,
+        section=getattr(args, "section", 0),
+        confirm=args.yes,
+    )
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_remove_control(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms remove-control"""
+    if not args.name or not args.control_name:
+        print("Error: --name and --control-name required", file=sys.stderr)
+        return 2
+    result = uc.remove_control("form", args.name, args.control_name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_sections(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms sections"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.get_sections("form", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_export(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms export"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.export_to_text("form", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_forms_import(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation forms import"""
+    if not args.name or not args.text:
+        print("Error: --name and --text required", file=sys.stderr)
+        return 2
+    result = uc.import_from_text("form", args.name, args.text, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+# ---- Reports ----
+
+
+def _cmd_automation_reports_list(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports list"""
+    result = uc.list_objects("report")
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_exists(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports exists"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.object_exists("report", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_create(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports create"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.create_object("report", args.name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_rename(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports rename"""
+    if not args.old_name or not args.new_name:
+        print("Error: --old-name and --new-name required", file=sys.stderr)
+        return 2
+    result = uc.rename_object("report", args.old_name, args.new_name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_delete(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports delete"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.delete_object("report", args.name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_properties(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports properties"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.get_properties("report", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_controls(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports controls"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.get_controls("report", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_add_control(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports add-control"""
+    if not args.name or not args.type or not args.control_name:
+        print("Error: --name, --type, and --control-name required", file=sys.stderr)
+        return 2
+    result = uc.add_control(
+        "report",
+        args.name,
+        args.type,
+        args.control_name,
+        section=getattr(args, "section", 0),
+        confirm=args.yes,
+    )
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_remove_control(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports remove-control"""
+    if not args.name or not args.control_name:
+        print("Error: --name and --control-name required", file=sys.stderr)
+        return 2
+    result = uc.remove_control("report", args.name, args.control_name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_sections(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports sections"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.get_sections("report", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_export(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports export"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.export_to_text("report", args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_reports_import(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation reports import"""
+    if not args.name or not args.text:
+        print("Error: --name and --text required", file=sys.stderr)
+        return 2
+    result = uc.import_from_text("report", args.name, args.text, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+# ---- Macros ----
+
+
+def _cmd_automation_macros_list(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation macros list"""
+    result = uc.get_macros()
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_macros_exists(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation macros exists"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.macro_exists(args.name)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_macros_create(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation macros create"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.create_macro(args.name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_macros_rename(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation macros rename"""
+    if not args.old_name or not args.new_name:
+        print("Error: --old-name and --new-name required", file=sys.stderr)
+        return 2
+    result = uc.rename_macro(args.old_name, args.new_name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_macros_delete(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation macros delete"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.delete_macro(args.name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_macros_run(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation macros run"""
+    if not args.yes:
+        print("Error: 'macros run' requires --yes", file=sys.stderr)
+        return 2
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.run_macro(args.name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_macros_properties(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation macros properties"""
+    if not args.name:
+        print("Error: --name required", file=sys.stderr)
+        return 2
+    result = uc.get_macro_properties(args.name)
+    return _format_result(result, args.json)
+
+
+# ---- VBA ----
+
+
+def _cmd_automation_vba_modules(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba modules"""
+    result = uc.get_modules()
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_get_code(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba get-code"""
+    if not args.module:
+        print("Error: --module required", file=sys.stderr)
+        return 2
+    result = uc.get_vba_code(args.module)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_set_code(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba set-code"""
+    if not args.yes:
+        print("Error: 'vba set-code' requires --yes", file=sys.stderr)
+        return 2
+    if not args.module or args.code is None:
+        print("Error: --module and --code required", file=sys.stderr)
+        return 2
+    result = uc.set_vba_code(args.module, args.code, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_add_procedure(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba add-procedure"""
+    if not args.module or not args.procedure or not args.code:
+        print("Error: --module, --procedure, and --code required", file=sys.stderr)
+        return 2
+    result = uc.add_vba_procedure(args.module, args.procedure, args.code, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_compile(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba compile"""
+    result = uc.compile_vba()
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_save(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba save"""
+    result = uc.save_database(confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_module_exists(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba module-exists"""
+    if not args.module:
+        print("Error: --module required", file=sys.stderr)
+        return 2
+    result = uc.module_exists(args.module)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_create_module(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba create-module"""
+    if not args.module:
+        print("Error: --module required", file=sys.stderr)
+        return 2
+    result = uc.create_module(args.module, module_type=getattr(args, "module_type", 1), confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_delete_module(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba delete-module"""
+    if not args.module:
+        print("Error: --module required", file=sys.stderr)
+        return 2
+    result = uc.delete_module(args.module, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_rename_module(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba rename-module"""
+    if not args.old_name or not args.new_name:
+        print("Error: --old-name and --new-name required", file=sys.stderr)
+        return 2
+    result = uc.rename_module(args.old_name, args.new_name, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_list_procedures(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba list-procedures"""
+    if not args.module:
+        print("Error: --module required", file=sys.stderr)
+        return 2
+    result = uc.vba_list_procedures(args.module)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_get_procedure(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba get-procedure"""
+    if not args.module or not args.procedure:
+        print("Error: --module and --procedure required", file=sys.stderr)
+        return 2
+    result = uc.vba_get_procedure(args.module, args.procedure)
+    return _format_result(result, args.json)
+
+
+def _cmd_automation_vba_replace_procedure(args: argparse.Namespace, uc: AutomationUseCases) -> int:
+    """Handle: automation vba replace-procedure"""
+    if not args.module or not args.procedure or not args.code:
+        print("Error: --module, --procedure, and --code required", file=sys.stderr)
+        return 2
+    result = uc.vba_replace_procedure(args.module, args.procedure, args.code, confirm=args.yes)
     return _format_result(result, args.json)
 
 
@@ -673,6 +1095,258 @@ def main() -> int:
     )
     mcp_parser.set_defaults(command="mcp")
 
+    # automation subcommand group
+    automation_parser = subparsers.add_parser("automation", help="Automation commands (forms, reports, VBA, macros)")
+    automation_subparsers = automation_parser.add_subparsers(dest="automation_action")
+    _add_global_flags(automation_parser)
+
+    # ---- automation forms sub-group ----
+    forms_parser = automation_subparsers.add_parser("forms", help="Form operations")
+    forms_subparsers = forms_parser.add_subparsers(dest="forms_action")
+    forms_list = forms_subparsers.add_parser("list", help="List forms")
+    forms_list.set_defaults(forms_action="list")
+    _add_global_flags(forms_list)
+
+    forms_exists = forms_subparsers.add_parser("exists", help="Check form exists")
+    forms_exists.set_defaults(forms_action="exists")
+    forms_exists.add_argument("--name", type=str, required=True)
+    _add_global_flags(forms_exists)
+
+    forms_create = forms_subparsers.add_parser("create", help="Create form")
+    forms_create.set_defaults(forms_action="create")
+    forms_create.add_argument("--name", type=str, required=True)
+    _add_global_flags(forms_create)
+
+    forms_rename = forms_subparsers.add_parser("rename", help="Rename form")
+    forms_rename.set_defaults(forms_action="rename")
+    forms_rename.add_argument("--old-name", type=str, required=True)
+    forms_rename.add_argument("--new-name", type=str, required=True)
+    _add_global_flags(forms_rename)
+
+    forms_delete = forms_subparsers.add_parser("delete", help="Delete form")
+    forms_delete.set_defaults(forms_action="delete")
+    forms_delete.add_argument("--name", type=str, required=True)
+    _add_global_flags(forms_delete)
+
+    forms_properties = forms_subparsers.add_parser("properties", help="Get form properties")
+    forms_properties.set_defaults(forms_action="properties")
+    forms_properties.add_argument("--name", type=str, required=True)
+    _add_global_flags(forms_properties)
+
+    forms_controls = forms_subparsers.add_parser("controls", help="Get form controls")
+    forms_controls.set_defaults(forms_action="controls")
+    forms_controls.add_argument("--name", type=str, required=True)
+    _add_global_flags(forms_controls)
+
+    forms_add_control = forms_subparsers.add_parser("add-control", help="Add control to form")
+    forms_add_control.set_defaults(forms_action="add-control")
+    forms_add_control.add_argument("--name", type=str, required=True)
+    forms_add_control.add_argument("--type", type=str, required=True)
+    forms_add_control.add_argument("--control-name", type=str, required=True)
+    forms_add_control.add_argument("--section", type=int, default=0)
+    _add_global_flags(forms_add_control)
+
+    forms_remove_control = forms_subparsers.add_parser("remove-control", help="Remove control from form")
+    forms_remove_control.set_defaults(forms_action="remove-control")
+    forms_remove_control.add_argument("--name", type=str, required=True)
+    forms_remove_control.add_argument("--control-name", type=str, required=True)
+    _add_global_flags(forms_remove_control)
+
+    forms_sections = forms_subparsers.add_parser("sections", help="Get form sections")
+    forms_sections.set_defaults(forms_action="sections")
+    forms_sections.add_argument("--name", type=str, required=True)
+    _add_global_flags(forms_sections)
+
+    forms_export = forms_subparsers.add_parser("export", help="Export form to text")
+    forms_export.set_defaults(forms_action="export")
+    forms_export.add_argument("--name", type=str, required=True)
+    _add_global_flags(forms_export)
+
+    forms_import = forms_subparsers.add_parser("import", help="Import form from text")
+    forms_import.set_defaults(forms_action="import")
+    forms_import.add_argument("--name", type=str, required=True)
+    forms_import.add_argument("--text", type=str, required=True)
+    _add_global_flags(forms_import)
+
+    # ---- automation reports sub-group ----
+    reports_parser = automation_subparsers.add_parser("reports", help="Report operations")
+    reports_subparsers = reports_parser.add_subparsers(dest="reports_action")
+    reports_list = reports_subparsers.add_parser("list", help="List reports")
+    reports_list.set_defaults(reports_action="list")
+    _add_global_flags(reports_list)
+
+    reports_exists = reports_subparsers.add_parser("exists", help="Check report exists")
+    reports_exists.set_defaults(reports_action="exists")
+    reports_exists.add_argument("--name", type=str, required=True)
+    _add_global_flags(reports_exists)
+
+    reports_create = reports_subparsers.add_parser("create", help="Create report")
+    reports_create.set_defaults(reports_action="create")
+    reports_create.add_argument("--name", type=str, required=True)
+    _add_global_flags(reports_create)
+
+    reports_rename = reports_subparsers.add_parser("rename", help="Rename report")
+    reports_rename.set_defaults(reports_action="rename")
+    reports_rename.add_argument("--old-name", type=str, required=True)
+    reports_rename.add_argument("--new-name", type=str, required=True)
+    _add_global_flags(reports_rename)
+
+    reports_delete = reports_subparsers.add_parser("delete", help="Delete report")
+    reports_delete.set_defaults(reports_action="delete")
+    reports_delete.add_argument("--name", type=str, required=True)
+    _add_global_flags(reports_delete)
+
+    reports_properties = reports_subparsers.add_parser("properties", help="Get report properties")
+    reports_properties.set_defaults(reports_action="properties")
+    reports_properties.add_argument("--name", type=str, required=True)
+    _add_global_flags(reports_properties)
+
+    reports_controls = reports_subparsers.add_parser("controls", help="Get report controls")
+    reports_controls.set_defaults(reports_action="controls")
+    reports_controls.add_argument("--name", type=str, required=True)
+    _add_global_flags(reports_controls)
+
+    reports_add_control = reports_subparsers.add_parser("add-control", help="Add control to report")
+    reports_add_control.set_defaults(reports_action="add-control")
+    reports_add_control.add_argument("--name", type=str, required=True)
+    reports_add_control.add_argument("--type", type=str, required=True)
+    reports_add_control.add_argument("--control-name", type=str, required=True)
+    reports_add_control.add_argument("--section", type=int, default=0)
+    _add_global_flags(reports_add_control)
+
+    reports_remove_control = reports_subparsers.add_parser("remove-control", help="Remove control from report")
+    reports_remove_control.set_defaults(reports_action="remove-control")
+    reports_remove_control.add_argument("--name", type=str, required=True)
+    reports_remove_control.add_argument("--control-name", type=str, required=True)
+    _add_global_flags(reports_remove_control)
+
+    reports_sections = reports_subparsers.add_parser("sections", help="Get report sections")
+    reports_sections.set_defaults(reports_action="sections")
+    reports_sections.add_argument("--name", type=str, required=True)
+    _add_global_flags(reports_sections)
+
+    reports_export = reports_subparsers.add_parser("export", help="Export report to text")
+    reports_export.set_defaults(reports_action="export")
+    reports_export.add_argument("--name", type=str, required=True)
+    _add_global_flags(reports_export)
+
+    reports_import = reports_subparsers.add_parser("import", help="Import report from text")
+    reports_import.set_defaults(reports_action="import")
+    reports_import.add_argument("--name", type=str, required=True)
+    reports_import.add_argument("--text", type=str, required=True)
+    _add_global_flags(reports_import)
+
+    # ---- automation macros sub-group ----
+    macros_parser = automation_subparsers.add_parser("macros", help="Macro operations")
+    macros_subparsers = macros_parser.add_subparsers(dest="macros_action")
+    macros_list = macros_subparsers.add_parser("list", help="List macros")
+    macros_list.set_defaults(macros_action="list")
+    _add_global_flags(macros_list)
+
+    macros_exists = macros_subparsers.add_parser("exists", help="Check macro exists")
+    macros_exists.set_defaults(macros_action="exists")
+    macros_exists.add_argument("--name", type=str, required=True)
+    _add_global_flags(macros_exists)
+
+    macros_create = macros_subparsers.add_parser("create", help="Create macro")
+    macros_create.set_defaults(macros_action="create")
+    macros_create.add_argument("--name", type=str, required=True)
+    _add_global_flags(macros_create)
+
+    macros_rename = macros_subparsers.add_parser("rename", help="Rename macro")
+    macros_rename.set_defaults(macros_action="rename")
+    macros_rename.add_argument("--old-name", type=str, required=True)
+    macros_rename.add_argument("--new-name", type=str, required=True)
+    _add_global_flags(macros_rename)
+
+    macros_delete = macros_subparsers.add_parser("delete", help="Delete macro")
+    macros_delete.set_defaults(macros_action="delete")
+    macros_delete.add_argument("--name", type=str, required=True)
+    _add_global_flags(macros_delete)
+
+    macros_run = macros_subparsers.add_parser("run", help="Run macro")
+    macros_run.set_defaults(macros_action="run")
+    macros_run.add_argument("--name", type=str, required=True)
+    _add_global_flags(macros_run)
+
+    macros_properties = macros_subparsers.add_parser("properties", help="Get macro properties")
+    macros_properties.set_defaults(macros_action="properties")
+    macros_properties.add_argument("--name", type=str, required=True)
+    _add_global_flags(macros_properties)
+
+    # ---- automation vba sub-group ----
+    vba_parser = automation_subparsers.add_parser("vba", help="VBA module operations")
+    vba_subparsers = vba_parser.add_subparsers(dest="vba_action")
+    vba_modules = vba_subparsers.add_parser("modules", help="List VBA modules")
+    vba_modules.set_defaults(vba_action="modules")
+    _add_global_flags(vba_modules)
+
+    vba_get_code = vba_subparsers.add_parser("get-code", help="Get VBA module code")
+    vba_get_code.set_defaults(vba_action="get-code")
+    vba_get_code.add_argument("--module", type=str, required=True)
+    _add_global_flags(vba_get_code)
+
+    vba_set_code = vba_subparsers.add_parser("set-code", help="Set VBA module code")
+    vba_set_code.set_defaults(vba_action="set-code")
+    vba_set_code.add_argument("--module", type=str, required=True)
+    vba_set_code.add_argument("--code", type=str, required=True)
+    _add_global_flags(vba_set_code)
+
+    vba_add_procedure = vba_subparsers.add_parser("add-procedure", help="Add VBA procedure")
+    vba_add_procedure.set_defaults(vba_action="add-procedure")
+    vba_add_procedure.add_argument("--module", type=str, required=True)
+    vba_add_procedure.add_argument("--procedure", type=str, required=True)
+    vba_add_procedure.add_argument("--code", type=str, required=True)
+    _add_global_flags(vba_add_procedure)
+
+    vba_compile = vba_subparsers.add_parser("compile", help="Compile VBA project")
+    vba_compile.set_defaults(vba_action="compile")
+    _add_global_flags(vba_compile)
+
+    vba_save = vba_subparsers.add_parser("save", help="Save database")
+    vba_save.set_defaults(vba_action="save")
+    _add_global_flags(vba_save)
+
+    vba_module_exists = vba_subparsers.add_parser("module-exists", help="Check module exists")
+    vba_module_exists.set_defaults(vba_action="module-exists")
+    vba_module_exists.add_argument("--module", type=str, required=True)
+    _add_global_flags(vba_module_exists)
+
+    vba_create_module = vba_subparsers.add_parser("create-module", help="Create VBA module")
+    vba_create_module.set_defaults(vba_action="create-module")
+    vba_create_module.add_argument("--module", type=str, required=True)
+    vba_create_module.add_argument("--module-type", type=int, default=1)
+    _add_global_flags(vba_create_module)
+
+    vba_delete_module = vba_subparsers.add_parser("delete-module", help="Delete VBA module")
+    vba_delete_module.set_defaults(vba_action="delete-module")
+    vba_delete_module.add_argument("--module", type=str, required=True)
+    _add_global_flags(vba_delete_module)
+
+    vba_rename_module = vba_subparsers.add_parser("rename-module", help="Rename VBA module")
+    vba_rename_module.set_defaults(vba_action="rename-module")
+    vba_rename_module.add_argument("--old-name", type=str, required=True)
+    vba_rename_module.add_argument("--new-name", type=str, required=True)
+    _add_global_flags(vba_rename_module)
+
+    vba_list_procedures = vba_subparsers.add_parser("list-procedures", help="List procedures in module")
+    vba_list_procedures.set_defaults(vba_action="list-procedures")
+    vba_list_procedures.add_argument("--module", type=str, required=True)
+    _add_global_flags(vba_list_procedures)
+
+    vba_get_procedure = vba_subparsers.add_parser("get-procedure", help="Get VBA procedure")
+    vba_get_procedure.set_defaults(vba_action="get-procedure")
+    vba_get_procedure.add_argument("--module", type=str, required=True)
+    vba_get_procedure.add_argument("--procedure", type=str, required=True)
+    _add_global_flags(vba_get_procedure)
+
+    vba_replace_procedure = vba_subparsers.add_parser("replace-procedure", help="Replace VBA procedure")
+    vba_replace_procedure.set_defaults(vba_action="replace-procedure")
+    vba_replace_procedure.add_argument("--module", type=str, required=True)
+    vba_replace_procedure.add_argument("--procedure", type=str, required=True)
+    vba_replace_procedure.add_argument("--code", type=str, required=True)
+    _add_global_flags(vba_replace_procedure)
+
     # Parse and execute
     opts = parser.parse_args()
 
@@ -759,6 +1433,116 @@ def main() -> int:
         action = getattr(opts, "configure_action", None)
         if action == "opencode":
             return _cmd_configure_opencode(opts)
+        return 0
+
+    elif cmd == "automation":
+        uc = _automation_use_cases(opts)
+        action = getattr(opts, "automation_action", None)
+
+        if action == "forms":
+            fa = getattr(opts, "forms_action", None)
+            if fa == "list":
+                return _cmd_automation_forms_list(opts, uc)
+            elif fa == "exists":
+                return _cmd_automation_forms_exists(opts, uc)
+            elif fa == "create":
+                return _cmd_automation_forms_create(opts, uc)
+            elif fa == "rename":
+                return _cmd_automation_forms_rename(opts, uc)
+            elif fa == "delete":
+                return _cmd_automation_forms_delete(opts, uc)
+            elif fa == "properties":
+                return _cmd_automation_forms_properties(opts, uc)
+            elif fa == "controls":
+                return _cmd_automation_forms_controls(opts, uc)
+            elif fa == "add-control":
+                return _cmd_automation_forms_add_control(opts, uc)
+            elif fa == "remove-control":
+                return _cmd_automation_forms_remove_control(opts, uc)
+            elif fa == "sections":
+                return _cmd_automation_forms_sections(opts, uc)
+            elif fa == "export":
+                return _cmd_automation_forms_export(opts, uc)
+            elif fa == "import":
+                return _cmd_automation_forms_import(opts, uc)
+            return 0
+
+        elif action == "reports":
+            ra = getattr(opts, "reports_action", None)
+            if ra == "list":
+                return _cmd_automation_reports_list(opts, uc)
+            elif ra == "exists":
+                return _cmd_automation_reports_exists(opts, uc)
+            elif ra == "create":
+                return _cmd_automation_reports_create(opts, uc)
+            elif ra == "rename":
+                return _cmd_automation_reports_rename(opts, uc)
+            elif ra == "delete":
+                return _cmd_automation_reports_delete(opts, uc)
+            elif ra == "properties":
+                return _cmd_automation_reports_properties(opts, uc)
+            elif ra == "controls":
+                return _cmd_automation_reports_controls(opts, uc)
+            elif ra == "add-control":
+                return _cmd_automation_reports_add_control(opts, uc)
+            elif ra == "remove-control":
+                return _cmd_automation_reports_remove_control(opts, uc)
+            elif ra == "sections":
+                return _cmd_automation_reports_sections(opts, uc)
+            elif ra == "export":
+                return _cmd_automation_reports_export(opts, uc)
+            elif ra == "import":
+                return _cmd_automation_reports_import(opts, uc)
+            return 0
+
+        elif action == "macros":
+            ma = getattr(opts, "macros_action", None)
+            if ma == "list":
+                return _cmd_automation_macros_list(opts, uc)
+            elif ma == "exists":
+                return _cmd_automation_macros_exists(opts, uc)
+            elif ma == "create":
+                return _cmd_automation_macros_create(opts, uc)
+            elif ma == "rename":
+                return _cmd_automation_macros_rename(opts, uc)
+            elif ma == "delete":
+                return _cmd_automation_macros_delete(opts, uc)
+            elif ma == "run":
+                return _cmd_automation_macros_run(opts, uc)
+            elif ma == "properties":
+                return _cmd_automation_macros_properties(opts, uc)
+            return 0
+
+        elif action == "vba":
+            va = getattr(opts, "vba_action", None)
+            if va == "modules":
+                return _cmd_automation_vba_modules(opts, uc)
+            elif va == "get-code":
+                return _cmd_automation_vba_get_code(opts, uc)
+            elif va == "set-code":
+                return _cmd_automation_vba_set_code(opts, uc)
+            elif va == "add-procedure":
+                return _cmd_automation_vba_add_procedure(opts, uc)
+            elif va == "compile":
+                return _cmd_automation_vba_compile(opts, uc)
+            elif va == "save":
+                return _cmd_automation_vba_save(opts, uc)
+            elif va == "module-exists":
+                return _cmd_automation_vba_module_exists(opts, uc)
+            elif va == "create-module":
+                return _cmd_automation_vba_create_module(opts, uc)
+            elif va == "delete-module":
+                return _cmd_automation_vba_delete_module(opts, uc)
+            elif va == "rename-module":
+                return _cmd_automation_vba_rename_module(opts, uc)
+            elif va == "list-procedures":
+                return _cmd_automation_vba_list_procedures(opts, uc)
+            elif va == "get-procedure":
+                return _cmd_automation_vba_get_procedure(opts, uc)
+            elif va == "replace-procedure":
+                return _cmd_automation_vba_replace_procedure(opts, uc)
+            return 0
+
         return 0
 
     return 0
