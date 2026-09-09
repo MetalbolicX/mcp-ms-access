@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,7 @@ def _sort(obj):
 
 
 @pytest.fixture(scope="module")
-def fixture_copy() -> Path:
+def fixture_copy() -> Iterator[Path]:
     """Make a temp copy of the canonical fixture and yield its path."""
     fixture = Path(__file__).parent.parent / "fixtures" / "test_db.accdb"
     if not fixture.exists():
