@@ -284,13 +284,13 @@ class TestConfigureOpencodeS8AbsoluteCommand:
         data = json.loads(config_path.read_text())
         entry = data["mcp"]["ms-access"]
 
-        # McpEntry contract: command, profile, enabled, timeout
+        # McpEntry contract: command, type, enabled, timeout
         assert isinstance(entry["command"], list)
         assert len(entry["command"]) >= 2
         assert entry["command"][1] == "mcp"
         assert entry["enabled"] is True
         assert entry["timeout"] == 30000
-        assert entry["profile"] == "automation"
+        assert entry["type"] == "local"
 
 
 # =============================================================================

@@ -10,7 +10,7 @@ import json
 import os
 import shutil
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -75,6 +75,7 @@ class McpEntry:
     profile: str = "core"
     enabled: bool = True
     timeout: int = 30000
+    type: str = "local"
 
 
 # =============================================================================
@@ -112,11 +113,18 @@ def merge_entry(config: dict, key: str, entry: McpEntry) -> dict:
 
 
 def _entry_asdict(entry: McpEntry) -> dict:
-    """Serialize McpEntry to dict, normalising command to list for JSON."""
-    d = asdict(entry)
-    # command is stored as list in JSON for JSON-round-trip compatibility
-    d["command"] = list(d["command"])
-    return d
+    """Serialize McpEntry to dict, normalising command to list for JSON.
+
+    Emits only the oracle shape: {type, command, enabled, timeout}.
+    The profile field is excluded because it is already embedded in the
+    command array via --profile flag.
+    """
+    return {
+        "type": entry.type,
+        "command": list(entry.command),
+        "enabled": entry.enabled,
+        "timeout": entry.timeout,
+    }
 
 
 def _deep_copy(obj: dict) -> dict:
@@ -249,7 +257,7 @@ def register(
         if (
             _normalise(existing_entry_dict.get("command"))
             != _normalise(new_entry_dict["command"])
-            or existing_entry_dict.get("profile") != new_entry_dict["profile"]
+            or existing_entry_dict.get("type") != new_entry_dict["type"]
             or existing_entry_dict.get("enabled") != new_entry_dict["enabled"]
             or existing_entry_dict.get("timeout") != new_entry_dict["timeout"]
         ):
