@@ -14,6 +14,7 @@ from typing import Any
 
 from .application.automation import AutomationUseCases
 from .application.database import DatabaseUseCases, Err, Ok
+from .application.versioning import VersioningUseCases
 from .doctor import doctor_main
 from .opencode_config import Ok as OpenCodeOk
 from .opencode_config import entry_from, register, remove
@@ -302,6 +303,12 @@ def _automation_use_cases(opts: argparse.Namespace) -> AutomationUseCases:
     """Construct AutomationUseCases honoring --allow-write and --db."""
     readonly = not getattr(opts, "allow_write", False)
     return AutomationUseCases(readonly=readonly, db_path=getattr(opts, "db", None))
+
+
+def _versioning_use_cases(opts: argparse.Namespace) -> VersioningUseCases:
+    """Construct VersioningUseCases honoring --allow-write and --db."""
+    readonly = not getattr(opts, "allow_write", False)
+    return VersioningUseCases(readonly=readonly, db_path=getattr(opts, "db", None))
 
 
 # ---- Forms ----
@@ -711,6 +718,53 @@ def _cmd_automation_vba_replace_procedure(args: argparse.Namespace, uc: Automati
         print("Error: --module, --procedure, and --code required", file=sys.stderr)
         return 2
     result = uc.vba_replace_procedure(args.module, args.procedure, args.code, confirm=args.yes)
+    return _format_result(result, args.json)
+
+
+# =============================================================================
+# Versioning Subcommand
+# =============================================================================
+
+
+def _cmd_versioning_export_object(args: argparse.Namespace, uc: VersioningUseCases) -> int:
+    """Handle: versioning export-object"""
+    result = uc.export_object(args.kind, args.name, args.out_dir)
+    return _format_result(result, args.json)
+
+
+def _cmd_versioning_export_all(args: argparse.Namespace, uc: VersioningUseCases) -> int:
+    """Handle: versioning export-all"""
+    result = uc.export_all(args.out_dir)
+    return _format_result(result, args.json)
+
+
+def _cmd_versioning_import_object(args: argparse.Namespace, uc: VersioningUseCases) -> int:
+    """Handle: versioning import-object"""
+    if not args.yes:
+        print("Error: --yes required for destructive import-object", file=sys.stderr)
+        return 2
+    result = uc.import_object(args.kind, args.name, args.file_path, confirm=True)
+    return _format_result(result, args.json)
+
+
+def _cmd_versioning_import_all(args: argparse.Namespace, uc: VersioningUseCases) -> int:
+    """Handle: versioning import-all"""
+    if not args.yes:
+        print("Error: --yes required for destructive import-all", file=sys.stderr)
+        return 2
+    result = uc.import_all(args.input_dir, confirm=True)
+    return _format_result(result, args.json)
+
+
+def _cmd_versioning_compare(args: argparse.Namespace, uc: VersioningUseCases) -> int:
+    """Handle: versioning compare"""
+    result = uc.compare(args.export_dir)
+    return _format_result(result, args.json)
+
+
+def _cmd_versioning_export_schema_ddl(args: argparse.Namespace, uc: VersioningUseCases) -> int:
+    """Handle: versioning export-schema-ddl"""
+    result = uc.export_schema_ddl(args.out_dir)
     return _format_result(result, args.json)
 
 
@@ -1347,6 +1401,45 @@ def main() -> int:
     vba_replace_procedure.add_argument("--code", type=str, required=True)
     _add_global_flags(vba_replace_procedure)
 
+    # ---- versioning sub-group ----
+    versioning_parser = subparsers.add_parser("versioning", help="Versioning commands (export, import, compare)")
+    versioning_subparsers = versioning_parser.add_subparsers(dest="versioning_action")
+    _add_global_flags(versioning_parser)
+
+    export_object = versioning_subparsers.add_parser("export-object", help="Export a single object to text")
+    export_object.set_defaults(versioning_action="export-object")
+    export_object.add_argument("--kind", type=str, required=True)
+    export_object.add_argument("--name", type=str, required=True)
+    export_object.add_argument("--out-dir", type=str, required=True)
+    _add_global_flags(export_object)
+
+    export_all = versioning_subparsers.add_parser("export-all", help="Export all objects to directory tree")
+    export_all.set_defaults(versioning_action="export-all")
+    export_all.add_argument("--out-dir", type=str, required=True)
+    _add_global_flags(export_all)
+
+    import_object = versioning_subparsers.add_parser("import-object", help="Import object from text (destructive)")
+    import_object.set_defaults(versioning_action="import-object")
+    import_object.add_argument("--kind", type=str, required=True)
+    import_object.add_argument("--name", type=str, required=True)
+    import_object.add_argument("--file-path", type=str, required=True)
+    _add_global_flags(import_object)
+
+    import_all = versioning_subparsers.add_parser("import-all", help="Import all objects from directory (destructive)")
+    import_all.set_defaults(versioning_action="import-all")
+    import_all.add_argument("--input-dir", type=str, required=True)
+    _add_global_flags(import_all)
+
+    compare = versioning_subparsers.add_parser("compare", help="Compare exported objects against database")
+    compare.set_defaults(versioning_action="compare")
+    compare.add_argument("--export-dir", type=str, required=True)
+    _add_global_flags(compare)
+
+    export_schema_ddl = versioning_subparsers.add_parser("export-schema-ddl", help="Export schema DDL")
+    export_schema_ddl.set_defaults(versioning_action="export-schema-ddl")
+    export_schema_ddl.add_argument("--out-dir", type=str, required=True)
+    _add_global_flags(export_schema_ddl)
+
     # Parse and execute
     opts = parser.parse_args()
 
@@ -1543,6 +1636,24 @@ def main() -> int:
                 return _cmd_automation_vba_replace_procedure(opts, uc)
             return 0
 
+        return 0
+
+    elif cmd == "versioning":
+        uc = _versioning_use_cases(opts)
+        action = getattr(opts, "versioning_action", None)
+
+        if action == "export-object":
+            return _cmd_versioning_export_object(opts, uc)
+        elif action == "export-all":
+            return _cmd_versioning_export_all(opts, uc)
+        elif action == "import-object":
+            return _cmd_versioning_import_object(opts, uc)
+        elif action == "import-all":
+            return _cmd_versioning_import_all(opts, uc)
+        elif action == "compare":
+            return _cmd_versioning_compare(opts, uc)
+        elif action == "export-schema-ddl":
+            return _cmd_versioning_export_schema_ddl(opts, uc)
         return 0
 
     return 0
