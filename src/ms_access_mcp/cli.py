@@ -14,6 +14,7 @@ from typing import Any
 
 from .application.automation import AutomationUseCases
 from .application.database import DatabaseUseCases, Err, Ok
+from .application.maintenance import MaintenanceUseCases
 from .application.versioning import VersioningUseCases
 from .doctor import doctor_main
 from .opencode_config import Ok as OpenCodeOk
@@ -309,6 +310,12 @@ def _versioning_use_cases(opts: argparse.Namespace) -> VersioningUseCases:
     """Construct VersioningUseCases honoring --allow-write and --db."""
     readonly = not getattr(opts, "allow_write", False)
     return VersioningUseCases(readonly=readonly, db_path=getattr(opts, "db", None))
+
+
+def _maintenance_use_cases(opts: argparse.Namespace) -> MaintenanceUseCases:
+    """Construct MaintenanceUseCases honoring --allow-write and --db."""
+    readonly = not getattr(opts, "allow_write", False)
+    return MaintenanceUseCases(readonly=readonly, db_path=getattr(opts, "db", None))
 
 
 # ---- Forms ----
@@ -765,6 +772,62 @@ def _cmd_versioning_compare(args: argparse.Namespace, uc: VersioningUseCases) ->
 def _cmd_versioning_export_schema_ddl(args: argparse.Namespace, uc: VersioningUseCases) -> int:
     """Handle: versioning export-schema-ddl"""
     result = uc.export_schema_ddl(args.out_dir)
+    return _format_result(result, args.json)
+
+
+# =============================================================================
+# Maintenance Subcommand
+# =============================================================================
+
+
+def _cmd_maintenance_backup(args: argparse.Namespace, uc: MaintenanceUseCases) -> int:
+    """Handle: maintenance backup"""
+    result = uc.backup(args.path, retention=getattr(args, "retention", None))
+    return _format_result(result, args.json)
+
+
+def _cmd_maintenance_dev_copy_status(args: argparse.Namespace, uc: MaintenanceUseCases) -> int:
+    """Handle: maintenance dev-copy-status"""
+    result = uc.dev_copy_status()
+    return _format_result(result, args.json)
+
+
+def _cmd_maintenance_dev_copy_create(args: argparse.Namespace, uc: MaintenanceUseCases) -> int:
+    """Handle: maintenance dev-copy-create"""
+    result = uc.create_dev_copy(source=getattr(args, "source", None))
+    return _format_result(result, args.json)
+
+
+def _cmd_maintenance_dev_copy_deploy(args: argparse.Namespace, uc: MaintenanceUseCases) -> int:
+    """Handle: maintenance dev-copy-deploy"""
+    if not args.yes:
+        print("Error: --yes required for destructive dev-copy-deploy", file=sys.stderr)
+        return 2
+    result = uc.deploy_dev_copy(args.dev_path, args.target, confirm=True)
+    return _format_result(result, args.json)
+
+
+def _cmd_maintenance_compact_repair(args: argparse.Namespace, uc: MaintenanceUseCases) -> int:
+    """Handle: maintenance compact-repair"""
+    if not args.yes:
+        print("Error: --yes required for destructive compact-repair", file=sys.stderr)
+        return 2
+    result = uc.compact_repair(args.path, args.mode, confirm=True)
+    return _format_result(result, args.json)
+
+
+def _cmd_maintenance_diagnose(args: argparse.Namespace, uc: MaintenanceUseCases) -> int:
+    """Handle: maintenance diagnose"""
+    result = uc.diagnose_environment()
+    return _format_result(result, args.json)
+
+
+def _cmd_maintenance_recover(args: argparse.Namespace, uc: MaintenanceUseCases) -> int:
+    """Handle: maintenance recover"""
+    if not args.yes:
+        print("Error: --yes required for destructive recover", file=sys.stderr)
+        return 2
+    result = uc.recover_access(confirm=True)
     return _format_result(result, args.json)
 
 
@@ -1440,6 +1503,46 @@ def main() -> int:
     export_schema_ddl.add_argument("--out-dir", type=str, required=True)
     _add_global_flags(export_schema_ddl)
 
+    # ---- maintenance sub-group ----
+    maintenance_parser = subparsers.add_parser("maintenance", help="Maintenance commands (backup, dev copy, compact/repair, diagnose, recover)")
+    maintenance_subparsers = maintenance_parser.add_subparsers(dest="maintenance_action")
+    _add_global_flags(maintenance_parser)
+
+    m_backup = maintenance_subparsers.add_parser("backup", help="Create a timestamped backup")
+    m_backup.set_defaults(maintenance_action="backup")
+    m_backup.add_argument("path", type=str, help="Path to .accdb file")
+    m_backup.add_argument("--retention", type=int, help="Number of backups to retain")
+    _add_global_flags(m_backup)
+
+    m_dev_copy_status = maintenance_subparsers.add_parser("dev-copy-status", help="Check dev copy status")
+    m_dev_copy_status.set_defaults(maintenance_action="dev-copy-status")
+    _add_global_flags(m_dev_copy_status)
+
+    m_dev_copy_create = maintenance_subparsers.add_parser("dev-copy-create", help="Create a dev copy")
+    m_dev_copy_create.set_defaults(maintenance_action="dev-copy-create")
+    m_dev_copy_create.add_argument("--source", type=str, help="Source .accdb path")
+    _add_global_flags(m_dev_copy_create)
+
+    m_dev_copy_deploy = maintenance_subparsers.add_parser("dev-copy-deploy", help="Deploy dev copy over production (destructive)")
+    m_dev_copy_deploy.set_defaults(maintenance_action="dev-copy-deploy")
+    m_dev_copy_deploy.add_argument("--dev-path", type=str, required=True)
+    m_dev_copy_deploy.add_argument("--target", type=str, required=True)
+    _add_global_flags(m_dev_copy_deploy)
+
+    m_compact_repair = maintenance_subparsers.add_parser("compact-repair", help="Compact and/or repair database (destructive)")
+    m_compact_repair.set_defaults(maintenance_action="compact-repair")
+    m_compact_repair.add_argument("path", type=str, help="Path to .accdb file")
+    m_compact_repair.add_argument("--mode", choices=["compact", "repair", "compact_and_repair"], default="compact", help="Operation mode")
+    _add_global_flags(m_compact_repair)
+
+    m_diagnose = maintenance_subparsers.add_parser("diagnose", help="Run environment diagnostics")
+    m_diagnose.set_defaults(maintenance_action="diagnose")
+    _add_global_flags(m_diagnose)
+
+    m_recover = maintenance_subparsers.add_parser("recover", help="Kill Access processes and attempt recovery (destructive)")
+    m_recover.set_defaults(maintenance_action="recover")
+    _add_global_flags(m_recover)
+
     # Parse and execute
     opts = parser.parse_args()
 
@@ -1654,6 +1757,26 @@ def main() -> int:
             return _cmd_versioning_compare(opts, uc)
         elif action == "export-schema-ddl":
             return _cmd_versioning_export_schema_ddl(opts, uc)
+        return 0
+
+    elif cmd == "maintenance":
+        uc = _maintenance_use_cases(opts)
+        action = getattr(opts, "maintenance_action", None)
+
+        if action == "backup":
+            return _cmd_maintenance_backup(opts, uc)
+        elif action == "dev-copy-status":
+            return _cmd_maintenance_dev_copy_status(opts, uc)
+        elif action == "dev-copy-create":
+            return _cmd_maintenance_dev_copy_create(opts, uc)
+        elif action == "dev-copy-deploy":
+            return _cmd_maintenance_dev_copy_deploy(opts, uc)
+        elif action == "compact-repair":
+            return _cmd_maintenance_compact_repair(opts, uc)
+        elif action == "diagnose":
+            return _cmd_maintenance_diagnose(opts, uc)
+        elif action == "recover":
+            return _cmd_maintenance_recover(opts, uc)
         return 0
 
     return 0
