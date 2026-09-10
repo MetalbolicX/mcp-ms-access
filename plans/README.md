@@ -29,6 +29,7 @@ honor its STOP conditions, and update your row when done.
 | 006  | Automation profile (forms/reports/VBA/macros) | 5 | P2 | L | HIGH | @medium + strict TDD | 004 | DONE |
 | 007  | Versioning + maintenance profiles | 6 | P2 | L | MED | @medium + strict TDD | 004, 006 | DONE |
 | 008  | Windows x64 release qualification | 7 | P1 | M | MED | Orchestrator direct + @fast evidence collection | 001–007 | BLOCKED (G3 + G5 RED: `tests/integration/test_access_adapter.py:50` `CurrentDb.Name` COM dispatch — pre-existing product bug from plan 002; G1 gate-script bug fixed in scope; see `docs/release/0.1.0-report.md`) |
+| 009  | Deduplicate form/report clone families in COM adapter | — | P1 | M | MED | Direct edit (behavior-preserving refactor) | — | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
