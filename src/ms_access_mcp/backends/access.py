@@ -459,8 +459,8 @@ class AccessAdapter:
                     for prop_name, value in properties.items():
                         try:
                             obj.Properties(prop_name).Value = value
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("create_%s: property %s rejected: %s", kind, prop_name, exc)
                 self._dispatcher.access_app.DoCmd.Close(ac_type, obj.Name, 1)  # acSaveYes=1
                 return True
             except Exception:

@@ -950,3 +950,84 @@ class TestRenameFormErrorClassification:
         assert any("OldName" in msg or "NewName" in msg for msg in warning_msgs), (
             f"Expected warning about 'OldName' or 'NewName', got: {warning_msgs}"
         )
+
+
+# -------------------------------------------------------------------------- #
+# Step 3: Property-write failures are logged, not swallowed
+# -------------------------------------------------------------------------- #
+
+class TestCreateFormPropertyRejectionLogging:
+    """create_form with bad property writes logs WARNING but still returns True."""
+
+    def _make_adapter_with_bad_property(self, prop_to_raise_on: str):
+        """Adapter whose fake form raises when Properties(prop_to_raise_on).Value is set."""
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+
+        class _FakeProperty:
+            """Fake property item whose Value setter raises."""
+            def __init__(self, name):
+                self.name = name
+
+            @property
+            def Value(self):
+                return None
+
+            @Value.setter
+            def Value(self, val):
+                raise Exception(f"Cannot set property '{self.name}'")
+
+        class _FakeProperties:
+            """Fake Properties collection that returns a raising _FakeProperty."""
+            def __init__(self, bad_prop):
+                self._bad_prop = bad_prop
+
+            def __call__(self, name):
+                return _FakeProperty(name)
+
+        class _FakeForm:
+            def __init__(self, name, properties):
+                self.Name = name
+                self._properties = _FakeProperties(properties)
+
+            @property
+            def Properties(self):
+                return self._properties
+
+        form_obj = _FakeForm("TestForm", prop_to_raise_on)
+
+        class FakeDoCmd:
+            def CreateForm(self):
+                return form_obj
+
+            def Close(self, ac_type, name, save):
+                pass
+
+        class FakeAccessApp:
+            DoCmd = FakeDoCmd()
+
+            class CurrentProject:
+                AllForms = MagicMock()
+
+        fake_disp._access_app = FakeAccessApp()
+
+        def fake_call(fn, *args, **kwargs):
+            return fn()
+
+        fake_disp._call_impl = fake_call
+        adapter._dispatcher = fake_disp
+        return adapter
+
+    def test_create_form_bad_property_logs_warning(self, caplog):
+        """create_form with an invalid property returns True but logs a WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_bad_property("BadProp")
+        result = adapter.create_form("TestForm", properties={"BadProp": 1})
+
+        assert result is True, "create_form must return True even on property rejection"
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("BadProp" in msg for msg in warning_msgs), (
+            f"Expected WARNING about 'BadProp', got: {warning_msgs}"
+        )
