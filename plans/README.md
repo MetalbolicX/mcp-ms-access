@@ -30,7 +30,7 @@ honor its STOP conditions, and update your row when done.
 | 007  | Versioning + maintenance profiles | 6 | P2 | L | MED | @medium + strict TDD | 004, 006 | DONE |
 | 008  | Windows x64 release qualification | 7 | P1 | M | MED | Orchestrator direct + @fast evidence collection | 001–007 | BLOCKED (G3 + G5 RED: `tests/integration/test_access_adapter.py:50` `CurrentDb.Name` COM dispatch — pre-existing product bug from plan 002; G1 gate-script bug fixed in scope; see `docs/release/0.1.0-report.md`) |
 | 009  | Deduplicate form/report clone families in COM adapter | 8 | P1 | M | MED | Direct edit (behavior-preserving refactor; existing suite pins contract) | — | DONE (commit b567386; access.py 2374→2204, -170; 696 passed/2 skipped, ruff clean, pyright 0) |
-| 010  | Make COM mutation failures observable | 8 | P1 | M | MED | **Strict TDD** (new error contract: typed errors + logging, bool API preserved) | 009 | TODO |
+| 010  | Make COM mutation failures observable | 8 | P1 | M | MED | **Strict TDD** (new error contract: typed errors + logging, bool API preserved) | 009 | DONE (commits 5704fef 2fdec14 e561ce1; access.py errors classified, property rejection logged, 707 passed) |
 | 011  | Extract CLI result formatting into cli_format.py | 8 | P2 | S | LOW | Direct edit (pure move; JSON shape pinned by existing CLI tests) | — | TODO |
 | 012  | Move Result envelope + allowed-dirs resolution to shared modules | 8 | P2 | M | MED | Direct edit (mechanical relocation with re-export shims) | — (sequence after 010 — both touch `errors.py`) | TODO |
 | 013  | Type the adapter seam + centralize `_ensure_adapter` | 8 | P2 | M | MED | Direct edit (typing refactor; pyright is the gate) | — | TODO |
