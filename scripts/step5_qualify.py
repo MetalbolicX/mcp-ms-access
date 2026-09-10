@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CANONICAL = REPO / "tests" / "fixtures" / "test_db.canonical.accdb"
+CANONICAL = REPO / "tests" / "fixtures" / "test_db.accdb"
 EXPECTED_HASH = hashlib.sha256(CANONICAL.read_bytes()).hexdigest()
 
 
@@ -251,7 +251,7 @@ def test_ten_session_rounds(temp_db: Path) -> None:
 
 
 def test_canonical_hash_unchanged() -> None:
-    """tests/fixtures/test_db.canonical.accdb hash must equal the expected hash."""
+    """tests/fixtures/test_db.accdb hash must equal the expected hash."""
     print("\n=== TEST 4: Canonical fixture hash unchanged ===")
     actual = hashlib.sha256(CANONICAL.read_bytes()).hexdigest()
     if actual != EXPECTED_HASH:

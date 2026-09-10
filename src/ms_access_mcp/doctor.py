@@ -218,9 +218,10 @@ def _check_deep_access() -> Check:
         try:
             app = win32com.client.Dispatch("Access.Application")
             app.Visible = False
-            # Create a temp empty DB
-            with tempfile.NamedTemporaryFile(suffix=".accdb", delete=False) as f:
-                temp_db = f.name
+            # Pick a path that does NOT yet exist; NewCurrentDatabase refuses
+            # to overwrite. NamedTemporaryFile pre-creates the file and breaks.
+            tmpdir = tempfile.mkdtemp(prefix="acc_doctor_")
+            temp_db = os.path.join(tmpdir, "doctor_probe.accdb")
             try:
                 app.NewCurrentDatabase(temp_db)
                 app.CloseCurrentDatabase()
@@ -228,6 +229,10 @@ def _check_deep_access() -> Check:
             finally:
                 try:
                     os.unlink(temp_db)
+                except Exception:
+                    pass
+                try:
+                    os.rmdir(tmpdir)
                 except Exception:
                     pass
 
