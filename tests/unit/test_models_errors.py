@@ -112,3 +112,41 @@ class TestErrors:
         from ms_access_mcp.errors import DaoOperationError
         err = DaoOperationError("dao error")
         assert str(err) == "dao error"
+
+    # --- Step 1: AccessObjectNotFoundError ---
+    def test_error_hierarchy_object_not_found(self):
+        from ms_access_mcp.errors import AccessMcpError, AccessObjectNotFoundError
+        assert issubclass(AccessObjectNotFoundError, AccessMcpError)
+
+    def test_object_not_found_error_attributes(self):
+        from ms_access_mcp.errors import AccessObjectNotFoundError
+        err = AccessObjectNotFoundError("form", "MyForm")
+        assert err.object_kind == "form"
+        assert err.object_name == "MyForm"
+
+    def test_object_not_found_error_message_contains_attrs(self):
+        from ms_access_mcp.errors import AccessObjectNotFoundError
+        err = AccessObjectNotFoundError("report", "SalesReport")
+        msg = str(err)
+        assert "report" in msg
+        assert "SalesReport" in msg
+
+    # --- Step 1: AccessBackendError ---
+    def test_error_hierarchy_backend_error(self):
+        from ms_access_mcp.errors import AccessMcpError, AccessBackendError
+        assert issubclass(AccessBackendError, AccessMcpError)
+
+    def test_backend_error_attributes(self):
+        from ms_access_mcp.errors import AccessBackendError
+        err = AccessBackendError("delete", "MyForm", "permission denied")
+        assert err.operation == "delete"
+        assert err.object_name == "MyForm"
+        assert err.detail == "permission denied"
+
+    def test_backend_error_message_contains_cause(self):
+        from ms_access_mcp.errors import AccessBackendError
+        original = ValueError("original COM error")
+        err = AccessBackendError("rename", "MyForm", "failed", cause=original)
+        assert "rename" in str(err)
+        assert "MyForm" in str(err)
+        assert err.__cause__ is original
