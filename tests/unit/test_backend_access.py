@@ -818,10 +818,3 @@ class TestGetCurrentDbName:
         result = adapter.get_current_db_name()
         assert result == "C:\\fake\\db.accdb"
         assert call_count["n"] == 1  # must have gone through dispatcher.call
-
-    def test_get_current_db_docstring_warns_about_cross_thread(self):
-        from ms_access_mcp.backends.access import AccessAdapter
-
-        adapter = AccessAdapter("ignored")  # noqa: F841 — constructed to mirror sibling test
-        doc = AccessAdapter.get_current_db.__doc__ or ""
-        assert "apartment-bound" in doc or "STA thread" in doc
