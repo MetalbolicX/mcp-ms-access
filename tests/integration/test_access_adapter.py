@@ -47,8 +47,9 @@ class TestAccessAdapterHidden:
 
         adapter = connect_hidden(temp_db_copy)
         try:
-            db_name = adapter.get_current_db().Name
-            assert db_name is not None
+            db_name = adapter.get_current_db_name()
+            assert db_name
+            assert db_name.lower().endswith(".accdb")
         finally:
             adapter.disconnect()
 

@@ -788,3 +788,40 @@ class TestDialogKiller:
         stop.set()
         fake_killer(stop)
         assert stop.is_set()
+
+
+# -------------------------------------------------------------------------- #
+# get_current_db_name — STA-threaded accessor
+# -------------------------------------------------------------------------- #
+
+class TestGetCurrentDbName:
+    """get_current_db_name dispatches the .Name read through the STA thread."""
+
+    def test_returns_name_via_dispatcher_call(self):
+        from ms_access_mcp.backends.access import AccessAdapter
+
+        class _FakeDb:
+            Name = "C:\\fake\\db.accdb"
+
+        adapter = AccessAdapter("ignored")
+        adapter._dispatcher._started = True
+        adapter._dispatcher._current_db = _FakeDb()
+
+        call_count = {"n": 0}
+
+        def _spy_call(fn, *args, **kwargs):
+            call_count["n"] += 1
+            return fn(*args, **kwargs)
+
+        adapter._dispatcher.call = _spy_call  # type: ignore[assignment]
+
+        result = adapter.get_current_db_name()
+        assert result == "C:\\fake\\db.accdb"
+        assert call_count["n"] == 1  # must have gone through dispatcher.call
+
+    def test_get_current_db_docstring_warns_about_cross_thread(self):
+        from ms_access_mcp.backends.access import AccessAdapter
+
+        adapter = AccessAdapter("ignored")  # noqa: F841 — constructed to mirror sibling test
+        doc = AccessAdapter.get_current_db.__doc__ or ""
+        assert "apartment-bound" in doc or "STA thread" in doc

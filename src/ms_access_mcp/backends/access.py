@@ -99,8 +99,26 @@ class AccessAdapter:
     # ------------------------------------------------------------------ #
 
     def get_current_db(self) -> Any:
-        """Return the current DAO Database object."""
+        """Return the current DAO Database object.
+
+        WARNING: The returned COM object is apartment-bound to the dispatcher's
+        STA thread. Reading its attributes from another thread raises AttributeError.
+        Prefer typed accessors like get_current_db_name() for cross-thread reads.
+        """
         return self._dispatcher.current_db
+
+    def get_current_db_name(self) -> str:
+        """Return the current DAO Database name, read on the dispatcher's STA thread.
+
+        The raw COM object returned by get_current_db() is apartment-bound to the
+        dispatcher's STA thread. Reading its attributes from any other thread
+        raises AttributeError (RPC_E_WRONG_THREAD surfaced by pywin32 dynamic
+        dispatch). Always use this accessor.
+        """
+        def _do() -> str:
+            return str(self._dispatcher.current_db.Name)
+
+        return self._dispatcher.call(_do)
 
     def get_current_project(self) -> Any:
         """Return the current Access Project object."""
