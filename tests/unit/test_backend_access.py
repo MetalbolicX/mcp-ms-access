@@ -1,6 +1,7 @@
 """Tests for access.py — AccessAdapter with dispatcher-fake for TDD."""
 
 import threading
+from typing import Any
 from unittest.mock import MagicMock
 
 from ms_access_mcp.backends.access import AccessAdapter
@@ -14,17 +15,17 @@ class FakeDispatcher:
 
     def __init__(self):
         self._started = False
-        self._access_app = None
-        self._current_db = None
-        self._ado_conn = None
-        self._db_path = None
-        self._call_impl = None  # custom call implementation
+        self._access_app: Any = None
+        self._current_db: Any = None
+        self._ado_conn: Any = None
+        self._db_path: Any = None
+        self._call_impl: Any = None  # custom call implementation
 
     def start(self):
         self._started = True
 
-    def set_db_path(self, path):
-        self._db_path = path
+    def set_db_path(self, db_path: str) -> None:
+        self._db_path = db_path
 
     @property
     def access_app(self):
@@ -68,8 +69,12 @@ class _FakeFormObject:
         self._record_source = record_source
 
     class _FakeProperties:
+        def __init__(self, record_source: str):
+            self._record_source = record_source
+
         def Exists(self, name):
             return name == "RecordSource"
+
         def __getitem__(self, name):
             class _Val:
                 Value = self._record_source
@@ -77,7 +82,7 @@ class _FakeFormObject:
 
     @property
     def Properties(self):
-        return self._FakeProperties()
+        return self._FakeProperties(self._record_source)
 
 
 class _FakeReportObject:
@@ -87,8 +92,12 @@ class _FakeReportObject:
         self._record_source = record_source
 
     class _FakeProperties:
+        def __init__(self, record_source: str):
+            self._record_source = record_source
+
         def Exists(self, name):
             return name == "RecordSource"
+
         def __getitem__(self, name):
             class _Val:
                 Value = self._record_source
@@ -96,7 +105,7 @@ class _FakeReportObject:
 
     @property
     def Properties(self):
-        return self._FakeProperties()
+        return self._FakeProperties(self._record_source)
 
 
 class _FakeMacroObject:
@@ -292,7 +301,7 @@ class TestNotStartedDefaults:
             # Verify the _do function checks _started internally
             # If it does, calling it will return the safe default
             return fn()
-        adapter._dispatcher._call_impl = fake_call
+        object.__setattr__(adapter._dispatcher, '_call_impl', fake_call)
         adapter._dispatcher._started = False
         return adapter
 

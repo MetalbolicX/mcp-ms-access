@@ -17,7 +17,7 @@ from ..models import (
     ObjectTextRef,
     SchemaDdlResult,
 )
-from .dispatcher import ComDispatcher
+from .protocols import VersioningDispatcherProtocol
 
 
 class VersioningBackend:
@@ -27,7 +27,7 @@ class VersioningBackend:
     Disconnected state (dispatcher not started) returns empty/error sentinels.
     """
 
-    def __init__(self, dispatcher: ComDispatcher) -> None:
+    def __init__(self, dispatcher: VersioningDispatcherProtocol) -> None:
         self._dispatcher = dispatcher
 
     # ------------------------------------------------------------------ #

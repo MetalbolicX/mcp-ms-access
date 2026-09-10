@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+from typing import Literal
 
 from ms_access_mcp.application.database import Err, Ok
 
@@ -28,7 +29,7 @@ class FakeMaintenanceUseCases:
     def dev_copy_status(self):
         return Ok(data={"active": True, "dev_path": "/tmp/dev.accdb", "manifest_path": "/tmp/dev.json"}, rowcount=1)
 
-    def compact_repair(self, path: str, mode: str, *, confirm: bool):
+    def compact_repair(self, path: str, mode: Literal["compact", "repair", "compact_and_repair"], *, confirm: bool):
         if not confirm:
             return Err("compact_repair requires explicit confirmation")
         return Ok(data={"path": path, "mode": mode, "output_path": None, "stats": {}}, rowcount=1)
@@ -172,6 +173,24 @@ class TestMaintenanceErrorPath:
             def backup(self, path, *, retention=None):
                 return Err("source not found")
 
+            def dev_copy_status(self):
+                return Ok(data={}, rowcount=0)
+
+            def create_dev_copy(self, source=None):
+                return Ok(data={}, rowcount=0)
+
+            def deploy_dev_copy(self, dev_path, target, *, confirm, preflight_backup=True):
+                return Ok(data={}, rowcount=0)
+
+            def compact_repair(self, path, mode, *, confirm):
+                return Ok(data={}, rowcount=0)
+
+            def diagnose_environment(self):
+                return Ok(data=[], rowcount=0)
+
+            def recover_access(self, *, confirm):
+                return Ok(data={}, rowcount=0)
+
         args = Namespace(path=str(tmp_path / "db.accdb"), retention=None, json=False)
         rc = _cmd_maintenance_backup(args, ErrUc())
         assert rc == 1
@@ -180,8 +199,26 @@ class TestMaintenanceErrorPath:
         from ms_access_mcp.cli import _cmd_maintenance_dev_copy_deploy
 
         class ErrUc:
+            def backup(self, path, *, retention=None):
+                return Ok(data={}, rowcount=0)
+
+            def dev_copy_status(self):
+                return Ok(data={}, rowcount=0)
+
+            def create_dev_copy(self, source=None):
+                return Ok(data={}, rowcount=0)
+
             def deploy_dev_copy(self, dev_path, target, *, confirm, preflight_backup=True):
                 return Err("dev copy not found")
+
+            def compact_repair(self, path, mode, *, confirm):
+                return Ok(data={}, rowcount=0)
+
+            def diagnose_environment(self):
+                return Ok(data=[], rowcount=0)
+
+            def recover_access(self, *, confirm):
+                return Ok(data={}, rowcount=0)
 
         args = Namespace(dev_path=str(tmp_path / "dev.accdb"), target=str(tmp_path / "t.accdb"), yes=True, json=False)
         rc = _cmd_maintenance_dev_copy_deploy(args, ErrUc())

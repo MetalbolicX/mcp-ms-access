@@ -1,7 +1,7 @@
 """Tests for automation.py — AutomationUseCases with fakes for TDD."""
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, cast
 
 from ms_access_mcp.application.database import Err, Ok
 
@@ -90,12 +90,12 @@ class FakeAccessAdapter:
         self.calls.append(("close_form", (name,), {}))
         return True
 
-    def create_form(self, name: str, record_source: str = "", properties: dict | None = None):
+    def create_form(self, name: str, record_source: str = "", properties: dict | None = None) -> bool:
         self.calls.append(("create_form", (name, record_source, properties), {}))
         self._forms.append(FormInfo(name=name, record_source=record_source))
         return True
 
-    def rename_form(self, old_name: str, new_name: str):
+    def rename_form(self, old_name: str, new_name: str) -> bool:
         self.calls.append(("rename_form", (old_name, new_name), {}))
         for f in self._forms:
             if f.name == old_name:
@@ -103,7 +103,7 @@ class FakeAccessAdapter:
                 return True
         return False
 
-    def delete_form(self, name: str):
+    def delete_form(self, name: str) -> bool:
         self.calls.append(("delete_form", (name,), {}))
         self._forms = [f for f in self._forms if f.name != name]
         return True
@@ -504,7 +504,7 @@ class TestListObjects:
 
         fake = FakeAccessAdapter()
         uc = AutomationUseCases(adapter=fake)
-        result = uc.list_objects("invalid")
+        result = uc.list_objects(cast(Literal["form", "report"], "invalid"))
         assert isinstance(result, Err)
         assert "unknown object_kind" in result.message
 
@@ -515,6 +515,7 @@ class TestListObjects:
         fake = FakeAccessAdapter()
         uc = AutomationUseCases(adapter=fake)
         result = uc.list_objects("form")
+        assert isinstance(result, Ok)
         assert result.rowcount == len(result.data)
 
 
@@ -557,7 +558,7 @@ class TestObjectExists:
 
         fake = FakeAccessAdapter()
         uc = AutomationUseCases(adapter=fake)
-        result = uc.object_exists("invalid", "Something")
+        result = uc.object_exists(cast(Literal["form", "report"], "invalid"), "Something")
         assert isinstance(result, Err)
 
 
@@ -1598,6 +1599,7 @@ class TestDataclassConversion:
         fake = FakeAccessAdapter()
         uc = AutomationUseCases(adapter=fake)
         result = uc.list_objects("form")
+        assert isinstance(result, Ok)
         # Verify data is a dict, not a FormInfo instance
         assert isinstance(result.data[0], dict)
         assert result.data[0]["name"] == "Form1"
@@ -1610,6 +1612,7 @@ class TestDataclassConversion:
         fake = FakeAccessAdapter()
         uc = AutomationUseCases(adapter=fake)
         result = uc.list_objects("report")
+        assert isinstance(result, Ok)
         assert isinstance(result.data[0], dict)
         assert result.data[0]["name"] == "Report1"
 
@@ -1620,6 +1623,7 @@ class TestDataclassConversion:
         fake = FakeAccessAdapter()
         uc = AutomationUseCases(adapter=fake)
         result = uc.get_macros()
+        assert isinstance(result, Ok)
         assert isinstance(result.data[0], dict)
         assert result.data[0]["name"] == "Macro1"
 
@@ -1630,6 +1634,7 @@ class TestDataclassConversion:
         fake = FakeAccessAdapter()
         uc = AutomationUseCases(adapter=fake)
         result = uc.get_modules()
+        assert isinstance(result, Ok)
         assert isinstance(result.data[0], dict)
         assert result.data[0]["name"] == "Module1"
         assert result.data[0]["code"] == "Sub Foo()\nEnd Sub"

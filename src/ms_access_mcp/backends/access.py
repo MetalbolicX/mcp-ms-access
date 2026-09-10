@@ -24,6 +24,7 @@ import time
 from typing import Any
 
 from .dispatcher import ComDispatcher
+from .protocols import AccessDispatcherProtocol
 from .trusted_locations import capture_trusted_locations, restore_trusted_locations
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,8 @@ class AccessAdapter:
 
     Adds UI/VBA operations on top of the plan-002 minimal adapter.
     """
+
+    _dispatcher: AccessDispatcherProtocol
 
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path

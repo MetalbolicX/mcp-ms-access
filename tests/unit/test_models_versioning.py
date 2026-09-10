@@ -81,7 +81,7 @@ class TestImportAllResult:
             errors=["frmBad: parse error"],
         )
         assert result.success is False
-        assert len(result.errors) == 1
+        assert len(result.errors or []) == 1
 
 
 class TestCompareResult:
