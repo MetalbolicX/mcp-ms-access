@@ -29,9 +29,34 @@ honor its STOP conditions, and update your row when done.
 | 006  | Automation profile (forms/reports/VBA/macros) | 5 | P2 | L | HIGH | @medium + strict TDD | 004 | DONE |
 | 007  | Versioning + maintenance profiles | 6 | P2 | L | MED | @medium + strict TDD | 004, 006 | DONE |
 | 008  | Windows x64 release qualification | 7 | P1 | M | MED | Orchestrator direct + @fast evidence collection | 001–007 | BLOCKED (G3 + G5 RED: `tests/integration/test_access_adapter.py:50` `CurrentDb.Name` COM dispatch — pre-existing product bug from plan 002; G1 gate-script bug fixed in scope; see `docs/release/0.1.0-report.md`) |
-| 009  | Deduplicate form/report clone families in COM adapter | — | P1 | M | MED | Direct edit (behavior-preserving refactor) | — | DONE |
+| 009  | Deduplicate form/report clone families in COM adapter | 8 | P1 | M | MED | Direct edit (behavior-preserving refactor; existing suite pins contract) | — | DONE (commit b567386; access.py 2374→2204, -170; 696 passed/2 skipped, ruff clean, pyright 0) |
+| 010  | Make COM mutation failures observable | 8 | P1 | M | MED | **Strict TDD** (new error contract: typed errors + logging, bool API preserved) | 009 | TODO |
+| 011  | Extract CLI result formatting into cli_format.py | 8 | P2 | S | LOW | Direct edit (pure move; JSON shape pinned by existing CLI tests) | — | TODO |
+| 012  | Move Result envelope + allowed-dirs resolution to shared modules | 8 | P2 | M | MED | Direct edit (mechanical relocation with re-export shims) | — (sequence after 010 — both touch `errors.py`) | TODO |
+| 013  | Type the adapter seam + centralize `_ensure_adapter` | 8 | P2 | M | MED | Direct edit (typing refactor; pyright is the gate) | — | TODO |
+| 014  | Architecture guard + doctor/dao characterization tests | 8 | P2 | M | LOW | Direct edit (test-only; production untouched) | 012 recommended (guard matches post-012 state) | TODO |
+| 015  | Narrow blanket ruff per-file-ignores on backends/** | 8 | P3 | M | MED | Direct edit (incremental, one rule group at a time) | 009, 010 recommended | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
+
+## Plans 009–015: mode rationale (audit-driven, 2026-09-09)
+
+These plans come from a code-health audit of `main @ 2178509`. Execution
+mode was chosen per plan by the nature of the change, not by default:
+
+- **Direct edit** (009, 011, 012, 013, 015): behavior-preserving moves and
+  typing refactors already pinned by the existing suite + pyright + ruff.
+  Strict TDD would add ceremony without signal; the gates ARE the existing
+  verification commands.
+- **Strict TDD** (010): the only plan that changes an error contract —
+  new typed exceptions and log-based observability while preserving the
+  public `bool` API. RED→GREEN→REFACTOR per step, failing output quoted.
+- **Test-only characterization** (014): no production change allowed; a
+  failing new test = discovered bug = STOP and report.
+- **No SDD cycles**: none of the findings introduce user-facing surface,
+  new profiles, or cross-cutting specs — a full explore→spec→design cycle
+  would be process without product. SDD remains the right tool for the
+  next FEATURE (like plans 005–007), not for debt remediation.
 
 ## Execution-mode conventions (apply to every plan)
 
@@ -61,6 +86,37 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED 
 - 005 requires 004 (the registered command starts a working stdio server).
 - 006 and 007 require 004 (profile registration machinery) and the backends from 002.
 - 008 requires all of 001–007 (qualifies the finished product).
+- 010 requires 009 (error semantics are fixed once, in the extracted
+  helpers, instead of twice in the clone pairs).
+- 012 and 010 both touch `errors.py` — sequence them, don't run in parallel.
+- 014's architecture guard encodes the post-012 boundary state; land 012
+  first or use the temporary allowlist documented in 014 Step 1.
+- 015 is cheapest after 009 + 010 shrink and stabilize `access.py`.
+
+## Findings considered and rejected/deferred (2026-09-09 audit)
+
+- **CLI parser-tree → declarative registry rewrite** (`cli.py:1364-1443`):
+  deferred. Highest-risk part of the file (every subparser name/dest is
+  public CLI surface); needs per-subparser test characterization first.
+  Plan 011 is the deliberate low-risk first cut instead.
+- **Splitting `cli.py` into per-domain modules**: deferred. The 87 `_cmd_*`
+  handlers are similar-shape, not duplicated; flat is cheaper for now.
+- **Narrowing COM catches to `pywintypes.com_error`**: rejected. Couples
+  `access.py` to pywin32 internals beyond the dispatcher's existing import;
+  plan 010's classification + logging achieves observability without it.
+- **Changing lister swallow semantics** (`get_forms`/`get_reports`
+  collection-walk `except Exception: pass`): rejected. Verified correct COM
+  best-effort — one corrupt object must not poison the whole list.
+- **Full constructor-injection DI for use cases**: deferred. Plan 013 types
+  the existing seam; a DI redesign also touches the duplicate
+  `DatabaseUseCases` wiring in `mcp_tools/core.py:27` and needs its own
+  scoped plan.
+- **MCP-layer structured error surfacing** (catching
+  `AccessObjectNotFoundError` in tools): deferred to a follow-up after 010;
+  requires threading typed errors through `application/` use cases.
+- **`mcp_tools/automation.py` and `application/database.py` coverage
+  ratios**: deferred. Re-assess after 009–013 land; 014 closes only the
+  confirmed zero-coverage gaps (doctor, dao).
 
 ## Deferred backlog (do NOT plan into v1)
 
