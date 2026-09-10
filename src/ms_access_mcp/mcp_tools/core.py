@@ -17,14 +17,14 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 
 from ..application.database import DatabaseUseCases, Err, Ok
-from ..server import _allowed_dirs_from_env
+from ..safety import allowed_dirs_from_env
 
 __all__ = ["register", "to_mcp_result"]
 
 
 def _new_db(readonly: bool = True) -> DatabaseUseCases:
     """Construct a DatabaseUseCases honoring ACCESS_MCP_ALLOWED_DIRS."""
-    return DatabaseUseCases(readonly=readonly, allowed_dirs=_allowed_dirs_from_env())
+    return DatabaseUseCases(readonly=readonly, allowed_dirs=allowed_dirs_from_env())
 
 
 # =============================================================================

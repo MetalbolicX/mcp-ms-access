@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,20 @@ def is_path_allowed(path: str | Path, allowed_dirs: list[Path]) -> bool:
         except ValueError:
             continue
     return False
+
+
+def allowed_dirs_from_env() -> list[Path]:
+    """Read ``ACCESS_MCP_ALLOWED_DIRS`` (semicolon-separated on Windows).
+
+    Returns an empty list when unset or empty. Used by the server lifespan and
+    MCP core tools to configure the path guard so MCP clients can open databases
+    outside the default location.
+    """
+    raw = os.environ.get("ACCESS_MCP_ALLOWED_DIRS", "")
+    if not raw:
+        return []
+    sep = ";" if os.name == "nt" else ":"
+    return [Path(p).expanduser() for p in raw.split(sep) if p.strip()]
 
 
 @dataclass

@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from .application.database import DatabaseUseCases
 from .backends.dispatcher import ComDispatcher
 from .profiles import load_profile, resolve_profile
+from .safety import allowed_dirs_from_env
 
 __all__ = ["build_server", "main"]
 
@@ -40,20 +39,6 @@ class _ServerState:
         self.dispatcher: ComDispatcher | None = None
 
 
-def _allowed_dirs_from_env() -> list[Path]:
-    """Read ``ACCESS_MCP_ALLOWED_DIRS`` (semicolon-separated on Windows).
-
-    Returns an empty list when unset or empty. Used by the server lifespan to
-    configure the path guard so MCP clients can open databases outside the
-    default location.
-    """
-    raw = os.environ.get("ACCESS_MCP_ALLOWED_DIRS", "")
-    if not raw:
-        return []
-    sep = ";" if os.name == "nt" else ":"
-    return [Path(p).expanduser() for p in raw.split(sep) if p.strip()]
-
-
 @asynccontextmanager
 async def lifespan(server: FastMCP):
     """Async context manager for server lifespan.
@@ -63,7 +48,7 @@ async def lifespan(server: FastMCP):
     - Shuts down the backend dispatcher
     """
     state = _ServerState()
-    state.db = DatabaseUseCases(readonly=True, allowed_dirs=_allowed_dirs_from_env())
+    state.db = DatabaseUseCases(readonly=True, allowed_dirs=allowed_dirs_from_env())
     state.dispatcher = ComDispatcher()
 
     _log.debug("Server lifespan: starting")
