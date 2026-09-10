@@ -409,9 +409,9 @@ class TestFormOperationsHappyPath:
         fake_disp._access_app = FakeAccessApp()
 
         def fake_call(fn, *args, **kwargs):
-            return fn()  # invoke _do directly
+            return fn()
 
-        fake_disp.call = fake_call
+        fake_disp._call_impl = fake_call
         adapter._dispatcher = fake_disp
         return adapter
 
@@ -818,3 +818,135 @@ class TestGetCurrentDbName:
         result = adapter.get_current_db_name()
         assert result == "C:\\fake\\db.accdb"
         assert call_count["n"] == 1  # must have gone through dispatcher.call
+
+
+# -------------------------------------------------------------------------- #
+# Step 2: COM mutation failure classification
+# -------------------------------------------------------------------------- #
+
+import logging
+
+
+class TestDeleteFormErrorClassification:
+    """delete_form returns False and logs a WARNING with error classification."""
+
+    def _make_adapter_with_dispatcher(self, call_impl):
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+
+        class FakeAccessApp:
+            class FakeDoCmd:
+                def DeleteObject(self, ac_type, name):
+                    raise Exception(f"Cannot find object '{name}' in this collection")
+
+            DoCmd = FakeDoCmd()
+
+            class FakeCurrentProject:
+                AllForms = MagicMock()
+
+            CurrentProject = FakeCurrentProject()
+
+        fake_disp._access_app = FakeAccessApp()
+        fake_disp._call_impl = call_impl
+        adapter._dispatcher = fake_disp
+        return adapter
+
+    def test_delete_form_not_found_logs_warning(self, caplog):
+        """delete_form whose COM raises not-found error returns False and logs WARNING."""
+        caplog.set_level(logging.WARNING)
+
+        def raise_delete(fn, args, kwargs):
+            return fn()
+
+        adapter = self._make_adapter_with_dispatcher(raise_delete)
+        result = adapter.delete_form("GhostForm")
+
+        assert result is False
+        assert len(caplog.records) >= 1
+        # The warning log should mention the object name and classification
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("GhostForm" in msg for msg in warning_msgs), (
+            f"Expected warning about 'GhostForm', got: {warning_msgs}"
+        )
+
+    def test_delete_form_generic_error_logs_warning(self, caplog):
+        """delete_form whose COM raises generic error returns False and logs WARNING."""
+        caplog.set_level(logging.WARNING)
+
+        def raise_delete(fn, args, kwargs):
+            return fn()  # let _do() run; its DoCmd call raises the error
+
+        # Replace the DoCmd to raise a generic error (inside _do())
+        adapter = self._make_adapter_with_dispatcher(raise_delete)
+        adapter._dispatcher._access_app.DoCmd.DeleteObject = MagicMock(
+            side_effect=RuntimeError("Unexpected COM failure")
+        )
+        result = adapter.delete_form("SomeForm")
+
+        assert result is False
+        assert len(caplog.records) >= 1
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("SomeForm" in msg for msg in warning_msgs), (
+            f"Expected warning about 'SomeForm', got: {warning_msgs}"
+        )
+
+
+class TestRenameFormErrorClassification:
+    """rename_form returns False and logs a WARNING with error classification."""
+
+    def _make_adapter_with_rename_error(self, exc):
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+
+        class FakeAccessApp:
+            class FakeDoCmd:
+                def Rename(self, new_name, ac_type, old_name):
+                    raise exc
+
+            DoCmd = FakeDoCmd()
+
+            class FakeCurrentProject:
+                AllForms = MagicMock()
+
+            CurrentProject = FakeCurrentProject()
+
+        fake_disp._access_app = FakeAccessApp()
+
+        def fake_call(fn, *args, **kwargs):
+            return fn()
+
+        fake_disp.call = fake_call
+        adapter._dispatcher = fake_disp
+        return adapter
+
+    def test_rename_form_not_found_logs_warning(self, caplog):
+        """rename_form whose COM raises not-found error returns False and logs WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_rename_error(
+            Exception("Cannot find object 'OldName' in this collection")
+        )
+        result = adapter.rename_form("OldName", "NewName")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("OldName" in msg for msg in warning_msgs), (
+            f"Expected warning about 'OldName', got: {warning_msgs}"
+        )
+
+    def test_rename_form_generic_error_logs_warning(self, caplog):
+        """rename_form whose COM raises generic error returns False and logs WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_rename_error(
+            RuntimeError("Unexpected COM failure")
+        )
+        result = adapter.rename_form("OldName", "NewName")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("OldName" in msg or "NewName" in msg for msg in warning_msgs), (
+            f"Expected warning about 'OldName' or 'NewName', got: {warning_msgs}"
+        )

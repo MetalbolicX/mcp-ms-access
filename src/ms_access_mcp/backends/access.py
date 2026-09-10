@@ -24,6 +24,7 @@ import time
 from typing import Any
 
 from .dispatcher import ComDispatcher
+from ..errors import AccessBackendError, AccessObjectNotFoundError
 from .protocols import AccessDispatcherProtocol
 from .trusted_locations import capture_trusted_locations, restore_trusted_locations
 
@@ -477,10 +478,20 @@ class AccessAdapter:
                 ac_type = self._OBJECT_KINDS[kind]["ac_type"]
                 self._dispatcher.access_app.DoCmd.Rename(new_name, ac_type, old_name)
                 return True
-            except Exception:
-                return False
+            except Exception as exc:
+                # Heuristic: old_name in message or HRESULT 0x8004... → not-found
+                if old_name in str(exc) or "0x8004" in str(exc):
+                    raise AccessObjectNotFoundError(kind, old_name) from exc
+                raise AccessBackendError("rename", old_name, str(exc)) from exc
 
-        return self._dispatcher.call(_do)
+        try:
+            return self._dispatcher.call(_do)
+        except AccessObjectNotFoundError as exc:
+            logger.warning("rename %s '%s' failed: %s", kind, old_name, exc)
+            return False
+        except AccessBackendError as exc:
+            logger.warning("rename %s '%s' failed: %s", kind, old_name, exc)
+            return False
 
     def _delete_object(self, kind: str, object_name: str) -> bool:
         """Delete a form or report from the database."""
@@ -492,10 +503,20 @@ class AccessAdapter:
                 ac_type = self._OBJECT_KINDS[kind]["ac_type"]
                 self._dispatcher.access_app.DoCmd.DeleteObject(ac_type, object_name)
                 return True
-            except Exception:
-                return False
+            except Exception as exc:
+                # Heuristic: name in message or HRESULT 0x8004... → not-found
+                if object_name in str(exc) or "0x8004" in str(exc):
+                    raise AccessObjectNotFoundError(kind, object_name) from exc
+                raise AccessBackendError("delete", object_name, str(exc)) from exc
 
-        return self._dispatcher.call(_do)
+        try:
+            return self._dispatcher.call(_do)
+        except AccessObjectNotFoundError as exc:
+            logger.warning("delete %s '%s' failed: %s", kind, object_name, exc)
+            return False
+        except AccessBackendError as exc:
+            logger.warning("delete %s '%s' failed: %s", kind, object_name, exc)
+            return False
 
     def create_form(self, form_name: str, record_source: str = "", template_name: str = "", properties: dict[str, Any] | None = None) -> bool:
         """Create a new form via DoCmd.CreateForm, optionally setting RecordSource and properties."""
