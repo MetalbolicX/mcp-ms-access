@@ -13,7 +13,7 @@
     instead of CWD.
 
 .PARAMETER Profile
-    Passed through to 'uv tool install' and 'configure opencode'.
+    Passed through to 'configure opencode' as the MCP profile selector.
     Default: core.
 
 .PARAMETER NoRegister
@@ -354,8 +354,7 @@ function Invoke-ToolInstall {
     [OutputType([void])]
     param(
         [Parameter(Mandatory)]
-        [string]$RepoPath,
-        [string]$Profile
+        [string]$RepoPath
     )
 
     $uvExe = Get-UvBinaryPath
@@ -367,7 +366,6 @@ function Invoke-ToolInstall {
         'tool', 'install',
         '--python', $PYTHON_VERSION,
         '--force',
-        '--profile', $Profile,
         $RepoPath
     )
 
@@ -507,7 +505,7 @@ function Invoke-Install {
     }
 
     # Step 5: uv tool install
-    Invoke-ToolInstall -RepoPath $RepoPath -Profile $Profile -WhatIf:$WhatIfPreference
+    Invoke-ToolInstall -RepoPath $RepoPath -WhatIf:$WhatIfPreference
 
     # Step 6: Resolve exe path
     $uvBinPath = Get-UvToolBinPath

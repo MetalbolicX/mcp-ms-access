@@ -236,7 +236,7 @@ Describe 'install.ps1 helper functions' {
     # Invoke-Install: -Profile passed to uv tool install
     # ---------------------------------------------------------------------------
 
-    It 'Invoke-Install -Profile core: passed to uv tool install' {
+    It 'Invoke-Install -Profile core: NOT passed to uv tool install (uv rejects it)' {
         $testDir = New-TestDirectory
         $repoPath = $testDir
         New-Item -ItemType File -Path (Join-Path $repoPath 'pyproject.toml') -Force | Out-Null
@@ -260,8 +260,9 @@ Describe 'install.ps1 helper functions' {
             Invoke-Install -RepoPath $repoPath -Profile core
 
             $script:toolInstallArgs | Should Not BeNullOrEmpty
-            $script:toolInstallArgs | Should Match '--profile'
-            $script:toolInstallArgs | Should Match 'core'
+            $script:toolInstallArgs | Should Not Match '--profile'
+            $script:toolInstallArgs | Should Match '--python'
+            $script:toolInstallArgs | Should Match '--force'
         }
         finally {
             Remove-Item -Recurse -Force $testDir -ErrorAction SilentlyContinue
