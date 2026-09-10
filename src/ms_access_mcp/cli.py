@@ -3,71 +3,23 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from .application.automation import AutomationUseCases
-from .application.database import DatabaseUseCases, Err, Ok
+from .application.database import DatabaseUseCases, Err
 from .application.maintenance import MaintenanceUseCases
 from .application.protocols import AutomationUseCasesProtocol, MaintenanceUseCasesProtocol, VersioningUseCasesProtocol
 from .application.versioning import VersioningUseCases
+from .cli_format import cli_allowed_dirs, format_result
 from .doctor import doctor_main
 from .opencode_config import Ok as OpenCodeOk
 from .opencode_config import entry_from, register, remove
 from .server import main as mcp_main
-
-# =============================================================================
-# Result Formatting
-# =============================================================================
-
-
-def _format_result(result: Ok | Err, json_output: bool = False) -> int:
-    """Format a result and return exit code.
-
-    Args:
-        result: Ok or Err from a use case
-        json_output: If True, output JSON
-
-    Returns:
-        Exit code: 0 for success, 1 for error
-    """
-    if isinstance(result, Ok):
-        if json_output:
-            print(json.dumps({"success": True, "data": result.data, "rowcount": result.rowcount}))
-        else:
-            if result.data is not None:
-                print(result.data)
-            print("Success")
-        return 0
-    else:
-        if json_output:
-            print(json.dumps({"success": False, "error": result.message}))
-        else:
-            print(f"Error: {result.message}", file=sys.stderr)
-        return 1
-
-
-def _result_to_dict(result: Ok | Err) -> dict[str, Any]:
-    """Convert result to dict for JSON output."""
-    if isinstance(result, Ok):
-        return {"success": True, "data": result.data, "rowcount": result.rowcount}
-    return {"success": False, "error": result.message}
-
-
-def _cli_allowed_dirs() -> list[Path]:
-    """Read ``ACCESS_MCP_ALLOWED_DIRS`` for the CLI subprocess (semicolon on Windows)."""
-    raw = os.environ.get("ACCESS_MCP_ALLOWED_DIRS", "")
-    if not raw:
-        return []
-    sep = ";" if os.name == "nt" else ":"
-    return [Path(p).expanduser() for p in raw.split(sep) if p.strip()]
-
 
 # =============================================================================
 # Global Flags
@@ -94,25 +46,25 @@ def _cmd_db_open(args: argparse.Namespace, db: DatabaseUseCases) -> int:
         print("Error: --db required", file=sys.stderr)
         return 2
     result = db.open_database(args.db)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_db_close(args: argparse.Namespace, db: DatabaseUseCases) -> int:
     """Handle: db close"""
     result = db.close_database()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_db_list(args: argparse.Namespace, db: DatabaseUseCases) -> int:
     """Handle: db list"""
     result = db.list_connections()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_db_active(args: argparse.Namespace, db: DatabaseUseCases) -> int:
     """Handle: db active"""
     result = db.get_active()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_tables(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -121,7 +73,7 @@ def _cmd_tables(args: argparse.Namespace, db: DatabaseUseCases) -> int:
         result = db.get_system_tables()
     else:
         result = db.get_tables()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_schema(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -130,7 +82,7 @@ def _cmd_schema(args: argparse.Namespace, db: DatabaseUseCases) -> int:
         print("Error: TABLE argument required", file=sys.stderr)
         return 2
     result = db.get_table_schema(args.table)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_indexes(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -139,19 +91,19 @@ def _cmd_indexes(args: argparse.Namespace, db: DatabaseUseCases) -> int:
         print("Error: TABLE argument required", file=sys.stderr)
         return 2
     result = db.get_indexes(args.table)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_relationships(args: argparse.Namespace, db: DatabaseUseCases) -> int:
     """Handle: relationships"""
     result = db.get_relationships()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_stats(args: argparse.Namespace, db: DatabaseUseCases) -> int:
     """Handle: stats"""
     result = db.get_database_statistics()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_props(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -163,7 +115,7 @@ def _cmd_props(args: argparse.Namespace, db: DatabaseUseCases) -> int:
             print("Error: --name required for props set", file=sys.stderr)
             return 2
         result = db.set_database_property(args.name, args.value, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_queries(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -185,7 +137,7 @@ def _cmd_queries(args: argparse.Namespace, db: DatabaseUseCases) -> int:
             print("Error: --name required for queries delete", file=sys.stderr)
             return 2
         result = db.delete_query(args.name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_query(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -194,7 +146,7 @@ def _cmd_query(args: argparse.Namespace, db: DatabaseUseCases) -> int:
         print("Error: SQL argument required", file=sys.stderr)
         return 2
     result = db.query_data(args.sql, params=args.param, limit=args.limit)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_insert(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -212,7 +164,7 @@ def _cmd_insert(args: argparse.Namespace, db: DatabaseUseCases) -> int:
         print("Error: at least one column=value pair required", file=sys.stderr)
         return 2
     result = db.insert_data(args.table, data, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_update(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -229,7 +181,7 @@ def _cmd_update(args: argparse.Namespace, db: DatabaseUseCases) -> int:
         print("Error: at least one column=value pair required", file=sys.stderr)
         return 2
     result = db.update_data(args.table, data, where=args.where, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_delete(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -238,7 +190,7 @@ def _cmd_delete(args: argparse.Namespace, db: DatabaseUseCases) -> int:
         print("Error: TABLE argument required", file=sys.stderr)
         return 2
     result = db.delete_data(args.table, where=args.where, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_ddl(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -274,7 +226,7 @@ def _cmd_ddl(args: argparse.Namespace, db: DatabaseUseCases) -> int:
             print("Error: --name, --source-table, --source-column, --dest-table, --dest-column required", file=sys.stderr)
             return 2
         result = db.create_relationship(args.name, args.source_table, args.source_column, args.dest_table, args.dest_column, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_export(args: argparse.Namespace, db: DatabaseUseCases) -> int:
@@ -287,13 +239,13 @@ def _cmd_export(args: argparse.Namespace, db: DatabaseUseCases) -> int:
         print("Error: TABLE or --query required", file=sys.stderr)
         return 2
     result = db.export_data(source, args.out, format=args.format)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_links(args: argparse.Namespace, db: DatabaseUseCases) -> int:
     """Handle: links list"""
     result = db.get_linked_tables()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 # =============================================================================
@@ -325,7 +277,7 @@ def _maintenance_use_cases(opts: argparse.Namespace) -> MaintenanceUseCases:
 def _cmd_automation_forms_list(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
     """Handle: automation forms list"""
     result = uc.list_objects("form")
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_exists(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -334,7 +286,7 @@ def _cmd_automation_forms_exists(args: argparse.Namespace, uc: AutomationUseCase
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.object_exists("form", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_create(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -343,7 +295,7 @@ def _cmd_automation_forms_create(args: argparse.Namespace, uc: AutomationUseCase
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.create_object("form", args.name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_rename(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -352,7 +304,7 @@ def _cmd_automation_forms_rename(args: argparse.Namespace, uc: AutomationUseCase
         print("Error: --old-name and --new-name required", file=sys.stderr)
         return 2
     result = uc.rename_object("form", args.old_name, args.new_name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_delete(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -361,7 +313,7 @@ def _cmd_automation_forms_delete(args: argparse.Namespace, uc: AutomationUseCase
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.delete_object("form", args.name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_properties(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -370,7 +322,7 @@ def _cmd_automation_forms_properties(args: argparse.Namespace, uc: AutomationUse
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.get_properties("form", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_controls(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -379,7 +331,7 @@ def _cmd_automation_forms_controls(args: argparse.Namespace, uc: AutomationUseCa
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.get_controls("form", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_add_control(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -395,7 +347,7 @@ def _cmd_automation_forms_add_control(args: argparse.Namespace, uc: AutomationUs
         section=getattr(args, "section", 0),
         confirm=args.yes,
     )
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_remove_control(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -404,7 +356,7 @@ def _cmd_automation_forms_remove_control(args: argparse.Namespace, uc: Automatio
         print("Error: --name and --control-name required", file=sys.stderr)
         return 2
     result = uc.remove_control("form", args.name, args.control_name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_sections(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -413,7 +365,7 @@ def _cmd_automation_forms_sections(args: argparse.Namespace, uc: AutomationUseCa
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.get_sections("form", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_export(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -422,7 +374,7 @@ def _cmd_automation_forms_export(args: argparse.Namespace, uc: AutomationUseCase
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.export_to_text("form", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_forms_import(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -431,7 +383,7 @@ def _cmd_automation_forms_import(args: argparse.Namespace, uc: AutomationUseCase
         print("Error: --name and --text required", file=sys.stderr)
         return 2
     result = uc.import_from_text("form", args.name, args.text, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 # ---- Reports ----
@@ -440,7 +392,7 @@ def _cmd_automation_forms_import(args: argparse.Namespace, uc: AutomationUseCase
 def _cmd_automation_reports_list(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
     """Handle: automation reports list"""
     result = uc.list_objects("report")
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_exists(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -449,7 +401,7 @@ def _cmd_automation_reports_exists(args: argparse.Namespace, uc: AutomationUseCa
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.object_exists("report", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_create(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -458,7 +410,7 @@ def _cmd_automation_reports_create(args: argparse.Namespace, uc: AutomationUseCa
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.create_object("report", args.name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_rename(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -467,7 +419,7 @@ def _cmd_automation_reports_rename(args: argparse.Namespace, uc: AutomationUseCa
         print("Error: --old-name and --new-name required", file=sys.stderr)
         return 2
     result = uc.rename_object("report", args.old_name, args.new_name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_delete(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -476,7 +428,7 @@ def _cmd_automation_reports_delete(args: argparse.Namespace, uc: AutomationUseCa
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.delete_object("report", args.name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_properties(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -485,7 +437,7 @@ def _cmd_automation_reports_properties(args: argparse.Namespace, uc: AutomationU
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.get_properties("report", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_controls(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -494,7 +446,7 @@ def _cmd_automation_reports_controls(args: argparse.Namespace, uc: AutomationUse
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.get_controls("report", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_add_control(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -510,7 +462,7 @@ def _cmd_automation_reports_add_control(args: argparse.Namespace, uc: Automation
         section=getattr(args, "section", 0),
         confirm=args.yes,
     )
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_remove_control(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -519,7 +471,7 @@ def _cmd_automation_reports_remove_control(args: argparse.Namespace, uc: Automat
         print("Error: --name and --control-name required", file=sys.stderr)
         return 2
     result = uc.remove_control("report", args.name, args.control_name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_sections(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -528,7 +480,7 @@ def _cmd_automation_reports_sections(args: argparse.Namespace, uc: AutomationUse
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.get_sections("report", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_export(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -537,7 +489,7 @@ def _cmd_automation_reports_export(args: argparse.Namespace, uc: AutomationUseCa
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.export_to_text("report", args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_reports_import(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -546,7 +498,7 @@ def _cmd_automation_reports_import(args: argparse.Namespace, uc: AutomationUseCa
         print("Error: --name and --text required", file=sys.stderr)
         return 2
     result = uc.import_from_text("report", args.name, args.text, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 # ---- Macros ----
@@ -555,7 +507,7 @@ def _cmd_automation_reports_import(args: argparse.Namespace, uc: AutomationUseCa
 def _cmd_automation_macros_list(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
     """Handle: automation macros list"""
     result = uc.get_macros()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_macros_exists(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -564,7 +516,7 @@ def _cmd_automation_macros_exists(args: argparse.Namespace, uc: AutomationUseCas
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.macro_exists(args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_macros_create(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -573,7 +525,7 @@ def _cmd_automation_macros_create(args: argparse.Namespace, uc: AutomationUseCas
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.create_macro(args.name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_macros_rename(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -582,7 +534,7 @@ def _cmd_automation_macros_rename(args: argparse.Namespace, uc: AutomationUseCas
         print("Error: --old-name and --new-name required", file=sys.stderr)
         return 2
     result = uc.rename_macro(args.old_name, args.new_name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_macros_delete(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -591,7 +543,7 @@ def _cmd_automation_macros_delete(args: argparse.Namespace, uc: AutomationUseCas
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.delete_macro(args.name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_macros_run(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -603,7 +555,7 @@ def _cmd_automation_macros_run(args: argparse.Namespace, uc: AutomationUseCasesP
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.run_macro(args.name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_macros_properties(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -612,7 +564,7 @@ def _cmd_automation_macros_properties(args: argparse.Namespace, uc: AutomationUs
         print("Error: --name required", file=sys.stderr)
         return 2
     result = uc.get_macro_properties(args.name)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 # ---- VBA ----
@@ -621,7 +573,7 @@ def _cmd_automation_macros_properties(args: argparse.Namespace, uc: AutomationUs
 def _cmd_automation_vba_modules(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
     """Handle: automation vba modules"""
     result = uc.get_modules()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_get_code(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -630,7 +582,7 @@ def _cmd_automation_vba_get_code(args: argparse.Namespace, uc: AutomationUseCase
         print("Error: --module required", file=sys.stderr)
         return 2
     result = uc.get_vba_code(args.module)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_set_code(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -642,7 +594,7 @@ def _cmd_automation_vba_set_code(args: argparse.Namespace, uc: AutomationUseCase
         print("Error: --module and --code required", file=sys.stderr)
         return 2
     result = uc.set_vba_code(args.module, args.code, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_add_procedure(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -651,19 +603,19 @@ def _cmd_automation_vba_add_procedure(args: argparse.Namespace, uc: AutomationUs
         print("Error: --module, --procedure, and --code required", file=sys.stderr)
         return 2
     result = uc.add_vba_procedure(args.module, args.procedure, args.code, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_compile(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
     """Handle: automation vba compile"""
     result = uc.compile_vba()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_save(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
     """Handle: automation vba save"""
     result = uc.save_database(confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_module_exists(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -672,7 +624,7 @@ def _cmd_automation_vba_module_exists(args: argparse.Namespace, uc: AutomationUs
         print("Error: --module required", file=sys.stderr)
         return 2
     result = uc.module_exists(args.module)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_create_module(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -681,7 +633,7 @@ def _cmd_automation_vba_create_module(args: argparse.Namespace, uc: AutomationUs
         print("Error: --module required", file=sys.stderr)
         return 2
     result = uc.create_module(args.module, module_type=getattr(args, "module_type", 1), confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_delete_module(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -690,7 +642,7 @@ def _cmd_automation_vba_delete_module(args: argparse.Namespace, uc: AutomationUs
         print("Error: --module required", file=sys.stderr)
         return 2
     result = uc.delete_module(args.module, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_rename_module(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -699,7 +651,7 @@ def _cmd_automation_vba_rename_module(args: argparse.Namespace, uc: AutomationUs
         print("Error: --old-name and --new-name required", file=sys.stderr)
         return 2
     result = uc.rename_module(args.old_name, args.new_name, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_list_procedures(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -708,7 +660,7 @@ def _cmd_automation_vba_list_procedures(args: argparse.Namespace, uc: Automation
         print("Error: --module required", file=sys.stderr)
         return 2
     result = uc.vba_list_procedures(args.module)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_get_procedure(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -717,7 +669,7 @@ def _cmd_automation_vba_get_procedure(args: argparse.Namespace, uc: AutomationUs
         print("Error: --module and --procedure required", file=sys.stderr)
         return 2
     result = uc.vba_get_procedure(args.module, args.procedure)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_automation_vba_replace_procedure(args: argparse.Namespace, uc: AutomationUseCasesProtocol) -> int:
@@ -726,7 +678,7 @@ def _cmd_automation_vba_replace_procedure(args: argparse.Namespace, uc: Automati
         print("Error: --module, --procedure, and --code required", file=sys.stderr)
         return 2
     result = uc.vba_replace_procedure(args.module, args.procedure, args.code, confirm=args.yes)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 # =============================================================================
@@ -737,13 +689,13 @@ def _cmd_automation_vba_replace_procedure(args: argparse.Namespace, uc: Automati
 def _cmd_versioning_export_object(args: argparse.Namespace, uc: VersioningUseCasesProtocol) -> int:
     """Handle: versioning export-object"""
     result = uc.export_object(args.kind, args.name, args.out_dir)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_versioning_export_all(args: argparse.Namespace, uc: VersioningUseCasesProtocol) -> int:
     """Handle: versioning export-all"""
     result = uc.export_all(args.out_dir)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_versioning_import_object(args: argparse.Namespace, uc: VersioningUseCasesProtocol) -> int:
@@ -752,7 +704,7 @@ def _cmd_versioning_import_object(args: argparse.Namespace, uc: VersioningUseCas
         print("Error: --yes required for destructive import-object", file=sys.stderr)
         return 2
     result = uc.import_object(args.kind, args.name, args.file_path, confirm=True)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_versioning_import_all(args: argparse.Namespace, uc: VersioningUseCasesProtocol) -> int:
@@ -761,19 +713,19 @@ def _cmd_versioning_import_all(args: argparse.Namespace, uc: VersioningUseCasesP
         print("Error: --yes required for destructive import-all", file=sys.stderr)
         return 2
     result = uc.import_all(args.input_dir, confirm=True)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_versioning_compare(args: argparse.Namespace, uc: VersioningUseCasesProtocol) -> int:
     """Handle: versioning compare"""
     result = uc.compare(args.export_dir)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_versioning_export_schema_ddl(args: argparse.Namespace, uc: VersioningUseCasesProtocol) -> int:
     """Handle: versioning export-schema-ddl"""
     result = uc.export_schema_ddl(args.out_dir)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 # =============================================================================
@@ -784,19 +736,19 @@ def _cmd_versioning_export_schema_ddl(args: argparse.Namespace, uc: VersioningUs
 def _cmd_maintenance_backup(args: argparse.Namespace, uc: MaintenanceUseCasesProtocol) -> int:
     """Handle: maintenance backup"""
     result = uc.backup(args.path, retention=getattr(args, "retention", None))
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_maintenance_dev_copy_status(args: argparse.Namespace, uc: MaintenanceUseCasesProtocol) -> int:
     """Handle: maintenance dev-copy-status"""
     result = uc.dev_copy_status()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_maintenance_dev_copy_create(args: argparse.Namespace, uc: MaintenanceUseCasesProtocol) -> int:
     """Handle: maintenance dev-copy-create"""
     result = uc.create_dev_copy(source=getattr(args, "source", None))
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_maintenance_dev_copy_deploy(args: argparse.Namespace, uc: MaintenanceUseCasesProtocol) -> int:
@@ -805,7 +757,7 @@ def _cmd_maintenance_dev_copy_deploy(args: argparse.Namespace, uc: MaintenanceUs
         print("Error: --yes required for destructive dev-copy-deploy", file=sys.stderr)
         return 2
     result = uc.deploy_dev_copy(args.dev_path, args.target, confirm=True)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_maintenance_compact_repair(args: argparse.Namespace, uc: MaintenanceUseCasesProtocol) -> int:
@@ -814,13 +766,13 @@ def _cmd_maintenance_compact_repair(args: argparse.Namespace, uc: MaintenanceUse
         print("Error: --yes required for destructive compact-repair", file=sys.stderr)
         return 2
     result = uc.compact_repair(args.path, args.mode, confirm=True)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_maintenance_diagnose(args: argparse.Namespace, uc: MaintenanceUseCasesProtocol) -> int:
     """Handle: maintenance diagnose"""
     result = uc.diagnose_environment()
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 def _cmd_maintenance_recover(args: argparse.Namespace, uc: MaintenanceUseCasesProtocol) -> int:
@@ -829,7 +781,7 @@ def _cmd_maintenance_recover(args: argparse.Namespace, uc: MaintenanceUseCasesPr
         print("Error: --yes required for destructive recover", file=sys.stderr)
         return 2
     result = uc.recover_access(confirm=True)
-    return _format_result(result, args.json)
+    return format_result(result, args.json)
 
 
 # =============================================================================
@@ -1556,14 +1508,14 @@ def main() -> int:
     db = DatabaseUseCases(
         backend=getattr(opts, "backend", "auto"),
         readonly=readonly,
-        allowed_dirs=_cli_allowed_dirs(),
+        allowed_dirs=cli_allowed_dirs(),
     )
 
     # Auto-open database if --db provided
     if getattr(opts, "db", None):
         result = db.open_database(opts.db)
         if isinstance(result, Err):
-            return _format_result(result, getattr(opts, "json", False))
+            return format_result(result, getattr(opts, "json", False))
 
     # Dispatch commands
     cmd = getattr(opts, "command", None)
