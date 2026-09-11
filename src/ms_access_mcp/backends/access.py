@@ -468,6 +468,17 @@ class AccessAdapter:
 
         return self._dispatcher.call(_do)
 
+    def _classify_object_failure(self, kind: str, operation: str, object_name: str, exc: BaseException) -> AccessObjectNotFoundError | AccessBackendError:
+        """Classify a COM failure: object_name/0x8004 in message → not-found, else backend."""
+        if object_name in str(exc) or "0x8004" in str(exc):
+            return AccessObjectNotFoundError(kind, object_name)
+        return AccessBackendError(operation, object_name, str(exc))
+
+    def _log_object_failure(self, kind: str, operation: str, object_name: str, exc: BaseException) -> None:
+        """Classify a COM failure and log it as a warning (for bool-collapsing operations)."""
+        error = self._classify_object_failure(kind, operation, object_name, exc)
+        logger.warning("%s %s '%s' failed: %s", operation, kind, object_name, error)
+
     def _rename_object(self, kind: str, old_name: str, new_name: str) -> bool:
         """Rename a form or report via DoCmd.Rename."""
         if not self._dispatcher._started:
@@ -479,17 +490,11 @@ class AccessAdapter:
                 self._dispatcher.access_app.DoCmd.Rename(new_name, ac_type, old_name)
                 return True
             except Exception as exc:
-                # Heuristic: old_name in message or HRESULT 0x8004... → not-found
-                if old_name in str(exc) or "0x8004" in str(exc):
-                    raise AccessObjectNotFoundError(kind, old_name) from exc
-                raise AccessBackendError("rename", old_name, str(exc)) from exc
+                raise self._classify_object_failure(kind, "rename", old_name, exc) from exc
 
         try:
             return self._dispatcher.call(_do)
-        except AccessObjectNotFoundError as exc:
-            logger.warning("rename %s '%s' failed: %s", kind, old_name, exc)
-            return False
-        except AccessBackendError as exc:
+        except (AccessObjectNotFoundError, AccessBackendError) as exc:
             logger.warning("rename %s '%s' failed: %s", kind, old_name, exc)
             return False
 
@@ -504,17 +509,11 @@ class AccessAdapter:
                 self._dispatcher.access_app.DoCmd.DeleteObject(ac_type, object_name)
                 return True
             except Exception as exc:
-                # Heuristic: name in message or HRESULT 0x8004... → not-found
-                if object_name in str(exc) or "0x8004" in str(exc):
-                    raise AccessObjectNotFoundError(kind, object_name) from exc
-                raise AccessBackendError("delete", object_name, str(exc)) from exc
+                raise self._classify_object_failure(kind, "delete", object_name, exc) from exc
 
         try:
             return self._dispatcher.call(_do)
-        except AccessObjectNotFoundError as exc:
-            logger.warning("delete %s '%s' failed: %s", kind, object_name, exc)
-            return False
-        except AccessBackendError as exc:
+        except (AccessObjectNotFoundError, AccessBackendError) as exc:
             logger.warning("delete %s '%s' failed: %s", kind, object_name, exc)
             return False
 
