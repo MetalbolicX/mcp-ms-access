@@ -342,6 +342,8 @@ class AccessAdapter:
         if not self._dispatcher._started:
             return []
 
+        from ms_access_mcp.models import FormInfo, ReportInfo
+
         def _do():
             objects = []
             collection_name = self._OBJECT_KINDS[kind]["collection"]
@@ -355,7 +357,6 @@ class AccessAdapter:
                             record_source = str(obj.Properties("RecordSource")) if obj.Properties.Exists("RecordSource") else ""
                         except Exception:
                             pass
-                        from ms_access_mcp.models import FormInfo, ReportInfo
                         model = FormInfo if kind == "form" else ReportInfo
                         objects.append(model(name=obj.Name, record_source=record_source))
                     except Exception:
