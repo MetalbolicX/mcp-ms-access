@@ -37,6 +37,7 @@ honor its STOP conditions, and update your row when done.
 | 014  | Architecture guard + doctor/dao characterization tests | 8 | P2 | M | LOW | Direct edit (test-only; production untouched) | 012 recommended (guard matches post-012 state) | DONE (commits a5b1457 577c19d 663a06f; AST layer-direction + private-import guard with proven failure, doctor 32 + dao 59 characterization tests incl. swallow pins, 799 passed/2 skipped, ruff clean, pyright 0, zero production files) |
 | 015  | Narrow blanket ruff per-file-ignores on backends/** | 8 | P3 | M | MED | Direct edit (incremental, one rule group at a time) | 009, 010 recommended | TODO |
 | 016  | FP maintainability: Result combinators, uniform error policy, purity warts, adapter mirror collapse | 8 | P1/P2 (per phase) | L | MED | Phased: P1 direct edit + new unit tests; P2 strict TDD (error contract, bool API preserved); P3 direct edit; P4 characterization tests → direct edit | 010, 012 (both DONE); land before 015 | DONE |
+| 017  | Complete plan-010 COM error observability (RecordSource DEBUG log + typed-error naming in warnings) | 8 | P2 | S | LOW | Strict TDD (log contract; RED→GREEN per step) | 010 (DONE) | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
