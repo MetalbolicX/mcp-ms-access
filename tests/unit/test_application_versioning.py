@@ -26,7 +26,7 @@ class FakeVersioningAdapter:
         self._queries = [ObjectInfo(name="Query1", code="query code")]
         self._modules = [ObjectInfo(name="Module1", code="module code")]
 
-    def connect(self, db_path: str) -> bool:
+    def connect(self, db_path: str | None = None, /) -> bool:
         self.connected = True
         self.calls.append(("connect", (db_path,), {}))
         return True

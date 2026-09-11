@@ -65,7 +65,7 @@ class FakeAccessAdapter:
         self._report_sections = {"Report1": [0, 1]}  # report header, detail
         self._vba_procedures = {"Module1": ["Foo", "Bar"]}
 
-    def connect(self, db_path: str) -> bool:
+    def connect(self, db_path: str | None = None, /) -> bool:
         self.connected = True
         self.calls.append(("connect", (db_path,), {}))
         return True
@@ -417,6 +417,7 @@ class TestEnsureAdapter:
         uc = AutomationUseCases(adapter=fake)
         uc._ensure_adapter()
         assert uc._adapter is fake
+        assert uc._adapter is not None
         assert uc._adapter.connected is True
 
     def test_ensure_adapter_creates_on_demand(self, monkeypatch):

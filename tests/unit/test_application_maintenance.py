@@ -27,7 +27,7 @@ class FakeMaintenanceAdapter:
         self._compact_error = compact_error
         self._recover_called = False
 
-    def connect(self, db_path: str) -> bool:
+    def connect(self, db_path: str | None = None, /) -> bool:
         self.connected = True
         self.calls.append(("connect", (db_path,), {}))
         return True

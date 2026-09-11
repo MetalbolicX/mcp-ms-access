@@ -7,22 +7,26 @@ All destructive ops gated via safety.require_acknowledgment + write policy.
 from __future__ import annotations
 
 import os
-from typing import Any
 
 from ..errors import Err, Ok, Result
 from ..errors import err as _err
 from ..errors import ok as _ok
 from ..safety import WritePolicy
+from ._adapter_lifecycle import AdapterLifecycle
+from .protocols import VersioningAdapterProtocol
 
 __all__ = ["VersioningUseCases"]
 
 
-class VersioningUseCases:
+class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
     """Constructor-injected versioning operations.
 
     No globals, no container. Each instance holds a reference to the
     active backend adapter and write policy.
     """
+
+    _backend = "com"
+    _capabilities_name = "AUTOMATION_CAPS"
 
     _KIND_METHODS = {
         "form": ("export_form_to_text", "import_form_from_text", "forms", ".txt"),
@@ -34,43 +38,13 @@ class VersioningUseCases:
 
     def __init__(
         self,
-        adapter: Any = None,
+        adapter: VersioningAdapterProtocol | None = None,
         readonly: bool = True,
         db_path: str | None = None,
     ) -> None:
-        self._adapter: Any = adapter
+        self._adapter = adapter
         self._policy = WritePolicy(readonly=readonly)
         self._db_path = db_path
-
-    def _ensure_adapter(self) -> Err | None:
-        if self._adapter is not None:
-            if not getattr(self._adapter, "connected", False):
-                self._adapter.connect(self._db_path)
-            return None
-
-        from ..backends import AUTOMATION_CAPS, BackendSelector
-        from ..capabilities import BackendCapabilityMismatchError, BackendUnavailableError
-
-        if self._db_path is None:
-            return _err("Backend unavailable: db_path is required to create an adapter")
-
-        try:
-            self._adapter = BackendSelector.get_adapter(
-                db_path=self._db_path,
-                backend="com",
-                capabilities=AUTOMATION_CAPS,
-            )
-            self._adapter.connect(self._db_path)
-            return None
-        except BackendUnavailableError as e:
-            self._adapter = None
-            return _err(f"Backend unavailable: {e}")
-        except BackendCapabilityMismatchError as e:
-            self._adapter = None
-            return _err(f"Backend unavailable: {e}")
-        except Exception as e:
-            self._adapter = None
-            return _err(f"Backend unavailable: {e}")
 
     def _confirm_gate(self, op: str, confirm: bool) -> Err | None:
         if ack := self._policy.require_acknowledgment(op, confirm):
@@ -135,6 +109,7 @@ class VersioningUseCases:
     def export_all(self, out_dir: str) -> Result:
         if err := self._ensure_adapter():
             return err
+        assert self._adapter is not None
 
         try:
             result = self._adapter.export_all_versioning(out_dir)
@@ -179,6 +154,7 @@ class VersioningUseCases:
 
         if err := self._ensure_adapter():
             return err
+        assert self._adapter is not None
 
         try:
             result = self._adapter.import_all_versioning(input_dir)
@@ -195,6 +171,7 @@ class VersioningUseCases:
     def compare(self, export_dir: str) -> Result:
         if err := self._ensure_adapter():
             return err
+        assert self._adapter is not None
 
         try:
             result = self._adapter.compare_versioning(export_dir)
@@ -212,6 +189,7 @@ class VersioningUseCases:
     def export_schema_ddl(self, out_dir: str) -> Result:
         if err := self._ensure_adapter():
             return err
+        assert self._adapter is not None
 
         try:
             result = self._adapter.export_schema_ddl(out_dir)

@@ -13,21 +13,26 @@ from ..errors import Err, Ok, Result
 from ..errors import err as _err
 from ..errors import ok as _ok
 from ..safety import WritePolicy
+from ._adapter_lifecycle import AdapterLifecycle
+from .protocols import AutomationAdapterProtocol
 
 if TYPE_CHECKING:
     pass
 
 
-class AutomationUseCases:
+class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
     """Constructor-injected automation operations.
 
     No globals, no container. Each instance holds a reference to the
     active backend adapter and write policy.
     """
 
+    _backend = "com"
+    _capabilities_name = "AUTOMATION_CAPS"
+
     def __init__(
         self,
-        adapter: Any = None,
+        adapter: AutomationAdapterProtocol | None = None,
         readonly: bool = True,
         db_path: str | None = None,
     ) -> None:
@@ -39,49 +44,9 @@ class AutomationUseCases:
             readonly: If True, all write operations are rejected.
             db_path: Path to the .accdb file (required if adapter is None).
         """
-        self._adapter: Any = adapter
+        self._adapter = adapter
         self._policy = WritePolicy(readonly=readonly)
         self._db_path = db_path
-
-    # -------------------------------------------------------------------------
-    # Adapter Management
-    # -------------------------------------------------------------------------
-
-    def _ensure_adapter(self) -> Err | None:
-        """Ensure adapter is connected, creating lazily if needed.
-
-        Returns:
-            None on success, Err on failure.
-        """
-        if self._adapter is not None:
-            if not getattr(self._adapter, "connected", False):
-                self._adapter.connect(self._db_path)
-            return None
-
-        # Import inside method to avoid circular dependency
-        from ..backends import AUTOMATION_CAPS, BackendSelector
-        from ..capabilities import BackendCapabilityMismatchError, BackendUnavailableError
-
-        if self._db_path is None:
-            return _err("Backend unavailable: db_path is required to create an adapter")
-
-        try:
-            self._adapter = BackendSelector.get_adapter(
-                db_path=self._db_path,
-                backend="com",
-                capabilities=AUTOMATION_CAPS,
-            )
-            self._adapter.connect(self._db_path)
-            return None
-        except BackendUnavailableError as e:
-            self._adapter = None
-            return _err(f"Backend unavailable: {e}")
-        except BackendCapabilityMismatchError as e:
-            self._adapter = None
-            return _err(f"Backend unavailable: {e}")
-        except Exception as e:
-            self._adapter = None
-            return _err(f"Backend unavailable: {e}")
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -758,6 +723,7 @@ class AutomationUseCases:
         """
         if err := self._ensure_adapter():
             return err
+        assert self._adapter is not None
         result = self._adapter.get_modules()
         items = [self._to_dict(item) for item in result]
         return _ok(data=items, rowcount=len(items))
@@ -859,6 +825,7 @@ class AutomationUseCases:
         """
         if err := self._ensure_adapter():
             return err
+        assert self._adapter is not None
         # compile_vba needs confirm because it can trigger modal dialogs
         # but doesn't need write gate (compile is read-only-safe)
         if err := self._confirm_gate("compile_vba", True):

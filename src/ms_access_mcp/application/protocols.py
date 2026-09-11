@@ -11,6 +11,55 @@ from typing import Any, Literal, Protocol
 from ..errors import Err, Ok
 
 
+class AdapterLifecycleProtocol(Protocol):
+    """Lifecycle members every injected backend adapter must expose."""
+
+    connected: bool
+
+    def connect(self, db_path: str | None = None, /) -> Any:
+        """Connect the adapter to the database at *db_path*."""
+        ...
+
+
+class AutomationAdapterProtocol(AdapterLifecycleProtocol, Protocol):
+    """Backend adapter surface used by ``AutomationUseCases``."""
+
+    def get_macros(self, /) -> Any:
+        ...
+
+    def get_modules(self, /) -> Any:
+        ...
+
+    def compile_vba(self, /) -> Any:
+        ...
+
+
+class MaintenanceAdapterProtocol(AdapterLifecycleProtocol, Protocol):
+    """Backend adapter surface used by ``MaintenanceUseCases``."""
+
+    def compact_repair(self, path: str, mode: str, /) -> Any:
+        ...
+
+    def recover(self, /) -> Any:
+        ...
+
+
+class VersioningAdapterProtocol(AdapterLifecycleProtocol, Protocol):
+    """Backend adapter surface used by ``VersioningUseCases``."""
+
+    def export_all_versioning(self, out_dir: str, /) -> Any:
+        ...
+
+    def import_all_versioning(self, input_dir: str, /) -> Any:
+        ...
+
+    def compare_versioning(self, export_dir: str, /) -> Any:
+        ...
+
+    def export_schema_ddl(self, out_dir: str, /) -> Any:
+        ...
+
+
 class MaintenanceUseCasesProtocol(Protocol):
     """CLI maintenance commands need these methods from MaintenanceUseCases."""
 

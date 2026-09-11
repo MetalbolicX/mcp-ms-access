@@ -17,65 +17,37 @@ import tempfile
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from ..backends import MAINTENANCE_CAPS, BackendSelector
-from ..capabilities import BackendCapabilityMismatchError, BackendUnavailableError
 from ..errors import Err, Ok, Result
 from ..errors import err as _err
 from ..errors import ok as _ok
 from ..safety import WritePolicy
+from ._adapter_lifecycle import AdapterLifecycle
+from .protocols import MaintenanceAdapterProtocol
 
 __all__ = ["MaintenanceUseCases"]
 
 
-class MaintenanceUseCases:
+class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
     """Constructor-injected maintenance operations.
 
     No globals, no container. Each instance holds a reference to the
     active backend adapter and write policy.
     """
 
+    _backend = "auto"
+    _capabilities_name = "MAINTENANCE_CAPS"
+
     DEFAULT_RETENTION = 5
 
     def __init__(
         self,
-        adapter: Any = None,
+        adapter: MaintenanceAdapterProtocol | None = None,
         readonly: bool = True,
         db_path: str | None = None,
     ) -> None:
-        self._adapter: Any = adapter
+        self._adapter = adapter
         self._policy = WritePolicy(readonly=readonly)
         self._db_path = db_path
-
-    # -------------------------------------------------------------------------
-    # Adapter Management
-    # -------------------------------------------------------------------------
-
-    def _ensure_adapter(self) -> Err | None:
-        if self._adapter is not None:
-            if not getattr(self._adapter, "connected", False):
-                self._adapter.connect(self._db_path)
-            return None
-
-        if self._db_path is None:
-            return _err("Backend unavailable: db_path is required to create an adapter")
-
-        try:
-            self._adapter = BackendSelector.get_adapter(
-                db_path=self._db_path,
-                backend="auto",
-                capabilities=MAINTENANCE_CAPS,
-            )
-            self._adapter.connect(self._db_path)
-            return None
-        except BackendUnavailableError as e:
-            self._adapter = None
-            return _err(f"Backend unavailable: {e}")
-        except BackendCapabilityMismatchError as e:
-            self._adapter = None
-            return _err(f"Backend unavailable: {e}")
-        except Exception as e:
-            self._adapter = None
-            return _err(f"Backend unavailable: {e}")
 
     def _confirm_gate(self, op: str, confirm: bool) -> Err | None:
         if ack := self._policy.require_acknowledgment(op, confirm):
@@ -345,6 +317,7 @@ class MaintenanceUseCases:
 
         if err := self._ensure_adapter():
             return err
+        assert self._adapter is not None
 
         try:
             result = self._adapter.compact_repair(path, mode)
@@ -413,6 +386,7 @@ class MaintenanceUseCases:
             errors.append(f"Failed to kill Access processes: {e}")
 
         reconnected = False
+        assert self._adapter is not None
         if hasattr(self._adapter, "recover"):
             try:
                 reconnected = self._adapter.recover()
