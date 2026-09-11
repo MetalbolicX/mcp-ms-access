@@ -480,8 +480,8 @@ class AccessAdapter:
                 if record_source:
                     try:
                         obj.RecordSource = record_source
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("create_%s: RecordSource %r rejected: %s", kind, record_source, exc)
                 if properties:
                     for prop_name, value in properties.items():
                         try:

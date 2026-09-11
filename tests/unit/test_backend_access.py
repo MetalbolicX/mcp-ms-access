@@ -821,6 +821,49 @@ class TestGetCurrentDbName:
         assert call_count["n"] == 1  # must have gone through dispatcher.call
 
 
+class TestCreateFormRecordSourceRejectionLogging:
+    """create_form preserves best-effort RecordSource behavior with DEBUG logging."""
+
+    def test_record_source_rejection_logs_debug_and_returns_true(self, caplog):
+        class _FakeForm:
+            Name = "TestForm"
+
+            @property
+            def RecordSource(self):
+                return ""
+
+            @RecordSource.setter
+            def RecordSource(self, value):
+                raise RuntimeError(f"Cannot set source {value}")
+
+        form = _FakeForm()
+
+        class _FakeDoCmd:
+            def CreateForm(self):
+                return form
+
+            def Close(self, ac_type, name, save):
+                pass
+
+        class _FakeAccessApp:
+            DoCmd = _FakeDoCmd()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        fake_disp._call_impl = lambda fn, *args, **kwargs: fn()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.create_form("TestForm", record_source="qryX")
+
+        assert result is True
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("RecordSource" in msg and "qryX" in msg for msg in debug_msgs)
+
+
 # -------------------------------------------------------------------------- #
 # Step 2: COM mutation failure classification
 # -------------------------------------------------------------------------- #
