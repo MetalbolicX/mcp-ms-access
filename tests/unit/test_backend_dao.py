@@ -40,7 +40,7 @@ class FakeField:
 class FakeFieldCollection:
     """Fields over the recordset's CURRENT row (DAO semantics)."""
 
-    def __init__(self, recordset: "FakeRecordset") -> None:
+    def __init__(self, recordset: FakeRecordset) -> None:
         self._rs = recordset
 
     @property
