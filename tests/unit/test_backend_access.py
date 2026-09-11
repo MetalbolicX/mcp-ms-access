@@ -1149,3 +1149,128 @@ class TestOpenCloseFormErrorClassification:
         assert any("close" in msg and "MainForm" in msg for msg in warning_msgs), (
             f"Expected WARNING naming the close operation and 'MainForm', got: {warning_msgs}"
         )
+
+
+class TestSetObjectPropertyErrorClassification:
+    """set_form_property/set_report_property return False and log a WARNING on COM failure."""
+
+    def _make_adapter(self, kind: str, open_exc=None, prop_exc=None):
+        """Adapter whose fake DoCmd open verb and/or property write raise."""
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+
+        class _FakeProperty:
+            def __init__(self, name):
+                self.name = name
+
+            @property
+            def Value(self):
+                return None
+
+            @Value.setter
+            def Value(self, val):
+                if prop_exc is not None:
+                    raise prop_exc
+
+        class _FakeProperties:
+            def __call__(self, name):
+                return _FakeProperty(name)
+
+        class _FakeObject:
+            def __init__(self, name):
+                self.Name = name
+
+            @property
+            def Properties(self):
+                return _FakeProperties()
+
+        obj = _FakeObject("TestObject")
+
+        if kind == "form":
+            class FakeFormDoCmd:
+                def OpenForm(self, name, view):
+                    if open_exc is not None:
+                        raise open_exc
+
+                def Close(self, ac_type, name, save):
+                    pass
+
+            do_cmd = FakeFormDoCmd()
+            live_collection_name = "Forms"
+        else:
+            class FakeReportDoCmd:
+                def OpenReport(self, name, view):
+                    if open_exc is not None:
+                        raise open_exc
+
+                def Close(self, ac_type, name, save):
+                    pass
+
+            do_cmd = FakeReportDoCmd()
+            live_collection_name = "Reports"
+
+        class FakeAccessApp:
+            DoCmd: Any = None  # set after branch to avoid duplicate class names
+            Screen = MagicMock()
+
+            class FakeCurrentProject:
+                AllForms = MagicMock()
+                AllReports = MagicMock()
+
+            CurrentProject = FakeCurrentProject()
+
+        FakeAccessApp.DoCmd = do_cmd
+        setattr(FakeAccessApp, live_collection_name, staticmethod(lambda name: obj))
+        fake_disp._access_app = FakeAccessApp()
+
+        def fake_call(fn, *args, **kwargs):
+            return fn()
+
+        fake_disp._call_impl = fake_call
+        adapter._dispatcher = fake_disp
+        return adapter
+
+    def test_set_form_property_open_failure_logs_warning(self, caplog):
+        """set_form_property whose OpenForm raises returns False and logs a WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(
+            "form", open_exc=RuntimeError("Unexpected COM failure")
+        )
+        result = adapter.set_form_property("MainForm", "Caption", "Hi")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("MainForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING about 'MainForm', got: {warning_msgs}"
+        )
+
+    def test_set_report_property_open_failure_logs_warning(self, caplog):
+        """set_report_property whose OpenReport raises returns False and logs a WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(
+            "report", open_exc=RuntimeError("Unexpected COM failure")
+        )
+        result = adapter.set_report_property("MainReport", "Caption", "Hi")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("MainReport" in msg for msg in warning_msgs), (
+            f"Expected WARNING about 'MainReport', got: {warning_msgs}"
+        )
+
+    def test_set_report_property_write_failure_logs_warning(self, caplog):
+        """set_report_property whose property write raises returns False and logs a WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(
+            "report", prop_exc=RuntimeError("Property is locked")
+        )
+        result = adapter.set_report_property("MainReport", "Caption", "Hi")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("MainReport" in msg for msg in warning_msgs), (
+            f"Expected WARNING about 'MainReport', got: {warning_msgs}"
+        )
+

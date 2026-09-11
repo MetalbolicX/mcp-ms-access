@@ -600,7 +600,8 @@ class AccessAdapter:
                     form.Properties(property_name).Value = value
                     return True
                 return False
-            except Exception:
+            except Exception as exc:
+                self._log_object_failure("form", "set_property", form_name, exc)
                 return False
             finally:
                 if opened:
@@ -1281,7 +1282,8 @@ class AccessAdapter:
                     report.Properties(property_name).Value = value
                     return True
                 return False
-            except Exception:
+            except Exception as exc:
+                self._log_object_failure("report", "set_property", report_name, exc)
                 return False
             finally:
                 if opened:
