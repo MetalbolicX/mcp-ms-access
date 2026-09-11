@@ -133,7 +133,7 @@ class TestErrors:
 
     # --- Step 1: AccessBackendError ---
     def test_error_hierarchy_backend_error(self):
-        from ms_access_mcp.errors import AccessMcpError, AccessBackendError
+        from ms_access_mcp.errors import AccessBackendError, AccessMcpError
         assert issubclass(AccessBackendError, AccessMcpError)
 
     def test_backend_error_attributes(self):

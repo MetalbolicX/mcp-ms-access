@@ -1,5 +1,6 @@
 """Tests for access.py — AccessAdapter with dispatcher-fake for TDD."""
 
+import logging
 import threading
 from typing import Any
 from unittest.mock import MagicMock
@@ -824,8 +825,6 @@ class TestGetCurrentDbName:
 # Step 2: COM mutation failure classification
 # -------------------------------------------------------------------------- #
 
-import logging
-
 
 class TestDeleteFormErrorClassification:
     """delete_form returns False and logs a WARNING with error classification."""
@@ -880,9 +879,9 @@ class TestDeleteFormErrorClassification:
 
         # Replace the DoCmd to raise a generic error (inside _do())
         adapter = self._make_adapter_with_dispatcher(raise_delete)
-        adapter._dispatcher._access_app.DoCmd.DeleteObject = MagicMock(
-            side_effect=RuntimeError("Unexpected COM failure")
-        )
+        app = adapter._dispatcher._access_app
+        assert app is not None
+        app.DoCmd.DeleteObject = MagicMock(side_effect=RuntimeError("Unexpected COM failure"))
         result = adapter.delete_form("SomeForm")
 
         assert result is False
