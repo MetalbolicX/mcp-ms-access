@@ -25,13 +25,29 @@ class _FakeDispatcher:
     def __init__(self, access_app: Any):
         self._started = True
         self._access_app = access_app
+        self._current_db: Any = None
+        self._ado_conn: Any = None
+        self._db_path: Any = None
 
     @property
     def access_app(self):
         return self._access_app
 
+    @property
+    def current_db(self):
+        return self._current_db
+
+    def start(self):
+        self._started = True
+
+    def set_db_path(self, db_path: str) -> None:
+        self._db_path = db_path
+
     def call(self, fn, *args, **kwargs):
         return fn(*args, **kwargs)
+
+    def shutdown(self):
+        self._started = False
 
 
 class _FakePropItem:
