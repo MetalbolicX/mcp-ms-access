@@ -415,7 +415,8 @@ class AccessAdapter:
             try:
                 self._dispatcher.access_app.DoCmd.OpenForm(form_name)
                 return True
-            except Exception:
+            except Exception as exc:
+                self._log_object_failure("form", "open", form_name, exc)
                 return False
 
         try:
@@ -432,7 +433,8 @@ class AccessAdapter:
             try:
                 self._dispatcher.access_app.DoCmd.Close(2, form_name, 2)  # acForm=2, acSaveNo=2
                 return True
-            except Exception:
+            except Exception as exc:
+                self._log_object_failure("form", "close", form_name, exc)
                 return False
 
         try:

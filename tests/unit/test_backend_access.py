@@ -1089,3 +1089,63 @@ class TestCreateFormErrorClassification:
         assert any("NewForm" in msg for msg in warning_msgs), (
             f"Expected WARNING about 'NewForm', got: {warning_msgs}"
         )
+
+
+class TestOpenCloseFormErrorClassification:
+    """open_form/close_form return False and log a WARNING on COM failure."""
+
+    def _make_adapter(self, open_exc=None, close_exc=None):
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+
+        class FakeDoCmd:
+            def OpenForm(self, form_name):
+                if open_exc is not None:
+                    raise open_exc
+
+            def Close(self, ac_type, name, save):
+                if close_exc is not None:
+                    raise close_exc
+
+        class FakeAccessApp:
+            DoCmd = FakeDoCmd()
+
+            class FakeCurrentProject:
+                AllForms = MagicMock()
+
+            CurrentProject = FakeCurrentProject()
+
+        fake_disp._access_app = FakeAccessApp()
+
+        def fake_call(fn, *args, **kwargs):
+            return fn()
+
+        fake_disp._call_impl = fake_call
+        adapter._dispatcher = fake_disp
+        return adapter
+
+    def test_open_form_com_failure_logs_warning(self, caplog):
+        """open_form whose OpenForm raises returns False and logs a WARNING naming the operation."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(open_exc=RuntimeError("Unexpected COM failure"))
+        result = adapter.open_form("MainForm")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("open" in msg and "MainForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING naming the open operation and 'MainForm', got: {warning_msgs}"
+        )
+
+    def test_close_form_com_failure_logs_warning(self, caplog):
+        """close_form whose Close raises returns False and logs a WARNING naming the operation."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(close_exc=RuntimeError("Unexpected COM failure"))
+        result = adapter.close_form("MainForm")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("close" in msg and "MainForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING naming the close operation and 'MainForm', got: {warning_msgs}"
+        )
