@@ -463,7 +463,8 @@ class AccessAdapter:
                             logger.warning("create_%s: property %s rejected: %s", kind, prop_name, exc)
                 self._dispatcher.access_app.DoCmd.Close(ac_type, obj.Name, 1)  # acSaveYes=1
                 return True
-            except Exception:
+            except Exception as exc:
+                self._log_object_failure(kind, "create", object_name, exc)
                 return False
 
         return self._dispatcher.call(_do)

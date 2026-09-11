@@ -1030,3 +1030,62 @@ class TestCreateFormPropertyRejectionLogging:
         assert any("BadProp" in msg for msg in warning_msgs), (
             f"Expected WARNING about 'BadProp', got: {warning_msgs}"
         )
+
+
+class TestCreateFormErrorClassification:
+    """create_form returns False and logs a WARNING when CreateForm itself fails."""
+
+    def _make_adapter_with_create_error(self, exc):
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+
+        class FakeAccessApp:
+            class FakeDoCmd:
+                def CreateForm(self):
+                    raise exc
+
+            DoCmd = FakeDoCmd()
+
+            class FakeCurrentProject:
+                AllForms = MagicMock()
+
+            CurrentProject = FakeCurrentProject()
+
+        fake_disp._access_app = FakeAccessApp()
+
+        def fake_call(fn, *args, **kwargs):
+            return fn()
+
+        fake_disp._call_impl = fake_call
+        adapter._dispatcher = fake_disp
+        return adapter
+
+    def test_create_form_com_failure_logs_warning(self, caplog):
+        """create_form whose CreateForm raises returns False and logs a WARNING naming the operation."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_create_error(
+            RuntimeError("Unexpected COM failure")
+        )
+        result = adapter.create_form("NewForm")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("create" in msg and "NewForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING naming the create operation and 'NewForm', got: {warning_msgs}"
+        )
+
+    def test_create_form_not_found_logs_warning(self, caplog):
+        """create_form whose COM error names the object classifies as not-found, returns False, logs WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_create_error(
+            Exception("Cannot find object 'NewForm' in this collection")
+        )
+        result = adapter.create_form("NewForm")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("NewForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING about 'NewForm', got: {warning_msgs}"
+        )
