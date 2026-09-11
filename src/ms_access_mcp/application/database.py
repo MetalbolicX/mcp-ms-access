@@ -7,7 +7,9 @@ All destructive ops gated via safety.require_acknowledgment.
 from __future__ import annotations
 
 import csv
+import inspect
 import json
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -22,6 +24,12 @@ from .sql_builder import build_select
 
 _ok = ok  # backward-compat aliases; remove in a later cleanup
 _err = err
+
+
+@cache
+def _method_signature(method: Any) -> inspect.Signature:
+    """Cached inspect.signature lookup for adapter query methods."""
+    return inspect.signature(method)
 
 
 # =============================================================================
@@ -442,9 +450,7 @@ class DatabaseUseCases:
             method = getattr(adapter, "query_data", None) or getattr(adapter, "execute_query", None)
             if method is None:
                 return _err(f"{type(adapter).__name__} does not support query_data")
-            import inspect
-
-            sig = inspect.signature(method)
+            sig = _method_signature(getattr(method, "__func__", method))
             kwargs: dict[str, Any] = {}
             if "params" in sig.parameters:
                 kwargs["params"] = params
