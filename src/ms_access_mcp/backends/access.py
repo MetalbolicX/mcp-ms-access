@@ -505,7 +505,14 @@ class AccessAdapter:
     def _log_object_failure(self, kind: str, operation: str, object_name: str, exc: BaseException) -> None:
         """Classify a COM failure and log it as a warning (for bool-collapsing operations)."""
         error = self._classify_object_failure(kind, operation, object_name, exc)
-        logger.warning("%s %s '%s' failed: %s", operation, kind, object_name, error)
+        logger.warning(
+            "%s %s '%s' failed: %s: %s",
+            operation,
+            kind,
+            object_name,
+            type(error).__name__,
+            error,
+        )
 
     def _rename_object(self, kind: str, old_name: str, new_name: str) -> bool:
         """Rename a form or report via DoCmd.Rename."""
@@ -523,7 +530,13 @@ class AccessAdapter:
         try:
             return self._dispatcher.call(_do)
         except (AccessObjectNotFoundError, AccessBackendError) as exc:
-            logger.warning("rename %s '%s' failed: %s", kind, old_name, exc)
+            logger.warning(
+                "rename %s '%s' failed: %s: %s",
+                kind,
+                old_name,
+                type(exc).__name__,
+                exc,
+            )
             return False
 
     def _delete_object(self, kind: str, object_name: str) -> bool:
@@ -542,7 +555,13 @@ class AccessAdapter:
         try:
             return self._dispatcher.call(_do)
         except (AccessObjectNotFoundError, AccessBackendError) as exc:
-            logger.warning("delete %s '%s' failed: %s", kind, object_name, exc)
+            logger.warning(
+                "delete %s '%s' failed: %s: %s",
+                kind,
+                object_name,
+                type(exc).__name__,
+                exc,
+            )
             return False
 
     def create_form(self, form_name: str, record_source: str = "", template_name: str = "", properties: dict[str, Any] | None = None) -> bool:
