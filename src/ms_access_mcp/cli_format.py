@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from .application.database import Err, Ok
+from .safety import allowed_dirs_from_env
 
 
 def cli_allowed_dirs() -> list[Path]:
     """Read ``ACCESS_MCP_ALLOWED_DIRS`` for the CLI subprocess (semicolon on Windows)."""
-    raw = os.environ.get("ACCESS_MCP_ALLOWED_DIRS", "")
-    if not raw:
-        return []
-    sep = ";" if os.name == "nt" else ":"
-    return [Path(p).expanduser() for p in raw.split(sep) if p.strip()]
+    return allowed_dirs_from_env()
 
 
 def result_to_dict(result: Ok | Err) -> dict[str, Any]:

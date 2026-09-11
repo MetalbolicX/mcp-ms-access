@@ -7,17 +7,10 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
-from ..application.database import Err, Ok
 from ..application.versioning import VersioningUseCases
-from .core import to_mcp_result
+from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "_TOOLS"]
-
-
-def _result_to_dict(result: Ok | Err) -> dict[str, Any]:
-    if isinstance(result, Ok):
-        return {"success": True, "data": result.data, "rowcount": result.rowcount}
-    return {"success": False, "error": result.message}
 
 
 def _new_versioning(readonly: bool = True) -> VersioningUseCases:

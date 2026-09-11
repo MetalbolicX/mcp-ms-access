@@ -36,6 +36,7 @@ honor its STOP conditions, and update your row when done.
 | 013  | Type the adapter seam + centralize `_ensure_adapter` | 8 | P2 | M | MED | Direct edit (typing refactor; pyright is the gate) | — | DONE (consumer AdapterProtocols + shared `AdapterLifecycle` mixin; `_ensure_adapter` defined once; automation/maintenance/versioning typed, fakes updated; STOP applied to `database.py` — 26-method adapter union exceeds the plan's ~25 threshold, `self._adapter: Any`/`_get_adapter -> Any` left unchanged; pyright 0, ruff clean) |
 | 014  | Architecture guard + doctor/dao characterization tests | 8 | P2 | M | LOW | Direct edit (test-only; production untouched) | 012 recommended (guard matches post-012 state) | TODO |
 | 015  | Narrow blanket ruff per-file-ignores on backends/** | 8 | P3 | M | MED | Direct edit (incremental, one rule group at a time) | 009, 010 recommended | TODO |
+| 016  | FP maintainability: Result combinators, uniform error policy, purity warts, adapter mirror collapse | 8 | P1/P2 (per phase) | L | MED | Phased: P1 direct edit + new unit tests; P2 strict TDD (error contract, bool API preserved); P3 direct edit; P4 characterization tests → direct edit | 010, 012 (both DONE); land before 015 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
@@ -92,6 +93,12 @@ mode was chosen per plan by the nature of the change, not by default:
 - 014's architecture guard encodes the post-012 boundary state; land 012
   first or use the temporary allowlist documented in 014 Step 1.
 - 015 is cheapest after 009 + 010 shrink and stabilize `access.py`.
+- 016 Phases 1–2 build on 010's typed-error regime and 012's `errors.py`
+  ownership. Phase 4's characterization tests
+  (`tests/unit/test_backend_object_mirror.py`) are disjoint from 014's
+  doctor/dao scope — no file conflicts, any relative order. Sequence 016
+  before 015: Phase 4 shrinks `access.py` another ~300–450 lines, which
+  narrows the ruff per-file-ignores surface 015 must walk.
 
 ## Findings considered and rejected/deferred (2026-09-09 audit)
 

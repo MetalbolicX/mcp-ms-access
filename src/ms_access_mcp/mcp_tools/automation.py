@@ -8,18 +8,11 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.automation import AutomationUseCases
-from ..application.database import Err, Ok
-from .core import to_mcp_result
+from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "to_mcp_result", "_TOOLS"]
 
 _MODULE_TYPES = {"standard": 1, "class": 2}
-
-
-def _result_to_dict(result: Ok | Err) -> dict[str, Any]:
-    if isinstance(result, Ok):
-        return {"success": True, "data": result.data, "rowcount": result.rowcount}
-    return {"success": False, "error": result.message}
 
 
 def _new_automation(readonly: bool = True) -> AutomationUseCases:

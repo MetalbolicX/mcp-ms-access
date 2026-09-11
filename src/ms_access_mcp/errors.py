@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,12 +18,36 @@ class Ok:
     data: Any = None
     rowcount: int = 0
 
+    def map(self, fn: Callable[[Any], Any]) -> Ok:
+        """Transform success data, preserving rowcount."""
+        return Ok(data=fn(self.data), rowcount=self.rowcount)
+
+    def bind(self, fn: Callable[[Any], Result]) -> Result:
+        """Chain a Result-returning function on success data."""
+        return fn(self.data)
+
+    def fold(self, on_ok: Callable[[Any, int], Any], on_err: Callable[[str], Any]) -> Any:
+        """Consume the envelope: on_ok(data, rowcount) or on_err(message)."""
+        return on_ok(self.data, self.rowcount)
+
 
 @dataclass(frozen=True)
 class Err:
     """Error result envelope."""
 
     message: str
+
+    def map(self, fn: Callable[[Any], Any]) -> Err:
+        """Short-circuit: errors pass through unchanged."""
+        return self
+
+    def bind(self, fn: Callable[[Any], Result]) -> Result:
+        """Short-circuit: errors pass through unchanged."""
+        return self
+
+    def fold(self, on_ok: Callable[[Any, int], Any], on_err: Callable[[str], Any]) -> Any:
+        """Consume the envelope: on_ok(data, rowcount) or on_err(message)."""
+        return on_err(self.message)
 
 
 Result = Ok | Err

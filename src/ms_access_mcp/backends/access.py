@@ -202,11 +202,35 @@ class AccessAdapter:
         return section_map.get(name.lower(), 0)
 
     # Registry for form/report clone-family deduplication.
-    # Maps kind key to COM collection name and Access object-type constant.
+    # Maps kind key to COM collection names and Access object-type constants.
     _OBJECT_KINDS = {
-        "form": {"collection": "AllForms", "ac_type": 2},
-        "report": {"collection": "AllReports", "ac_type": 4},
+        "form": {"collection": "AllForms", "ac_type": 2, "open_verb": "OpenForm", "live_collection": "Forms", "close_ac": 2},
+        "report": {"collection": "AllReports", "ac_type": 4, "open_verb": "OpenReport", "live_collection": "Reports", "close_ac": 4},
     }
+
+    def _open_object_in_design(self, kind: str, object_name: str) -> None:
+        """Open a form/report in design view via the kind's DoCmd verb."""
+        open_verb = self._OBJECT_KINDS[kind]["open_verb"]
+        getattr(self._dispatcher.access_app.DoCmd, open_verb)(object_name, 1)  # acDesign=1
+
+    def _live_object(self, kind: str, object_name: str) -> Any:
+        """Resolve the live form/report in design view (None when unavailable).
+
+        Form side prefers Screen.ActiveForm and falls back to Forms(name);
+        report side reads Reports(name) directly. A raising Forms(name)
+        fallback propagates to the caller's handler, matching legacy behavior.
+        """
+        app = self._dispatcher.access_app
+        if kind == "form":
+            try:
+                return app.Screen.ActiveForm
+            except Exception:
+                return app.Forms(object_name)
+        try:
+            collection = self._OBJECT_KINDS[kind]["live_collection"]
+            return getattr(app, collection)(object_name)
+        except Exception:
+            return None
 
     def _get_vb_project(self) -> Any:
         """Get the first VBA project via VBProjects enumeration.
@@ -342,6 +366,8 @@ class AccessAdapter:
         if not self._dispatcher._started:
             return []
 
+        from ms_access_mcp.models import FormInfo, ReportInfo
+
         def _do():
             objects = []
             collection_name = self._OBJECT_KINDS[kind]["collection"]
@@ -355,7 +381,6 @@ class AccessAdapter:
                             record_source = str(obj.Properties("RecordSource")) if obj.Properties.Exists("RecordSource") else ""
                         except Exception:
                             pass
-                        from ms_access_mcp.models import FormInfo, ReportInfo
                         model = FormInfo if kind == "form" else ReportInfo
                         objects.append(model(name=obj.Name, record_source=record_source))
                     except Exception:
@@ -415,7 +440,8 @@ class AccessAdapter:
             try:
                 self._dispatcher.access_app.DoCmd.OpenForm(form_name)
                 return True
-            except Exception:
+            except Exception as exc:
+                self._log_object_failure("form", "open", form_name, exc)
                 return False
 
         try:
@@ -432,7 +458,8 @@ class AccessAdapter:
             try:
                 self._dispatcher.access_app.DoCmd.Close(2, form_name, 2)  # acForm=2, acSaveNo=2
                 return True
-            except Exception:
+            except Exception as exc:
+                self._log_object_failure("form", "close", form_name, exc)
                 return False
 
         try:
@@ -463,10 +490,22 @@ class AccessAdapter:
                             logger.warning("create_%s: property %s rejected: %s", kind, prop_name, exc)
                 self._dispatcher.access_app.DoCmd.Close(ac_type, obj.Name, 1)  # acSaveYes=1
                 return True
-            except Exception:
+            except Exception as exc:
+                self._log_object_failure(kind, "create", object_name, exc)
                 return False
 
         return self._dispatcher.call(_do)
+
+    def _classify_object_failure(self, kind: str, operation: str, object_name: str, exc: BaseException) -> AccessObjectNotFoundError | AccessBackendError:
+        """Classify a COM failure: object_name/0x8004 in message → not-found, else backend."""
+        if object_name in str(exc) or "0x8004" in str(exc):
+            return AccessObjectNotFoundError(kind, object_name)
+        return AccessBackendError(operation, object_name, str(exc))
+
+    def _log_object_failure(self, kind: str, operation: str, object_name: str, exc: BaseException) -> None:
+        """Classify a COM failure and log it as a warning (for bool-collapsing operations)."""
+        error = self._classify_object_failure(kind, operation, object_name, exc)
+        logger.warning("%s %s '%s' failed: %s", operation, kind, object_name, error)
 
     def _rename_object(self, kind: str, old_name: str, new_name: str) -> bool:
         """Rename a form or report via DoCmd.Rename."""
@@ -479,17 +518,11 @@ class AccessAdapter:
                 self._dispatcher.access_app.DoCmd.Rename(new_name, ac_type, old_name)
                 return True
             except Exception as exc:
-                # Heuristic: old_name in message or HRESULT 0x8004... → not-found
-                if old_name in str(exc) or "0x8004" in str(exc):
-                    raise AccessObjectNotFoundError(kind, old_name) from exc
-                raise AccessBackendError("rename", old_name, str(exc)) from exc
+                raise self._classify_object_failure(kind, "rename", old_name, exc) from exc
 
         try:
             return self._dispatcher.call(_do)
-        except AccessObjectNotFoundError as exc:
-            logger.warning("rename %s '%s' failed: %s", kind, old_name, exc)
-            return False
-        except AccessBackendError as exc:
+        except (AccessObjectNotFoundError, AccessBackendError) as exc:
             logger.warning("rename %s '%s' failed: %s", kind, old_name, exc)
             return False
 
@@ -504,17 +537,11 @@ class AccessAdapter:
                 self._dispatcher.access_app.DoCmd.DeleteObject(ac_type, object_name)
                 return True
             except Exception as exc:
-                # Heuristic: name in message or HRESULT 0x8004... → not-found
-                if object_name in str(exc) or "0x8004" in str(exc):
-                    raise AccessObjectNotFoundError(kind, object_name) from exc
-                raise AccessBackendError("delete", object_name, str(exc)) from exc
+                raise self._classify_object_failure(kind, "delete", object_name, exc) from exc
 
         try:
             return self._dispatcher.call(_do)
-        except AccessObjectNotFoundError as exc:
-            logger.warning("delete %s '%s' failed: %s", kind, object_name, exc)
-            return False
-        except AccessBackendError as exc:
+        except (AccessObjectNotFoundError, AccessBackendError) as exc:
             logger.warning("delete %s '%s' failed: %s", kind, object_name, exc)
             return False
 
@@ -578,59 +605,62 @@ class AccessAdapter:
         """Get all properties of a report by opening it in design view."""
         return self._get_object_properties("report", report_name)
 
-    def set_form_property(self, form_name: str, property_name: str, value: str) -> bool:
-        """Set a single property of a form by opening it in design view."""
+    def _set_object_property(self, kind: str, object_name: str, property_name: str, value: str) -> bool:
+        """Set a single property of a form/report by opening it in design view."""
         if not self._dispatcher._started:
             return False
+
+        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
 
         def _do() -> bool:
             opened = False
             try:
-                self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)  # acDesign=1
+                self._open_object_in_design(kind, object_name)
                 opened = True
 
-                try:
-                    form = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    form = self._dispatcher.access_app.Forms(form_name)
+                obj = self._live_object(kind, object_name)
 
-                if form is not None:
-                    form.Properties(property_name).Value = value
+                if obj is not None:
+                    obj.Properties(property_name).Value = value
                     return True
                 return False
-            except Exception:
+            except Exception as exc:
+                self._log_object_failure(kind, "set_property", object_name, exc)
                 return False
             finally:
                 if opened:
                     try:
-                        self._dispatcher.access_app.DoCmd.Close(2, form_name, 1)  # acSaveYes=1
+                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
                     except Exception:
                         pass
 
         return self._dispatcher.call(_do)
 
-    def set_form_properties(self, form_name: str, properties: dict[str, Any]) -> dict[str, bool]:
-        """Set multiple properties of a form. Returns dict of {property_name: success}."""
+    def set_form_property(self, form_name: str, property_name: str, value: str) -> bool:
+        """Set a single property of a form by opening it in design view."""
+        return self._set_object_property("form", form_name, property_name, value)
+
+    def _set_object_properties(self, kind: str, object_name: str, properties: dict[str, Any]) -> dict[str, bool]:
+        """Set multiple properties of a form/report. Returns dict of {property_name: success}."""
         if not self._dispatcher._started:
             return {}
+
+        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
 
         def _do() -> dict[str, bool]:
             results: dict[str, bool] = {}
             for prop_name, value in properties.items():
                 opened = False
                 try:
-                    self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)  # acDesign=1
+                    self._open_object_in_design(kind, object_name)
                     opened = True
 
-                    try:
-                        form = self._dispatcher.access_app.Screen.ActiveForm
-                    except Exception:
-                        form = self._dispatcher.access_app.Forms(form_name)
+                    obj = self._live_object(kind, object_name)
 
                     success = False
-                    if form is not None:
+                    if obj is not None:
                         try:
-                            form.Properties(prop_name).Value = value
+                            obj.Properties(prop_name).Value = value
                             success = True
                         except Exception:
                             pass
@@ -639,13 +669,17 @@ class AccessAdapter:
                 finally:
                     if opened:
                         try:
-                            self._dispatcher.access_app.DoCmd.Close(2, form_name, 1)  # acSaveYes=1
+                            self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
                         except Exception:
                             pass
                 results[prop_name] = success
             return results
 
         return self._dispatcher.call(_do)
+
+    def set_form_properties(self, form_name: str, properties: dict[str, Any]) -> dict[str, bool]:
+        """Set multiple properties of a form. Returns dict of {property_name: success}."""
+        return self._set_object_properties("form", form_name, properties)
 
     def _get_object_controls(self, kind: str, object_name: str):
         """Get all controls in a form/report by opening it in design view."""
@@ -713,26 +747,25 @@ class AccessAdapter:
         """Get all controls in a report by opening it in design view."""
         return self._get_object_controls("report", report_name)
 
-    def get_control_properties(self, form_name: str, control_name: str) -> dict[str, str]:
-        """Get all properties of a specific control by opening the form in design view."""
+    def _get_object_control_properties(self, kind: str, object_name: str, control_name: str) -> dict[str, str]:
+        """Get all properties of a specific control by opening the form/report in design view."""
         if not self._dispatcher._started:
             return {}
+
+        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
 
         def _do() -> dict[str, str]:
             opened = False
             try:
-                self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)  # acDesign=1
+                self._open_object_in_design(kind, object_name)
                 opened = True
 
-                try:
-                    form = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    form = self._dispatcher.access_app.Forms(form_name)
+                obj = self._live_object(kind, object_name)
 
-                if form is not None:
-                    for i in range(form.Controls.Count):
+                if obj is not None:
+                    for i in range(obj.Controls.Count):
                         try:
-                            ctrl = form.Controls(i)
+                            ctrl = obj.Controls(i)
                             if ctrl.Name == control_name:
                                 props: dict[str, str] = {}
                                 for prop in ctrl.Properties:
@@ -749,32 +782,35 @@ class AccessAdapter:
             finally:
                 if opened:
                     try:
-                        self._dispatcher.access_app.DoCmd.Close(2, form_name, 2)
+                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)
                     except Exception:
                         pass
 
         return self._dispatcher.call(_do)
 
-    def set_control_property(self, form_name: str, control_name: str, property_name: str, value: str) -> bool:
-        """Set a property of a control by opening the form in design view."""
+    def get_control_properties(self, form_name: str, control_name: str) -> dict[str, str]:
+        """Get all properties of a specific control by opening the form in design view."""
+        return self._get_object_control_properties("form", form_name, control_name)
+
+    def _set_object_control_property(self, kind: str, object_name: str, control_name: str, property_name: str, value: str) -> bool:
+        """Set a property of a control by opening the form/report in design view."""
         if not self._dispatcher._started:
             return False
+
+        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
 
         def _do() -> bool:
             opened = False
             try:
-                self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)
+                self._open_object_in_design(kind, object_name)
                 opened = True
 
-                try:
-                    form = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    form = self._dispatcher.access_app.Forms(form_name)
+                obj = self._live_object(kind, object_name)
 
-                if form is not None:
-                    for i in range(form.Controls.Count):
+                if obj is not None:
+                    for i in range(obj.Controls.Count):
                         try:
-                            ctrl = form.Controls(i)
+                            ctrl = obj.Controls(i)
                             if ctrl.Name == control_name:
                                 ctrl.Properties(property_name).Value = value
                                 return True
@@ -786,16 +822,22 @@ class AccessAdapter:
             finally:
                 if opened:
                     try:
-                        self._dispatcher.access_app.DoCmd.Close(2, form_name, 1)  # acSaveYes
+                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes
                     except Exception:
                         pass
 
         return self._dispatcher.call(_do)
 
-    def set_control_properties(self, form_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
-        """Set multiple properties at once. Returns dict of {property_name: success}."""
+    def set_control_property(self, form_name: str, control_name: str, property_name: str, value: str) -> bool:
+        """Set a property of a control by opening the form in design view."""
+        return self._set_object_control_property("form", form_name, control_name, property_name, value)
+
+    def _set_object_control_properties(self, kind: str, object_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
+        """Set multiple properties of a form/report control. Returns dict of {property_name: success}."""
         if not self._dispatcher._started:
             return {}
+
+        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
 
         def _do() -> dict[str, bool]:
             results: dict[str, bool] = {}
@@ -803,19 +845,16 @@ class AccessAdapter:
                 try:
                     opened = False
                     try:
-                        self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)
+                        self._open_object_in_design(kind, object_name)
                         opened = True
 
-                        try:
-                            form = self._dispatcher.access_app.Screen.ActiveForm
-                        except Exception:
-                            form = self._dispatcher.access_app.Forms(form_name)
+                        obj = self._live_object(kind, object_name)
 
                         success = False
-                        if form is not None:
-                            for i in range(form.Controls.Count):
+                        if obj is not None:
+                            for i in range(obj.Controls.Count):
                                 try:
-                                    ctrl = form.Controls(i)
+                                    ctrl = obj.Controls(i)
                                     if ctrl.Name == control_name:
                                         ctrl.Properties(prop_name).Value = value
                                         success = True
@@ -827,7 +866,7 @@ class AccessAdapter:
                     finally:
                         if opened:
                             try:
-                                self._dispatcher.access_app.DoCmd.Close(2, form_name, 1)
+                                self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)
                             except Exception:
                                 pass
                     results[prop_name] = success
@@ -837,22 +876,28 @@ class AccessAdapter:
 
         return self._dispatcher.call(_do)
 
-    def add_control(self, form_name: str, control_type: str, control_name: str, section: int = 0, properties: dict[str, Any] | None = None) -> bool:
-        """Add a control to a form by opening it in design view."""
+    def set_control_properties(self, form_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
+        """Set multiple properties at once. Returns dict of {property_name: success}."""
+        return self._set_object_control_properties("form", form_name, control_name, properties)
+
+    def _add_object_control(self, kind: str, object_name: str, control_type: str, control_name: str, section: int = 0, properties: dict[str, Any] | None = None) -> bool:
+        """Add a control to a form/report by opening it in design view."""
         if not self._dispatcher._started:
             return False
+
+        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
 
         def _do() -> bool:
             opened = False
             try:
-                self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)  # acDesign=1
+                self._open_object_in_design(kind, object_name)
                 opened = True
 
                 type_int = self._control_type_id(control_type)
                 if type_int == 0:
                     return False
 
-                ctrl = self._dispatcher.access_app.DoCmd.CreateControl(form_name, type_int, section)
+                ctrl = self._dispatcher.access_app.DoCmd.CreateControl(object_name, type_int, section)
                 ctrl.Name = control_name
 
                 if properties:
@@ -862,14 +907,58 @@ class AccessAdapter:
                         except Exception:
                             pass
 
-                self._dispatcher.access_app.DoCmd.Close(2, form_name, 1)  # acSaveYes=1
+                self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
                 return True
             except Exception:
                 return False
             finally:
                 if opened:
                     try:
-                        self._dispatcher.access_app.DoCmd.Close(2, form_name, 2)  # acSaveNo=2
+                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)  # acSaveNo=2
+                    except Exception:
+                        pass
+
+        return self._dispatcher.call(_do)
+
+    def add_control(self, form_name: str, control_type: str, control_name: str, section: int = 0, properties: dict[str, Any] | None = None) -> bool:
+        """Add a control to a form by opening it in design view."""
+        return self._add_object_control("form", form_name, control_type, control_name, section, properties)
+
+    def _remove_object_control(self, kind: str, object_name: str, control_name: str) -> bool:
+        """Remove a control from a form/report by opening it in design view."""
+        if not self._dispatcher._started:
+            return False
+
+        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
+
+        def _do() -> bool:
+            opened = False
+            try:
+                self._open_object_in_design(kind, object_name)
+                opened = True
+
+                obj = self._live_object(kind, object_name)
+
+                if obj is not None:
+                    for i in range(obj.Controls.Count):
+                        try:
+                            ctrl = obj.Controls(i)
+                            if ctrl.Name == control_name:
+                                ctrl.SetFocus()
+                                self._dispatcher.access_app.DoCmd.RunCommand(365)  # acCmdDelete
+                                self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
+                                return True
+                        except Exception:
+                            pass
+
+                self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)  # acSaveNo=2
+                return False
+            except Exception:
+                return False
+            finally:
+                if opened:
+                    try:
+                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)
                     except Exception:
                         pass
 
@@ -877,44 +966,7 @@ class AccessAdapter:
 
     def remove_control(self, form_name: str, control_name: str) -> bool:
         """Remove a control from a form by opening it in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    form = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    form = self._dispatcher.access_app.Forms(form_name)
-
-                if form is not None:
-                    for i in range(form.Controls.Count):
-                        try:
-                            ctrl = form.Controls(i)
-                            if ctrl.Name == control_name:
-                                ctrl.SetFocus()
-                                self._dispatcher.access_app.DoCmd.RunCommand(365)  # acCmdDelete
-                                self._dispatcher.access_app.DoCmd.Close(2, form_name, 1)  # acSaveYes=1
-                                return True
-                        except Exception:
-                            pass
-
-                self._dispatcher.access_app.DoCmd.Close(2, form_name, 2)  # acSaveNo=2
-                return False
-            except Exception:
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(2, form_name, 2)
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._remove_object_control("form", form_name, control_name)
 
     def get_control_event_procedures(self, form_name: str, control_name: str = "") -> list[dict]:
         """List event procedures for a specific control in a form."""
@@ -1151,26 +1203,25 @@ class AccessAdapter:
         """Get all properties of a specific section by opening the report in design view."""
         return self._get_object_section_properties("report", report_name, section_id)
 
-    def set_form_section_property(self, form_name: str, section_id: int, property_name: str, value: str) -> bool:
-        """Set a single property of a form section by opening the form in design view."""
+    def _set_object_section_property(self, kind: str, object_name: str, section_id: int, property_name: str, value: str) -> bool:
+        """Set a single property of a form/report section by opening it in design view."""
         if not self._dispatcher._started:
             return False
+
+        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
 
         def _do() -> bool:
             opened = False
             try:
-                self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)  # acDesign=1
+                self._open_object_in_design(kind, object_name)
                 opened = True
 
-                try:
-                    form = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    form = self._dispatcher.access_app.Forms(form_name)
+                obj = self._live_object(kind, object_name)
 
-                if form is not None:
-                    section = form.Section(section_id)
+                if obj is not None:
+                    section = obj.Section(section_id)
                     section.Properties(property_name).Value = value
-                    self._dispatcher.access_app.DoCmd.Close(2, form_name, 1)  # acSaveYes=1
+                    self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
                     return True
                 return False
             except Exception:
@@ -1178,34 +1229,37 @@ class AccessAdapter:
             finally:
                 if opened:
                     try:
-                        self._dispatcher.access_app.DoCmd.Close(2, form_name, 2)  # acSaveNo=2
+                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)  # acSaveNo=2
                     except Exception:
                         pass
 
         return self._dispatcher.call(_do)
 
-    def set_form_section_properties(self, form_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:
-        """Set multiple properties of a form section. Returns dict of {property_name: success}."""
+    def set_form_section_property(self, form_name: str, section_id: int, property_name: str, value: str) -> bool:
+        """Set a single property of a form section by opening the form in design view."""
+        return self._set_object_section_property("form", form_name, section_id, property_name, value)
+
+    def _set_object_section_properties(self, kind: str, object_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:
+        """Set multiple properties of a form/report section. Returns dict of {property_name: success}."""
         if not self._dispatcher._started:
             return {}
+
+        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
 
         def _do() -> dict[str, bool]:
             results: dict[str, bool] = {}
             for prop_name, value in properties.items():
                 opened = False
                 try:
-                    self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)  # acDesign=1
+                    self._open_object_in_design(kind, object_name)
                     opened = True
 
-                    try:
-                        form = self._dispatcher.access_app.Screen.ActiveForm
-                    except Exception:
-                        form = self._dispatcher.access_app.Forms(form_name)
+                    obj = self._live_object(kind, object_name)
 
                     success = False
-                    if form is not None:
+                    if obj is not None:
                         try:
-                            section = form.Section(section_id)
+                            section = obj.Section(section_id)
                             section.Properties(prop_name).Value = value
                             success = True
                         except Exception:
@@ -1215,13 +1269,17 @@ class AccessAdapter:
                 finally:
                     if opened:
                         try:
-                            self._dispatcher.access_app.DoCmd.Close(2, form_name, 1)  # acSaveYes=1
+                            self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
                         except Exception:
                             pass
                 results[prop_name] = success
             return results
 
         return self._dispatcher.call(_do)
+
+    def set_form_section_properties(self, form_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:
+        """Set multiple properties of a form section. Returns dict of {property_name: success}."""
+        return self._set_object_section_properties("form", form_name, section_id, properties)
 
     def export_form_to_text(self, form_name: str) -> str:
         """Export a form to text representation via SaveAsText."""
@@ -1261,347 +1319,39 @@ class AccessAdapter:
 
     def set_report_property(self, report_name: str, property_name: str, value: str) -> bool:
         """Set a single property of a report by opening it in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._dispatcher.access_app.DoCmd.OpenReport(report_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    report = self._dispatcher.access_app.Reports(report_name)
-                except Exception:
-                    report = None
-
-                if report is not None:
-                    report.Properties(property_name).Value = value
-                    return True
-                return False
-            except Exception:
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(4, report_name, 1)  # acSaveYes=1
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._set_object_property("report", report_name, property_name, value)
 
     def set_report_properties(self, report_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a report. Returns dict of {property_name: success}."""
-        if not self._dispatcher._started:
-            return {}
-
-        def _do() -> dict[str, bool]:
-            results: dict[str, bool] = {}
-            for prop_name, value in properties.items():
-                opened = False
-                try:
-                    self._dispatcher.access_app.DoCmd.OpenReport(report_name, 1)  # acDesign=1
-                    opened = True
-
-                    try:
-                        report = self._dispatcher.access_app.Reports(report_name)
-                    except Exception:
-                        report = None
-
-                    success = False
-                    if report is not None:
-                        try:
-                            report.Properties(prop_name).Value = value
-                            success = True
-                        except Exception:
-                            pass
-                except Exception:
-                    success = False
-                finally:
-                    if opened:
-                        try:
-                            self._dispatcher.access_app.DoCmd.Close(4, report_name, 1)  # acSaveYes=1
-                        except Exception:
-                            pass
-                results[prop_name] = success
-            return results
-
-        return self._dispatcher.call(_do)
+        return self._set_object_properties("report", report_name, properties)
 
     def get_report_control_properties(self, report_name: str, control_name: str) -> dict[str, str]:
         """Get all properties of a specific control by opening the report in design view."""
-        if not self._dispatcher._started:
-            return {}
-
-        def _do() -> dict[str, str]:
-            opened = False
-            try:
-                self._dispatcher.access_app.DoCmd.OpenReport(report_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    report = self._dispatcher.access_app.Reports(report_name)
-                except Exception:
-                    report = None
-
-                if report is not None:
-                    for i in range(report.Controls.Count):
-                        try:
-                            ctrl = report.Controls(i)
-                            if ctrl.Name == control_name:
-                                props: dict[str, str] = {}
-                                for prop in ctrl.Properties:
-                                    try:
-                                        props[prop.Name] = str(prop.Value)
-                                    except Exception:
-                                        pass
-                                return props
-                        except Exception:
-                            pass
-                return {}
-            except Exception:
-                return {}
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(4, report_name, 2)
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._get_object_control_properties("report", report_name, control_name)
 
     def set_report_control_property(self, report_name: str, control_name: str, property_name: str, value: str) -> bool:
         """Set a property of a control by opening the report in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._dispatcher.access_app.DoCmd.OpenReport(report_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    report = self._dispatcher.access_app.Reports(report_name)
-                except Exception:
-                    report = None
-
-                if report is not None:
-                    for i in range(report.Controls.Count):
-                        try:
-                            ctrl = report.Controls(i)
-                            if ctrl.Name == control_name:
-                                ctrl.Properties(property_name).Value = value
-                                return True
-                        except Exception:
-                            pass
-                return False
-            except Exception:
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(4, report_name, 1)  # acSaveYes=1
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._set_object_control_property("report", report_name, control_name, property_name, value)
 
     def set_report_control_properties(self, report_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a report control. Returns dict of {property_name: success}."""
-        if not self._dispatcher._started:
-            return {}
-
-        def _do() -> dict[str, bool]:
-            results: dict[str, bool] = {}
-            for prop_name, value in properties.items():
-                try:
-                    opened = False
-                    try:
-                        self._dispatcher.access_app.DoCmd.OpenReport(report_name, 1)  # acDesign=1
-                        opened = True
-
-                        try:
-                            report = self._dispatcher.access_app.Reports(report_name)
-                        except Exception:
-                            report = None
-
-                        success = False
-                        if report is not None:
-                            for i in range(report.Controls.Count):
-                                try:
-                                    ctrl = report.Controls(i)
-                                    if ctrl.Name == control_name:
-                                        ctrl.Properties(prop_name).Value = value
-                                        success = True
-                                        break
-                                except Exception:
-                                    pass
-                    except Exception:
-                        success = False
-                    finally:
-                        if opened:
-                            try:
-                                self._dispatcher.access_app.DoCmd.Close(4, report_name, 1)  # acSaveYes=1
-                            except Exception:
-                                pass
-                    results[prop_name] = success
-                except Exception:
-                    results[prop_name] = False
-            return results
-
-        return self._dispatcher.call(_do)
+        return self._set_object_control_properties("report", report_name, control_name, properties)
 
     def add_report_control(self, report_name: str, control_type: str, control_name: str, section: int = 0, properties: dict[str, Any] | None = None) -> bool:
         """Add a control to a report by opening it in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._dispatcher.access_app.DoCmd.OpenReport(report_name, 1)  # acDesign=1
-                opened = True
-
-                type_int = self._control_type_id(control_type)
-                if type_int == 0:
-                    return False
-
-                ctrl = self._dispatcher.access_app.DoCmd.CreateControl(report_name, type_int, section)
-                ctrl.Name = control_name
-
-                if properties:
-                    for prop_name, value in properties.items():
-                        try:
-                            ctrl.Properties(prop_name).Value = value
-                        except Exception:
-                            pass
-
-                self._dispatcher.access_app.DoCmd.Close(4, report_name, 1)  # acSaveYes=1
-                return True
-            except Exception:
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(4, report_name, 2)  # acSaveNo=2
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._add_object_control("report", report_name, control_type, control_name, section, properties)
 
     def remove_report_control(self, report_name: str, control_name: str) -> bool:
         """Remove a control from a report by opening it in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._dispatcher.access_app.DoCmd.OpenReport(report_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    report = self._dispatcher.access_app.Reports(report_name)
-                except Exception:
-                    report = None
-
-                if report is not None:
-                    for i in range(report.Controls.Count):
-                        try:
-                            ctrl = report.Controls(i)
-                            if ctrl.Name == control_name:
-                                ctrl.SetFocus()
-                                self._dispatcher.access_app.DoCmd.RunCommand(365)  # acCmdDelete
-                                self._dispatcher.access_app.DoCmd.Close(4, report_name, 1)  # acSaveYes=1
-                                return True
-                        except Exception:
-                            pass
-
-                self._dispatcher.access_app.DoCmd.Close(4, report_name, 2)  # acSaveNo=2
-                return False
-            except Exception:
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(4, report_name, 2)
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._remove_object_control("report", report_name, control_name)
 
     def set_report_section_property(self, report_name: str, section_id: int, property_name: str, value: str) -> bool:
         """Set a single property of a report section by opening the report in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._dispatcher.access_app.DoCmd.OpenReport(report_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    report = self._dispatcher.access_app.Reports(report_name)
-                except Exception:
-                    report = None
-
-                if report is not None:
-                    section = report.Section(section_id)
-                    section.Properties(property_name).Value = value
-                    self._dispatcher.access_app.DoCmd.Close(4, report_name, 1)  # acSaveYes=1
-                    return True
-                return False
-            except Exception:
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(4, report_name, 2)  # acSaveNo=2
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._set_object_section_property("report", report_name, section_id, property_name, value)
 
     def set_report_section_properties(self, report_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a report section. Returns dict of {property_name: success}."""
-        if not self._dispatcher._started:
-            return {}
-
-        def _do() -> dict[str, bool]:
-            results: dict[str, bool] = {}
-            for prop_name, value in properties.items():
-                opened = False
-                try:
-                    self._dispatcher.access_app.DoCmd.OpenReport(report_name, 1)  # acDesign=1
-                    opened = True
-
-                    try:
-                        report = self._dispatcher.access_app.Reports(report_name)
-                    except Exception:
-                        report = None
-
-                    success = False
-                    if report is not None:
-                        try:
-                            section = report.Section(section_id)
-                            section.Properties(prop_name).Value = value
-                            success = True
-                        except Exception:
-                            pass
-                except Exception:
-                    success = False
-                finally:
-                    if opened:
-                        try:
-                            self._dispatcher.access_app.DoCmd.Close(4, report_name, 1)  # acSaveYes=1
-                        except Exception:
-                            pass
-                results[prop_name] = success
-            return results
-
-        return self._dispatcher.call(_do)
+        return self._set_object_section_properties("report", report_name, section_id, properties)
 
     def export_report_to_text(self, report_name: str) -> str:
         """Export a report to text representation via SaveAsText."""

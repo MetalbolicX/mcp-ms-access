@@ -1030,3 +1030,247 @@ class TestCreateFormPropertyRejectionLogging:
         assert any("BadProp" in msg for msg in warning_msgs), (
             f"Expected WARNING about 'BadProp', got: {warning_msgs}"
         )
+
+
+class TestCreateFormErrorClassification:
+    """create_form returns False and logs a WARNING when CreateForm itself fails."""
+
+    def _make_adapter_with_create_error(self, exc):
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+
+        class FakeAccessApp:
+            class FakeDoCmd:
+                def CreateForm(self):
+                    raise exc
+
+            DoCmd = FakeDoCmd()
+
+            class FakeCurrentProject:
+                AllForms = MagicMock()
+
+            CurrentProject = FakeCurrentProject()
+
+        fake_disp._access_app = FakeAccessApp()
+
+        def fake_call(fn, *args, **kwargs):
+            return fn()
+
+        fake_disp._call_impl = fake_call
+        adapter._dispatcher = fake_disp
+        return adapter
+
+    def test_create_form_com_failure_logs_warning(self, caplog):
+        """create_form whose CreateForm raises returns False and logs a WARNING naming the operation."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_create_error(
+            RuntimeError("Unexpected COM failure")
+        )
+        result = adapter.create_form("NewForm")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("create" in msg and "NewForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING naming the create operation and 'NewForm', got: {warning_msgs}"
+        )
+
+    def test_create_form_not_found_logs_warning(self, caplog):
+        """create_form whose COM error names the object classifies as not-found, returns False, logs WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_create_error(
+            Exception("Cannot find object 'NewForm' in this collection")
+        )
+        result = adapter.create_form("NewForm")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("NewForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING about 'NewForm', got: {warning_msgs}"
+        )
+
+
+class TestOpenCloseFormErrorClassification:
+    """open_form/close_form return False and log a WARNING on COM failure."""
+
+    def _make_adapter(self, open_exc=None, close_exc=None):
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+
+        class FakeDoCmd:
+            def OpenForm(self, form_name):
+                if open_exc is not None:
+                    raise open_exc
+
+            def Close(self, ac_type, name, save):
+                if close_exc is not None:
+                    raise close_exc
+
+        class FakeAccessApp:
+            DoCmd = FakeDoCmd()
+
+            class FakeCurrentProject:
+                AllForms = MagicMock()
+
+            CurrentProject = FakeCurrentProject()
+
+        fake_disp._access_app = FakeAccessApp()
+
+        def fake_call(fn, *args, **kwargs):
+            return fn()
+
+        fake_disp._call_impl = fake_call
+        adapter._dispatcher = fake_disp
+        return adapter
+
+    def test_open_form_com_failure_logs_warning(self, caplog):
+        """open_form whose OpenForm raises returns False and logs a WARNING naming the operation."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(open_exc=RuntimeError("Unexpected COM failure"))
+        result = adapter.open_form("MainForm")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("open" in msg and "MainForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING naming the open operation and 'MainForm', got: {warning_msgs}"
+        )
+
+    def test_close_form_com_failure_logs_warning(self, caplog):
+        """close_form whose Close raises returns False and logs a WARNING naming the operation."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(close_exc=RuntimeError("Unexpected COM failure"))
+        result = adapter.close_form("MainForm")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("close" in msg and "MainForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING naming the close operation and 'MainForm', got: {warning_msgs}"
+        )
+
+
+class TestSetObjectPropertyErrorClassification:
+    """set_form_property/set_report_property return False and log a WARNING on COM failure."""
+
+    def _make_adapter(self, kind: str, open_exc=None, prop_exc=None):
+        """Adapter whose fake DoCmd open verb and/or property write raise."""
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+
+        class _FakeProperty:
+            def __init__(self, name):
+                self.name = name
+
+            @property
+            def Value(self):
+                return None
+
+            @Value.setter
+            def Value(self, val):
+                if prop_exc is not None:
+                    raise prop_exc
+
+        class _FakeProperties:
+            def __call__(self, name):
+                return _FakeProperty(name)
+
+        class _FakeObject:
+            def __init__(self, name):
+                self.Name = name
+
+            @property
+            def Properties(self):
+                return _FakeProperties()
+
+        obj = _FakeObject("TestObject")
+
+        if kind == "form":
+            class FakeFormDoCmd:
+                def OpenForm(self, name, view):
+                    if open_exc is not None:
+                        raise open_exc
+
+                def Close(self, ac_type, name, save):
+                    pass
+
+            do_cmd = FakeFormDoCmd()
+            live_collection_name = "Forms"
+        else:
+            class FakeReportDoCmd:
+                def OpenReport(self, name, view):
+                    if open_exc is not None:
+                        raise open_exc
+
+                def Close(self, ac_type, name, save):
+                    pass
+
+            do_cmd = FakeReportDoCmd()
+            live_collection_name = "Reports"
+
+        class FakeAccessApp:
+            DoCmd: Any = None  # set after branch to avoid duplicate class names
+            Screen = MagicMock()
+
+            class FakeCurrentProject:
+                AllForms = MagicMock()
+                AllReports = MagicMock()
+
+            CurrentProject = FakeCurrentProject()
+
+        FakeAccessApp.DoCmd = do_cmd
+        setattr(FakeAccessApp, live_collection_name, staticmethod(lambda name: obj))
+        fake_disp._access_app = FakeAccessApp()
+
+        def fake_call(fn, *args, **kwargs):
+            return fn()
+
+        fake_disp._call_impl = fake_call
+        adapter._dispatcher = fake_disp
+        return adapter
+
+    def test_set_form_property_open_failure_logs_warning(self, caplog):
+        """set_form_property whose OpenForm raises returns False and logs a WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(
+            "form", open_exc=RuntimeError("Unexpected COM failure")
+        )
+        result = adapter.set_form_property("MainForm", "Caption", "Hi")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("MainForm" in msg for msg in warning_msgs), (
+            f"Expected WARNING about 'MainForm', got: {warning_msgs}"
+        )
+
+    def test_set_report_property_open_failure_logs_warning(self, caplog):
+        """set_report_property whose OpenReport raises returns False and logs a WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(
+            "report", open_exc=RuntimeError("Unexpected COM failure")
+        )
+        result = adapter.set_report_property("MainReport", "Caption", "Hi")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("MainReport" in msg for msg in warning_msgs), (
+            f"Expected WARNING about 'MainReport', got: {warning_msgs}"
+        )
+
+    def test_set_report_property_write_failure_logs_warning(self, caplog):
+        """set_report_property whose property write raises returns False and logs a WARNING."""
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(
+            "report", prop_exc=RuntimeError("Property is locked")
+        )
+        result = adapter.set_report_property("MainReport", "Caption", "Hi")
+
+        assert result is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("MainReport" in msg for msg in warning_msgs), (
+            f"Expected WARNING about 'MainReport', got: {warning_msgs}"
+        )
+
