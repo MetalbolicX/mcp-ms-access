@@ -55,9 +55,10 @@ def to_mcp_result(result: dict[str, Any]) -> CallToolResult:
 
 def _result_to_dict(result: Ok | Err) -> dict[str, Any]:
     """Convert Ok/Err to use-case dict."""
-    if isinstance(result, Ok):
-        return {"success": True, "data": result.data, "rowcount": result.rowcount}
-    return {"success": False, "error": result.message}
+    return result.fold(
+        lambda data, rowcount: {"success": True, "data": data, "rowcount": rowcount},
+        lambda message: {"success": False, "error": message},
+    )
 
 
 # =============================================================================
