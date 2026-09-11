@@ -14,6 +14,7 @@ from typing import Any, Literal, cast
 from ..backends import DATA_READ_CAPS, BackendSelector
 from ..errors import Err, Ok, Result, err, ok
 from ..safety import WritePolicy, is_path_allowed
+from .sql_builder import build_select
 
 # =============================================================================
 # Result Envelopes — re-exported from the shared kernel (errors module)
@@ -805,7 +806,7 @@ class DatabaseUseCases:
 
         try:
             # Fetch the data
-            result = self.query_data(f"SELECT * FROM [{table_or_query}]", connection_name=connection_name)
+            result = self.query_data(build_select(table_or_query, None, None, None), connection_name=connection_name)
             if isinstance(result, Err):
                 return result
 
