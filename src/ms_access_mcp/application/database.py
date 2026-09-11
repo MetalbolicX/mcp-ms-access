@@ -8,42 +8,19 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from ..backends import DATA_READ_CAPS, BackendSelector
+from ..errors import Err, Ok, Result, err, ok
 from ..safety import WritePolicy, is_path_allowed
 
 # =============================================================================
-# Result Envelopes
+# Result Envelopes — re-exported from the shared kernel (errors module)
 # =============================================================================
 
-
-@dataclass(frozen=True)
-class Ok:
-    """Success result envelope."""
-
-    data: Any = None
-    rowcount: int = 0
-
-
-@dataclass(frozen=True)
-class Err:
-    """Error result envelope."""
-
-    message: str
-
-
-Result = Ok | Err
-
-
-def _ok(data: Any = None, rowcount: int = 0) -> Ok:
-    return Ok(data=data, rowcount=rowcount)
-
-
-def _err(message: str) -> Err:
-    return Err(message=message)
+_ok = ok  # backward-compat aliases; remove in a later cleanup
+_err = err
 
 
 # =============================================================================

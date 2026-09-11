@@ -1,4 +1,46 @@
-"""Error taxonomy ported from oracle."""
+"""Error taxonomy and shared result envelopes (dependency-free shared kernel)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+# =============================================================================
+# Result Envelopes
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class Ok:
+    """Success result envelope."""
+
+    data: Any = None
+    rowcount: int = 0
+
+
+@dataclass(frozen=True)
+class Err:
+    """Error result envelope."""
+
+    message: str
+
+
+Result = Ok | Err
+
+
+def ok(data: Any = None, rowcount: int = 0) -> Ok:
+    """Construct a success result."""
+    return Ok(data=data, rowcount=rowcount)
+
+
+def err(message: str) -> Err:
+    """Construct an error result."""
+    return Err(message=message)
+
+
+# =============================================================================
+# Exception Taxonomy
+# =============================================================================
 
 
 class AccessMcpError(Exception):

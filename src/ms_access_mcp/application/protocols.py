@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol
 
-from .database import Err, Ok
+from ..errors import Err, Ok
 
 
 class MaintenanceUseCasesProtocol(Protocol):

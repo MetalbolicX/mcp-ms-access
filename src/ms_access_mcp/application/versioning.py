@@ -9,8 +9,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from ..errors import Err, Ok, Result
+from ..errors import err as _err
+from ..errors import ok as _ok
 from ..safety import WritePolicy
-from .database import Err, Ok, Result, _err, _ok
 
 __all__ = ["VersioningUseCases"]
 
