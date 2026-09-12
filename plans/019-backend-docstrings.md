@@ -17,6 +17,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P3
 - **Effort**: M
 - **Risk**: LOW
@@ -215,18 +216,18 @@ lines changed).
 
 ## Done criteria
 
-- [ ] `"D"` is in `[tool.ruff.lint].select`; `backends/**` no longer
+- [x] `"D"` is in `[tool.ruff.lint].select`; `backends/**` no longer
       appears in any D-related per-file-ignores entry
-- [ ] Every path exempt from D carries a per-file-ignores entry with an
+- [x] Every path exempt from D carries a per-file-ignores entry with an
       inline justification comment
-- [ ] `uv run ruff check .` exits 0
-- [ ] `uv run pytest tests/unit/ -q` exits 0 with unchanged test count
-- [ ] `uv run pyright` → 0 errors
-- [ ] `git diff` shows zero code changes (docstrings, blank-line insertions,
+- [x] `uv run ruff check .` exits 0
+- [x] `uv run pytest tests/unit/ -q` exits 0 with unchanged test count
+- [x] `uv run pyright` → 0 errors
+- [x] `git diff` shows zero code changes (docstrings, blank-line insertions,
       and at most 3 justified `noqa: D102` markers only)
-- [ ] Every flagged semantics-unclear site (if any) is listed in the final
+- [x] Every flagged semantics-unclear site (if any) is listed in the final
       report
-- [ ] `plans/README.md` status row updated
+- [x] `plans/README.md` status row updated
 
 ## STOP conditions
 

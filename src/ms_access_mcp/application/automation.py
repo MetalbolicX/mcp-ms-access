@@ -640,7 +640,7 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
         """
         if err := self._ensure_adapter():
             return err
-        assert self._adapter is not None
+        assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
         result = self._adapter.get_macros()
         items = [self._to_dict(item) for item in result]
         return _ok(data=items, rowcount=len(items))
@@ -723,7 +723,7 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
         """
         if err := self._ensure_adapter():
             return err
-        assert self._adapter is not None
+        assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
         result = self._adapter.get_modules()
         items = [self._to_dict(item) for item in result]
         return _ok(data=items, rowcount=len(items))
@@ -825,7 +825,7 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
         """
         if err := self._ensure_adapter():
             return err
-        assert self._adapter is not None
+        assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
         # compile_vba needs confirm because it can trigger modal dialogs
         # but doesn't need write gate (compile is read-only-safe)
         if err := self._confirm_gate("compile_vba", True):

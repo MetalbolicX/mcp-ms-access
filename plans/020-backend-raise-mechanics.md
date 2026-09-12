@@ -16,6 +16,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P3
 - **Effort**: M
 - **Risk**: LOW
@@ -223,20 +224,20 @@ nothing but message-extraction assignments, raise lines, and chaining.
 
 ## Done criteria
 
-- [ ] `"EM"` and `"TRY003"` are in `[tool.ruff.lint].select`; `backends/**`
+- [x] `"EM"` and `"TRY003"` are in `[tool.ruff.lint].select`; `backends/**`
       no longer appears in any EM/TRY003 per-file-ignores entry
-- [ ] Every path exempt from EM/TRY003 carries a per-file-ignores entry
+- [x] Every path exempt from EM/TRY003 carries a per-file-ignores entry
       with an inline justification comment
-- [ ] `uv run ruff check .` exits 0
-- [ ] `uv run pytest tests/unit/ -q` exits 0 with unchanged test count and
+- [x] `uv run ruff check .` exits 0
+- [x] `uv run pytest tests/unit/ -q` exits 0 with unchanged test count and
       zero test-file modifications
-- [ ] `uv run pyright` → 0 errors
-- [ ] `git diff` shows: message extraction to variables, `from exc`
+- [x] `uv run pyright` → 0 errors
+- [x] `git diff` shows: message extraction to variables, `from exc`
       chaining additions inside existing except blocks, at most the gated
       typed-error conversions from step 3 — and NOTHING else (no message
       rewording, no catch changes, no control-flow changes)
-- [ ] Deferred typed-error candidates listed in the final report
-- [ ] `plans/README.md` status row updated
+- [x] Deferred typed-error candidates listed in the final report
+- [x] `plans/README.md` status row updated
 
 ## STOP conditions
 

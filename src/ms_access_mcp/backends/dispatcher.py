@@ -38,6 +38,7 @@ class ComDispatcher:
     DISPATCH_TIMEOUT = 120.0  # seconds
 
     def __init__(self) -> None:
+        """Initialize the dispatcher without starting its STA thread."""
         self._call_queue: queue.Queue[tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any], concurrent.futures.Future[Any]]] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._started = False
@@ -52,18 +53,22 @@ class ComDispatcher:
 
     @property
     def access_app(self) -> Any:
+        """Return the Access application owned by the STA thread."""
         return self._access_app
 
     @property
     def current_db(self) -> Any:
+        """Return the current DAO database handle."""
         return self._current_db
 
     @property
     def ado_conn(self) -> Any:
+        """Return the current ADO connection handle."""
         return self._ado_conn
 
     @property
     def db_path(self) -> str | None:
+        """Return the currently configured database path."""
         return self._db_path
 
     def start(self) -> None:
@@ -82,7 +87,8 @@ class ComDispatcher:
         Raises whatever exception fn raises.
         """
         if not self._started or self._thread is None:
-            raise RuntimeError("ComDispatcher has not been started")
+            msg = "ComDispatcher has not been started"
+            raise RuntimeError(msg)
 
         future: concurrent.futures.Future[Any] = concurrent.futures.Future()
         self._call_queue.put((fn, args, kwargs, future))
@@ -161,9 +167,10 @@ class ComDispatcher:
         Fallback: Access.Application.NewCurrentDatabase for hosts without DAO.
         """
         if sys.platform != "win32":
-            raise RuntimeError(
+            msg = (
                 "PlatformUnsupported: create_dao_database requires Windows (DAO/COM)"
             )
+            raise RuntimeError(msg)
 
         def _do() -> Any:
             import win32com.client  # type: ignore[import-not-found]
@@ -188,10 +195,11 @@ class ComDispatcher:
                 application = win32com.client.Dispatch("Access.Application")
                 application.NewCurrentDatabase(db_path)
             except Exception as access_error:
-                raise RuntimeError(
+                msg = (
                     f"create_dao_database failed for {db_path}: "
                     f"DAO={dao_error}; Access={access_error}"
-                ) from access_error
+                )
+                raise RuntimeError(msg) from access_error
             finally:
                 if application is not None:
                     try:

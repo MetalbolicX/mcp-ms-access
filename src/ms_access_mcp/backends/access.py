@@ -56,6 +56,7 @@ class AccessAdapter:
     _dispatcher: AccessDispatcherProtocol
 
     def __init__(self, db_path: str) -> None:
+        """Initialize an Access adapter for the specified database path."""
         self._db_path = db_path
         self._dispatcher = ComDispatcher()
         self._connected = False
@@ -93,6 +94,7 @@ class AccessAdapter:
         self._connected = False
 
     def is_connected(self) -> bool:
+        """Return whether the Access application is connected."""
         return self._connected
 
     # ------------------------------------------------------------------ #
@@ -308,6 +310,7 @@ class AccessAdapter:
 
         Args:
             stop_event: threading.Event — set when the dialog killer should stop.
+
         """
         try:
             import win32con
@@ -1704,6 +1707,7 @@ class AccessAdapter:
         Args:
             module_name: Name for the new module
             module_type: vbext_ComponentType — 1 = standard module, 2 = class module
+
         """
         if not self._dispatcher._started:
             return False
@@ -1766,6 +1770,7 @@ class AccessAdapter:
 
         Returns:
             dict with success=True on success, error message on failure
+
         """
         if not self._dispatcher._started:
             return {"success": False, "error": "Not connected"}
@@ -1804,6 +1809,7 @@ class AccessAdapter:
         Returns:
             dict with success=True on success
             dict with success=False and error message on failure
+
         """
         if not self._dispatcher._started:
             return {"success": False, "error": "Not connected"}
@@ -1857,6 +1863,7 @@ class AccessAdapter:
         Returns:
             List of dicts with keys: name, type ("Sub"|"Function"|"Property"),
             start_line, line_count
+
         """
         if not self._dispatcher._started:
             return []
@@ -1909,6 +1916,7 @@ class AccessAdapter:
 
         Returns:
             dict with keys: name, type, code, signature
+
         """
         if not self._dispatcher._started:
             return {}
@@ -1985,7 +1993,7 @@ class AccessAdapter:
 # -------------------------------------------------------------------------- #
 
 def connect_hidden(db_path: str) -> AccessAdapter:
-    """Convenience: create and connect an AccessAdapter in hidden mode.
+    """Create and connect an AccessAdapter in hidden mode.
 
     Returns the connected adapter. Caller must call disconnect() when done.
     """

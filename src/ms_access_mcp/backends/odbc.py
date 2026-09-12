@@ -28,6 +28,7 @@ class OdbcAdapter:
     CAN_INTROSPECT = True
 
     def __init__(self, db_path: str) -> None:
+        """Initialize an ODBC adapter for the specified database path."""
         self._db_path = db_path
         self._conn: Any = None
         self._connected = False
@@ -59,13 +60,16 @@ class OdbcAdapter:
         self._connected = False
 
     def is_connected(self) -> bool:
+        """Return whether the ODBC connection is open."""
         return self._connected
 
     def compact_repair(self, path: str, mode: str) -> dict[str, Any]:
-        raise NotImplementedError(
+        """Reject compact and repair because ODBC does not provide DAO support."""
+        msg = (
             "Compact/repair requires the access (COM) backend; "
             "ODBC does not support DAO DBEngine.CompactDatabase."
         )
+        raise NotImplementedError(msg)
 
     # ------------------------------------------------------------------ #
     # Parameterized CRUD
@@ -234,127 +238,165 @@ class OdbcAdapter:
     # ------------------------------------------------------------------ #
 
     def create_table(self, table_name: str, columns: list[dict]) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject table creation because ODBC does not support Access DDL here."""
+        msg = (
             "ODBC backend does not support CREATE TABLE. "
             "Use DAO or COM backend for DDL operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def delete_table(self, table_name: str) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject table deletion because ODBC does not support Access DDL here."""
+        msg = (
             "ODBC backend does not support DROP TABLE. "
             "Use DAO or COM backend for DDL operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def alter_table(self, table_name: str, operations: list[dict]) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject table alteration because ODBC does not support Access DDL here."""
+        msg = (
             "ODBC backend does not support ALTER TABLE. "
             "Use DAO or COM backend for DDL operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def create_index(self, table_name: str, index_name: str, columns: list[str], **kwargs) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject index creation because ODBC does not support Access DDL here."""
+        msg = (
             "ODBC backend does not support CREATE INDEX. "
             "Use DAO or COM backend for DDL operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def drop_index(self, table_name: str, index_name: str) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject index deletion because ODBC does not support Access DDL here."""
+        msg = (
             "ODBC backend does not support DROP INDEX. "
             "Use DAO or COM backend for DDL operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def create_linked_table(self, name: str, source_table: str, connect_string: str) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject linked-table creation because ODBC does not support it."""
+        msg = (
             "ODBC backend does not support linked tables. "
             "Use DAO backend for linked table operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def refresh_linked_table(self, name: str, connect_string: str | None = None) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject linked-table refresh because ODBC does not support it."""
+        msg = (
             "ODBC backend does not support linked tables. "
             "Use DAO backend for linked table operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def recreate_linked_table(self, name: str, source_table: str, connect_string: str) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject linked-table recreation because ODBC does not support it."""
+        msg = (
             "ODBC backend does not support linked tables. "
             "Use DAO backend for linked table operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def unlink_table(self, name: str) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject linked-table removal because ODBC does not support it."""
+        msg = (
             "ODBC backend does not support linked tables. "
             "Use DAO backend for linked table operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def get_linked_tables(self) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject linked-table listing because ODBC does not support it."""
+        msg = (
             "ODBC backend does not support linked tables. "
             "Use DAO backend for linked table operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def create_relationship(self, **kwargs) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject relationship creation because ODBC does not support it."""
+        msg = (
             "ODBC backend does not support relationships. "
             "Use DAO or COM backend for relationship operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def delete_relationship(self, **kwargs) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject relationship deletion because ODBC does not support it."""
+        msg = (
             "ODBC backend does not support relationships. "
             "Use DAO or COM backend for relationship operations."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def get_database_properties(self, names: list[str] | None = None) -> dict:
+        """Return database properties, which are unavailable through ODBC."""
         return {}
 
     def set_database_property(self, name: str, value: str, type: str | None = None) -> bool:
-        raise BackendCapabilityMismatchError(
-            "ODBC backend does not support database properties."
-        )
+        """Reject database property changes because ODBC does not support them."""
+        msg = "ODBC backend does not support database properties."
+        raise BackendCapabilityMismatchError(msg)
 
     def create_database(self, path: str) -> bool:
-        raise BackendCapabilityMismatchError(
+        """Reject database creation because ODBC does not provide it."""
+        msg = (
             "ODBC backend cannot create databases. "
             "Use DAO backend with COM dispatcher for database creation."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def create_query(self, name: str, sql: str) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject saved-query creation because ODBC does not support it."""
+        msg = (
             "ODBC backend does not support saved queries. "
             "Use DAO backend for query management."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def set_query_sql(self, name: str, sql: str) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject saved-query updates because ODBC does not support them."""
+        msg = (
             "ODBC backend does not support saved queries. "
             "Use DAO backend for query management."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def delete_query(self, name: str) -> dict:
-        raise BackendCapabilityMismatchError(
+        """Reject saved-query deletion because ODBC does not support it."""
+        msg = (
             "ODBC backend does not support saved queries. "
             "Use DAO backend for query management."
         )
+        raise BackendCapabilityMismatchError(msg)
 
     def get_object_metadata(self, object_name: str) -> dict:
+        """Return object metadata, which is unavailable through ODBC."""
         return {}
 
     def get_table_schema_plan(self) -> tuple:
+        """Return the unavailable ODBC table schema plan sentinel."""
         return ([], "unknown")
 
     def generate_sql(self, output_path: str) -> dict:
+        """Return the unsupported SQL generation result."""
         return {"success": False, "error": "Not implemented"}
 
     def get_database_statistics(self) -> dict:
+        """Return database statistics, which are unavailable through ODBC."""
         return {}
 
     def execute_raw_sql(self, sql: str) -> int:
-        raise BackendCapabilityMismatchError(
-            "ODBC backend execute_raw_sql is not supported."
-        )
+        """Reject raw SQL execution because this adapter exposes parameterized operations."""
+        msg = "ODBC backend execute_raw_sql is not supported."
+        raise BackendCapabilityMismatchError(msg)
 
     def export_data(self, sql: str, file_path: str, format: str = "csv", **options) -> dict:
+        """Return the unsupported ODBC export result."""
         return {"success": False, "error": "Export not supported via ODBC"}
 
     # ------------------------------------------------------------------ #
@@ -362,56 +404,56 @@ class OdbcAdapter:
     # ------------------------------------------------------------------ #
 
     def compile_vba(self) -> dict:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject VBA compilation because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def export_form_to_text(self, form_name: str) -> str:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject form export because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def import_form_from_text(self, form_name: str, text_data: str) -> bool:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject form import because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def export_report_to_text(self, report_name: str) -> str:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject report export because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def import_report_from_text(self, report_name: str, text_data: str) -> bool:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject report import because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def export_macro_to_text(self, macro_name: str) -> str:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject macro export because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def import_macro_from_text(self, macro_name: str, text_data: str) -> bool:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject macro import because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def export_query_to_text(self, query_name: str) -> str:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject query export because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def import_query_from_text(self, query_name: str, text_data: str) -> bool:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject query import because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def export_module_to_text(self, module_name: str) -> str:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject module export because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)
 
     def import_module_from_text(self, module_name: str, code: str) -> bool:
-        raise NotImplementedError(
-            "Versioning operations require COM automation; use the access backend."
-        )
+        """Reject module import because it requires COM automation."""
+        msg = "Versioning operations require COM automation; use the access backend."
+        raise NotImplementedError(msg)

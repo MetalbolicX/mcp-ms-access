@@ -134,8 +134,8 @@ def main() -> int:
 
         stdin = proc.stdin
         stdout = proc.stdout
-        assert stdin is not None
-        assert stdout is not None
+        assert stdin is not None  # noqa: S101 - Popen PIPE setup establishes the stream invariant
+        assert stdout is not None  # noqa: S101 - Popen PIPE setup establishes the stream invariant
         reader = _LineReader(stdout)
 
         def send(rpc: dict) -> None:

@@ -112,7 +112,7 @@ def _make_tool(name: str, fn, *, write_op: bool = False):
                     }
                     return to_mcp_result(dict_result)
                 # Check write policy
-                if db._policy.readonly and not confirm:
+                if db._policy.readonly and not confirm:  # noqa: SLF001 - enforce the database write policy
                     dict_result = {
                         "success": False,
                         "error": "write policy blocks this; pass confirm=True and enable writes",

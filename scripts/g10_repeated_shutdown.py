@@ -260,8 +260,8 @@ def _run_close_stdin_round(round_idx: int, tmpdir: Path, total_timeout: float = 
 
         stdin = proc.stdin
         stdout = proc.stdout
-        assert stdin is not None
-        assert stdout is not None
+        assert stdin is not None  # noqa: S101 - Popen PIPE setup establishes the stream invariant
+        assert stdout is not None  # noqa: S101 - Popen PIPE setup establishes the stream invariant
         reader = _LineReader(stdout)
 
         def send(rpc: dict) -> None:
@@ -433,8 +433,8 @@ def _run_ctrl_c_round(round_idx: int, tmpdir: Path, total_timeout: float = 30.0)
 
         stdin = proc.stdin
         stdout = proc.stdout
-        assert stdin is not None
-        assert stdout is not None
+        assert stdin is not None  # noqa: S101 - Popen PIPE setup establishes the stream invariant
+        assert stdout is not None  # noqa: S101 - Popen PIPE setup establishes the stream invariant
         reader = _LineReader(stdout)
 
         def send(rpc: dict) -> None:

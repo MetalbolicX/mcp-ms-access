@@ -26,7 +26,7 @@ class Ok:
         """Chain a Result-returning function on success data."""
         return fn(self.data)
 
-    def fold(self, on_ok: Callable[[Any, int], Any], on_err: Callable[[str], Any]) -> Any:
+    def fold(self, on_ok: Callable[[Any, int], Any], on_err: Callable[[str], Any]) -> Any:  # noqa: ARG002 - shared Result API callback is unused on success
         """Consume the envelope: on_ok(data, rowcount) or on_err(message)."""
         return on_ok(self.data, self.rowcount)
 
@@ -37,15 +37,15 @@ class Err:
 
     message: str
 
-    def map(self, fn: Callable[[Any], Any]) -> Err:
+    def map(self, fn: Callable[[Any], Any]) -> Err:  # noqa: ARG002 - shared Result API callback is unused on errors
         """Short-circuit: errors pass through unchanged."""
         return self
 
-    def bind(self, fn: Callable[[Any], Result]) -> Result:
+    def bind(self, fn: Callable[[Any], Result]) -> Result:  # noqa: ARG002 - shared Result API callback is unused on errors
         """Short-circuit: errors pass through unchanged."""
         return self
 
-    def fold(self, on_ok: Callable[[Any, int], Any], on_err: Callable[[str], Any]) -> Any:
+    def fold(self, on_ok: Callable[[Any, int], Any], on_err: Callable[[str], Any]) -> Any:  # noqa: ARG002 - shared Result API callback is unused on errors
         """Consume the envelope: on_ok(data, rowcount) or on_err(message)."""
         return on_err(self.message)
 

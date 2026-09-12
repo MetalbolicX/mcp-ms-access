@@ -317,7 +317,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
 
         if err := self._ensure_adapter():
             return err
-        assert self._adapter is not None
+        assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
 
         try:
             result = self._adapter.compact_repair(path, mode)
@@ -386,7 +386,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
             errors.append(f"Failed to kill Access processes: {e}")
 
         reconnected = False
-        assert self._adapter is not None
+        assert self._adapter is not None  # noqa: S101 - recover requires an initialized adapter
         if hasattr(self._adapter, "recover"):
             try:
                 reconnected = self._adapter.recover()

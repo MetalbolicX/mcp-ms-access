@@ -28,6 +28,7 @@ class VersioningBackend:
     """
 
     def __init__(self, dispatcher: VersioningDispatcherProtocol) -> None:
+        """Initialize versioning operations with a dispatcher."""
         self._dispatcher = dispatcher
 
     # ------------------------------------------------------------------ #
@@ -113,41 +114,49 @@ class VersioningBackend:
     # ------------------------------------------------------------------ #
 
     def export_form_to_text(self, form_name: str) -> str:
+        """Export a form to text, or return an empty string on failure."""
         if not self._check_connected():
             return ""
         return self._save_as_text(self._AC_FORM, form_name)
 
     def import_form_from_text(self, form_name: str, text_data: str) -> bool:
+        """Import form text and return whether the operation succeeded."""
         if not self._check_connected():
             return False
         return self._load_from_text(self._AC_FORM, form_name, text_data)
 
     def export_report_to_text(self, report_name: str) -> str:
+        """Export a report to text, or return an empty string on failure."""
         if not self._check_connected():
             return ""
         return self._save_as_text(self._AC_REPORT, report_name)
 
     def import_report_from_text(self, report_name: str, text_data: str) -> bool:
+        """Import report text and return whether the operation succeeded."""
         if not self._check_connected():
             return False
         return self._load_from_text(self._AC_REPORT, report_name, text_data)
 
     def export_macro_to_text(self, macro_name: str) -> str:
+        """Export a macro to text, or return an empty string on failure."""
         if not self._check_connected():
             return ""
         return self._save_as_text(self._AC_MACRO, macro_name)
 
     def import_macro_from_text(self, macro_name: str, text_data: str) -> bool:
+        """Import macro text and return whether the operation succeeded."""
         if not self._check_connected():
             return False
         return self._load_from_text(self._AC_MACRO, macro_name, text_data)
 
     def export_query_to_text(self, query_name: str) -> str:
+        """Export a query to text, or return an empty string on failure."""
         if not self._check_connected():
             return ""
         return self._save_as_text(self._AC_QUERY, query_name)
 
     def import_query_from_text(self, query_name: str, text_data: str) -> bool:
+        """Import query text and return whether the operation succeeded."""
         if not self._check_connected():
             return False
         return self._load_from_text(self._AC_QUERY, query_name, text_data)
@@ -157,6 +166,7 @@ class VersioningBackend:
     # ------------------------------------------------------------------ #
 
     def export_module_to_text(self, module_name: str) -> str:
+        """Export a VBA module to text, or return an empty string on failure."""
         if not self._check_connected():
             return ""
 
@@ -180,6 +190,7 @@ class VersioningBackend:
         return self._dispatcher.call(_do)
 
     def import_module_from_text(self, module_name: str, code: str) -> bool:
+        """Import VBA module code and return whether the operation succeeded."""
         if not self._check_connected():
             return False
 
@@ -250,6 +261,7 @@ class VersioningBackend:
         list_macros: Callable[[], Sequence[Any]] | None = None,
         list_queries: Callable[[], Sequence[Any]] | None = None,
     ) -> ExportAllResult:
+        """Export requested Access objects and return the batch result."""
         if not self._check_connected():
             return ExportAllResult(
                 success=False,
@@ -292,7 +304,7 @@ class VersioningBackend:
 
         if callable(list_forms):
             ac_code = kind_map["form"].save_as_text_code
-            assert ac_code is not None
+            assert ac_code is not None  # noqa: S101 - callable list_forms requires form export metadata
             for form_name in list_forms():
                 content = self._save_as_text(ac_code, form_name)
                 if content:
@@ -303,7 +315,7 @@ class VersioningBackend:
 
         if callable(list_reports):
             ac_code = kind_map["report"].save_as_text_code
-            assert ac_code is not None
+            assert ac_code is not None  # noqa: S101 - callable list_reports requires report export metadata
             for report_name in list_reports():
                 content = self._save_as_text(ac_code, report_name)
                 if content:
@@ -314,7 +326,7 @@ class VersioningBackend:
 
         if callable(list_macros):
             ac_code = kind_map["macro"].save_as_text_code
-            assert ac_code is not None
+            assert ac_code is not None  # noqa: S101 - callable list_macros requires macro export metadata
             for macro_name in list_macros():
                 content = self._save_as_text(ac_code, macro_name)
                 if content:
@@ -325,7 +337,7 @@ class VersioningBackend:
 
         if callable(list_queries):
             ac_code = kind_map["query"].save_as_text_code
-            assert ac_code is not None
+            assert ac_code is not None  # noqa: S101 - callable list_queries requires query export metadata
             for query_name in list_queries():
                 content = self._save_as_text(ac_code, query_name)
                 if content:
@@ -356,6 +368,7 @@ class VersioningBackend:
     # ------------------------------------------------------------------ #
 
     def import_all_versioning(self, input_dir: Path | str) -> ImportAllResult:
+        """Import versioned Access objects and return the batch result."""
         if not self._check_connected():
             return ImportAllResult(
                 success=False,
@@ -429,6 +442,7 @@ class VersioningBackend:
     # ------------------------------------------------------------------ #
 
     def compare_versioning(self, export_dir: Path | str) -> CompareResult:
+        """Compare database objects with exported text and return the differences."""
         if not self._check_connected():
             return CompareResult(new=[], missing=[], changed=[], unchanged=[])
 
@@ -580,6 +594,7 @@ class VersioningBackend:
         list_tables: Callable[[], Sequence[Any]] | None = None,
         list_relationships: Callable[[], Sequence[Any]] | None = None,
     ) -> SchemaDdlResult:
+        """Export available schema metadata as DDL and return the result."""
         if not self._check_connected():
             return SchemaDdlResult(success=False, error="Not connected")
 
