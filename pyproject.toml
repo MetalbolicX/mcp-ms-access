@@ -44,6 +44,12 @@ select = [
     "N",     # pep8-naming
     "C4",    # comprehensions
     "UP",    # pyupgrade
+    "ARG002", # unused method arguments
+    "SLF001", # private member access
+    "S101",   # assert usage
+    "D",      # pydocstyle (enforced on backends; deferred elsewhere)
+    "EM",     # exception message mechanics
+    "TRY003", # exception message placement
 ]
 ignore = [
     "E501",  # line too long (handled separately)
@@ -52,8 +58,42 @@ ignore = [
     "N806",   # variable in function
 ]
 
+# Rule families are enabled globally through [tool.ruff.lint].select. Entries
+# below are deliberate, justified exemptions; a code not in select is dead config.
+# BLE001 (176 in backends/**, 65 elsewhere at ab9a373): deliberate best-effort
+# COM handling established by plans 010/016/017; BLE remains unselected.
+# ANN401 (30 in backends/**, 25 elsewhere at ab9a373): pywin32 COM interop
+# returns Any; ANN remains unselected. PLR also remains unselected because COM
+# adapter surfaces legitimately exceed its argument and complexity limits.
+# FBT (12 in backends/**, 341 elsewhere at ab9a373): widespread boolean-default
+# pattern deferred to a future scoped plan; ruff has no per-file select.
+# D (334 outside backends/**), EM/TRY003 (20 outside backends/**), and the
+# tractable ANN codes (36 total) are deferred to plans 019/020 or a later plan.
+# S101 measured 15 total (6 in backends/** and 9 elsewhere); all are retained
+# programmer-invariant assertions and carry local noqa reasons below.
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "ANN", "D", "ARG002", "PLR", "BLE", "EM", "TRY003", "FBT"]
-"src/ms_access_mcp/backends/**" = ["S101", "ANN", "D", "ARG002", "PLR", "BLE", "EM", "TRY003", "FBT", "SLF001"]
-"src/ms_access_mcp/doctor.py" = ["S101", "ANN", "D", "ARG002", "PLR", "BLE", "EM", "TRY003", "FBT"]
+# Tests intentionally inspect private implementation state; unused protocol
+# parameters are also idiomatic in test doubles, and test assertions are idiomatic.
+"tests/**" = ["ARG002", "SLF001", "S101", "D", "EM", "TRY003"]
+# COM adapter methods conform to fixed interface signatures, and lifecycle
+# checks intentionally access private dispatcher state (for example
+# self._dispatcher._started in access.py).
+"src/ms_access_mcp/backends/**" = ["ARG002", "SLF001"]
+# D: non-backend docstrings are deferred to future scoped documentation plans.
+"src/ms_access_mcp/cli.py" = ["D", "EM", "TRY003"]
+"src/ms_access_mcp/application/**" = ["D", "EM", "TRY003"]
+"src/ms_access_mcp/mcp_tools/**" = ["D", "EM", "TRY003"]
+"src/ms_access_mcp/models.py" = ["D"]
+"src/ms_access_mcp/errors.py" = ["D", "EM", "TRY003"]
+"src/ms_access_mcp/profiles.py" = ["D", "EM", "TRY003"]
+"src/ms_access_mcp/server.py" = ["D", "EM", "TRY003"]
+"src/ms_access_mcp/capabilities.py" = ["D", "EM", "TRY003"]
+"src/ms_access_mcp/cli_format.py" = ["D"]
+"src/ms_access_mcp/doctor.py" = ["D"]
+# EM/TRY003: backend raise mechanics are fixed in plan 020; this path is deferred.
+"src/ms_access_mcp/opencode_config.py" = ["EM", "TRY003"]
+"src/ms_access_mcp/sql_builder.py" = ["EM", "TRY003"]
+# D: operational qualification scripts are deferred to a future documentation plan.
+# EM/TRY003: backend raise mechanics are fixed in plan 020; scripts are deferred.
+"scripts/**" = ["D", "EM", "TRY003"]
 

@@ -821,6 +821,49 @@ class TestGetCurrentDbName:
         assert call_count["n"] == 1  # must have gone through dispatcher.call
 
 
+class TestCreateFormRecordSourceRejectionLogging:
+    """create_form preserves best-effort RecordSource behavior with DEBUG logging."""
+
+    def test_record_source_rejection_logs_debug_and_returns_true(self, caplog):
+        class _FakeForm:
+            Name = "TestForm"
+
+            @property
+            def RecordSource(self):
+                return ""
+
+            @RecordSource.setter
+            def RecordSource(self, value):
+                raise RuntimeError(f"Cannot set source {value}")
+
+        form = _FakeForm()
+
+        class _FakeDoCmd:
+            def CreateForm(self):
+                return form
+
+            def Close(self, ac_type, name, save):
+                pass
+
+        class _FakeAccessApp:
+            DoCmd = _FakeDoCmd()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        fake_disp._call_impl = lambda fn, *args, **kwargs: fn()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.create_form("TestForm", record_source="qryX")
+
+        assert result is True
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("RecordSource" in msg and "qryX" in msg for msg in debug_msgs)
+
+
 # -------------------------------------------------------------------------- #
 # Step 2: COM mutation failure classification
 # -------------------------------------------------------------------------- #
@@ -891,6 +934,29 @@ class TestDeleteFormErrorClassification:
             f"Expected warning about 'SomeForm', got: {warning_msgs}"
         )
 
+    def test_delete_form_not_found_warning_names_exception_class(self, caplog):
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_dispatcher(
+            lambda fn, args, kwargs: fn()
+        )
+
+        assert adapter.delete_form("GhostForm") is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("AccessObjectNotFoundError" in msg for msg in warning_msgs)
+
+    def test_delete_form_generic_warning_names_exception_class(self, caplog):
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_dispatcher(
+            lambda fn, args, kwargs: fn()
+        )
+        app = adapter._dispatcher._access_app
+        assert app is not None
+        app.DoCmd.DeleteObject = MagicMock(side_effect=RuntimeError("Unexpected COM failure"))
+
+        assert adapter.delete_form("SomeForm") is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("AccessBackendError" in msg for msg in warning_msgs)
+
 
 class TestRenameFormErrorClassification:
     """rename_form returns False and logs a WARNING with error classification."""
@@ -949,6 +1015,16 @@ class TestRenameFormErrorClassification:
         assert any("OldName" in msg or "NewName" in msg for msg in warning_msgs), (
             f"Expected warning about 'OldName' or 'NewName', got: {warning_msgs}"
         )
+
+    def test_rename_form_warning_names_exception_class(self, caplog):
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter_with_rename_error(
+            Exception("Cannot find object 'OldName' in this collection")
+        )
+
+        assert adapter.rename_form("OldName", "NewName") is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("AccessObjectNotFoundError" in msg for msg in warning_msgs)
 
 
 # -------------------------------------------------------------------------- #
@@ -1245,6 +1321,16 @@ class TestSetObjectPropertyErrorClassification:
         assert any("MainForm" in msg for msg in warning_msgs), (
             f"Expected WARNING about 'MainForm', got: {warning_msgs}"
         )
+
+    def test_set_form_property_open_failure_warning_names_exception_class(self, caplog):
+        caplog.set_level(logging.WARNING)
+        adapter = self._make_adapter(
+            "form", open_exc=RuntimeError("Unexpected COM failure")
+        )
+
+        assert adapter.set_form_property("MainForm", "Caption", "Hi") is False
+        warning_msgs = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("AccessBackendError" in msg for msg in warning_msgs)
 
     def test_set_report_property_open_failure_logs_warning(self, caplog):
         """set_report_property whose OpenReport raises returns False and logs a WARNING."""

@@ -109,7 +109,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
     def export_all(self, out_dir: str) -> Result:
         if err := self._ensure_adapter():
             return err
-        assert self._adapter is not None
+        assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
 
         try:
             result = self._adapter.export_all_versioning(out_dir)
@@ -154,7 +154,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
 
         if err := self._ensure_adapter():
             return err
-        assert self._adapter is not None
+        assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
 
         try:
             result = self._adapter.import_all_versioning(input_dir)
@@ -171,7 +171,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
     def compare(self, export_dir: str) -> Result:
         if err := self._ensure_adapter():
             return err
-        assert self._adapter is not None
+        assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
 
         try:
             result = self._adapter.compare_versioning(export_dir)
@@ -189,7 +189,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
     def export_schema_ddl(self, out_dir: str) -> Result:
         if err := self._ensure_adapter():
             return err
-        assert self._adapter is not None
+        assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
 
         try:
             result = self._adapter.export_schema_ddl(out_dir)

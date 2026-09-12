@@ -30,6 +30,7 @@ class DaoSession:
         db_path: Absolute path to the .accdb or .mdb file.
         password: Optional database password; appended as ``;PWD=...``.
         read_only: ``True`` (default) opens with ``ReadOnly=True``.
+
     """
 
     def __init__(
@@ -38,12 +39,14 @@ class DaoSession:
         password: str = "",
         read_only: bool = True,
     ) -> None:
+        """Initialize a DAO session for the specified database path."""
         self.path: str = db_path
         self._password: str = password
         self.read_only: bool = read_only
         self.db: Any | None = None
 
     def __enter__(self) -> DaoSession:
+        """Open the DAO database and return this session."""
         self.db = self._open_database()
         return self
 
@@ -53,6 +56,7 @@ class DaoSession:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        """Close the DAO database when leaving the context manager."""
         self._close()
 
     def close(self) -> None:
@@ -86,6 +90,7 @@ class DaoOperationError(Exception):
     """Raised by DaoAdapter for any DAO operation failure."""
 
     def __init__(self, message: str, cause: BaseException | None = None) -> None:
+        """Initialize an operation error with its optional underlying cause."""
         super().__init__(message)
         self.message: str = message
         self.cause: BaseException | None = cause
@@ -108,6 +113,7 @@ class DaoAdapter:
         db_path: str,
         dispatcher: ComDispatcher | None = None,
     ) -> None:
+        """Initialize a DAO adapter with an optional shared dispatcher."""
         self._db_path: str = db_path
         self._dispatcher: ComDispatcher = dispatcher or ComDispatcher()
         self._connected: bool = False
@@ -135,8 +141,9 @@ class DaoAdapter:
         except Exception as e:
             self._dispatcher.mark_unhealthy()
             self._connected = False
+            msg = f"DAO connect failed for {target_path}: {e}"
             raise DaoOperationError(
-                f"DAO connect failed for {target_path}: {e}",
+                msg,
                 cause=e,
             ) from e
         self._connected = True
@@ -161,8 +168,9 @@ class DaoAdapter:
         except Exception as e:
             self._dispatcher.mark_unhealthy()
             self._connected = False
+            msg = f"DAO create_database failed for {path}: {e}"
             raise DaoOperationError(
-                f"DAO create_database failed for {path}: {e}",
+                msg,
                 cause=e,
             ) from e
 
@@ -182,30 +190,39 @@ class DaoAdapter:
         return self._schema
 
     def get_tables(self) -> list:
+        """Return tables from the schema inspector."""
         return self._schema_inspector.get_tables()
 
     def get_system_tables(self) -> list:
+        """Return system tables from the schema inspector."""
         return self._schema_inspector.get_system_tables()
 
     def get_queries(self) -> list:
+        """Return saved queries from the schema inspector."""
         return self._schema_inspector.get_queries()
 
     def get_indexes(self, table_name: str) -> list:
+        """Return indexes for a table from the schema inspector."""
         return self._schema_inspector.get_indexes(table_name)
 
     def get_relationships(self) -> list:
+        """Return relationships from the schema inspector."""
         return self._schema_inspector.get_relationships()
 
     def get_object_metadata(self, object_name: str) -> dict:
+        """Return metadata for an Access object."""
         return self._schema_inspector.get_object_metadata(object_name)
 
     def get_table_schema_plan(self) -> tuple:
+        """Return the table schema plan from the schema inspector."""
         return self._schema_inspector.get_table_schema_plan()
 
     def generate_sql(self, output_path: str) -> dict:
+        """Return the SQL generation result for the output path."""
         return self._schema_inspector.generate_sql(output_path)
 
     def get_database_statistics(self) -> dict:
+        """Return database statistics from the schema inspector."""
         return self._schema_inspector.get_database_statistics()
 
     # -------------------------------------------------------------------------- #
@@ -297,9 +314,11 @@ class DaoAdapter:
         return self._db_ops
 
     def get_database_properties(self, names: list[str] | None = None) -> dict:
+        """Return the requested database properties."""
         return self._db_operations.get_database_properties(names)
 
     def set_database_property(self, name: str, value: str, type: str | None = None) -> bool:
+        """Set a database property and return whether the operation succeeded."""
         return self._db_operations.set_database_property(name, value, type)
 
     # -------------------------------------------------------------------------- #
@@ -460,7 +479,8 @@ class DaoAdapter:
     def execute_raw_sql(self, sql: str) -> int:
         """Execute arbitrary SQL via DAO Execute. Returns records affected."""
         if not self._dispatcher.is_connected():
-            raise RuntimeError("Not connected")
+            msg = "Not connected"
+            raise RuntimeError(msg)
 
         def _do() -> int:
             db = self._dispatcher.current_db

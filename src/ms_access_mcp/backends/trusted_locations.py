@@ -21,6 +21,7 @@ def capture_trusted_locations() -> list[dict]:
 
     Returns:
         List of Trusted Location dicts, or empty list on non-Windows or error.
+
     """
     if sys.platform != "win32":
         return []
@@ -88,6 +89,7 @@ def restore_trusted_locations(locations: list[dict]) -> bool:
 
     Returns:
         True on success, False on failure.
+
     """
     if sys.platform != "win32":
         return False

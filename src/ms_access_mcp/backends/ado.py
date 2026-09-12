@@ -45,6 +45,7 @@ class AdoAdapter:
     """
 
     def __init__(self, db_path: str) -> None:
+        """Initialize an ADO adapter for the specified database path."""
         self._db_path = db_path
         self._conn: Any = None
         self._connected = False
@@ -77,6 +78,7 @@ class AdoAdapter:
         self._connected = False
 
     def is_connected(self) -> bool:
+        """Return whether the ADO connection is open."""
         return self._connected
 
     def execute_script(self, sql_script: str) -> dict:

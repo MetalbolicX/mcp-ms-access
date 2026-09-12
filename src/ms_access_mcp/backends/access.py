@@ -56,6 +56,7 @@ class AccessAdapter:
     _dispatcher: AccessDispatcherProtocol
 
     def __init__(self, db_path: str) -> None:
+        """Initialize an Access adapter for the specified database path."""
         self._db_path = db_path
         self._dispatcher = ComDispatcher()
         self._connected = False
@@ -93,6 +94,7 @@ class AccessAdapter:
         self._connected = False
 
     def is_connected(self) -> bool:
+        """Return whether the Access application is connected."""
         return self._connected
 
     # ------------------------------------------------------------------ #
@@ -308,6 +310,7 @@ class AccessAdapter:
 
         Args:
             stop_event: threading.Event — set when the dialog killer should stop.
+
         """
         try:
             import win32con
@@ -480,8 +483,8 @@ class AccessAdapter:
                 if record_source:
                     try:
                         obj.RecordSource = record_source
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("create_%s: RecordSource %r rejected: %s", kind, record_source, exc)
                 if properties:
                     for prop_name, value in properties.items():
                         try:
@@ -505,7 +508,14 @@ class AccessAdapter:
     def _log_object_failure(self, kind: str, operation: str, object_name: str, exc: BaseException) -> None:
         """Classify a COM failure and log it as a warning (for bool-collapsing operations)."""
         error = self._classify_object_failure(kind, operation, object_name, exc)
-        logger.warning("%s %s '%s' failed: %s", operation, kind, object_name, error)
+        logger.warning(
+            "%s %s '%s' failed: %s: %s",
+            operation,
+            kind,
+            object_name,
+            type(error).__name__,
+            error,
+        )
 
     def _rename_object(self, kind: str, old_name: str, new_name: str) -> bool:
         """Rename a form or report via DoCmd.Rename."""
@@ -523,7 +533,13 @@ class AccessAdapter:
         try:
             return self._dispatcher.call(_do)
         except (AccessObjectNotFoundError, AccessBackendError) as exc:
-            logger.warning("rename %s '%s' failed: %s", kind, old_name, exc)
+            logger.warning(
+                "rename %s '%s' failed: %s: %s",
+                kind,
+                old_name,
+                type(exc).__name__,
+                exc,
+            )
             return False
 
     def _delete_object(self, kind: str, object_name: str) -> bool:
@@ -542,7 +558,13 @@ class AccessAdapter:
         try:
             return self._dispatcher.call(_do)
         except (AccessObjectNotFoundError, AccessBackendError) as exc:
-            logger.warning("delete %s '%s' failed: %s", kind, object_name, exc)
+            logger.warning(
+                "delete %s '%s' failed: %s: %s",
+                kind,
+                object_name,
+                type(exc).__name__,
+                exc,
+            )
             return False
 
     def create_form(self, form_name: str, record_source: str = "", template_name: str = "", properties: dict[str, Any] | None = None) -> bool:
@@ -1685,6 +1707,7 @@ class AccessAdapter:
         Args:
             module_name: Name for the new module
             module_type: vbext_ComponentType — 1 = standard module, 2 = class module
+
         """
         if not self._dispatcher._started:
             return False
@@ -1747,6 +1770,7 @@ class AccessAdapter:
 
         Returns:
             dict with success=True on success, error message on failure
+
         """
         if not self._dispatcher._started:
             return {"success": False, "error": "Not connected"}
@@ -1785,6 +1809,7 @@ class AccessAdapter:
         Returns:
             dict with success=True on success
             dict with success=False and error message on failure
+
         """
         if not self._dispatcher._started:
             return {"success": False, "error": "Not connected"}
@@ -1838,6 +1863,7 @@ class AccessAdapter:
         Returns:
             List of dicts with keys: name, type ("Sub"|"Function"|"Property"),
             start_line, line_count
+
         """
         if not self._dispatcher._started:
             return []
@@ -1890,6 +1916,7 @@ class AccessAdapter:
 
         Returns:
             dict with keys: name, type, code, signature
+
         """
         if not self._dispatcher._started:
             return {}
@@ -1966,7 +1993,7 @@ class AccessAdapter:
 # -------------------------------------------------------------------------- #
 
 def connect_hidden(db_path: str) -> AccessAdapter:
-    """Convenience: create and connect an AccessAdapter in hidden mode.
+    """Create and connect an AccessAdapter in hidden mode.
 
     Returns the connected adapter. Caller must call disconnect() when done.
     """

@@ -35,9 +35,13 @@ honor its STOP conditions, and update your row when done.
 | 012  | Move Result envelope + allowed-dirs resolution to shared modules | 8 | P2 | M | MED | Direct edit (mechanical relocation with re-export shims) | — (sequence after 010 — both touch `errors.py`) | DONE (envelope Ok/Err/Result/ok/err now owned by `errors.py` with `database.py` re-export shim; `allowed_dirs_from_env` public in `safety.py`; sibling app modules import from `..errors` via `err as _err` aliases to avoid walrus shadowing; 707 passed, ruff clean, pyright 0) |
 | 013  | Type the adapter seam + centralize `_ensure_adapter` | 8 | P2 | M | MED | Direct edit (typing refactor; pyright is the gate) | — | DONE (consumer AdapterProtocols + shared `AdapterLifecycle` mixin; `_ensure_adapter` defined once; automation/maintenance/versioning typed, fakes updated; STOP applied to `database.py` — 26-method adapter union exceeds the plan's ~25 threshold, `self._adapter: Any`/`_get_adapter -> Any` left unchanged; pyright 0, ruff clean) |
 | 014  | Architecture guard + doctor/dao characterization tests | 8 | P2 | M | LOW | Direct edit (test-only; production untouched) | 012 recommended (guard matches post-012 state) | DONE (commits a5b1457 577c19d 663a06f; AST layer-direction + private-import guard with proven failure, doctor 32 + dao 59 characterization tests incl. swallow pins, 799 passed/2 skipped, ruff clean, pyright 0, zero production files) |
-| 015  | Narrow blanket ruff per-file-ignores on backends/** | 8 | P3 | M | MED | Direct edit (incremental, one rule group at a time) | 009, 010 recommended | TODO |
+| 015  | Narrow blanket ruff per-file-ignores on backends/** | 8 | P3 | M | MED | Direct edit (incremental, one rule group at a time) | 009, 010 recommended | REJECTED (superseded by 018-020: mechanism corrected — rules were never in select; scope split by verified census) |
 | 016  | FP maintainability: Result combinators, uniform error policy, purity warts, adapter mirror collapse | 8 | P1/P2 (per phase) | L | MED | Phased: P1 direct edit + new unit tests; P2 strict TDD (error contract, bool API preserved); P3 direct edit; P4 characterization tests → direct edit | 010, 012 (both DONE); land before 015 | DONE |
-| 021  | Re-verify the CurrentDb.Name fix and unblock plan 008 | 9 | P1 | S (GREEN) / M (RED) | LOW/MED | Verification-first: reproduce single test → GREEN=docs-only, RED=probe+strict-TDD fix at accessor seam | tree containing `c955258` (merge `plan/cleanup` first) | TODO |
+| 017  | Complete plan-010 COM error observability (RecordSource DEBUG log + typed-error naming in warnings) | 8 | P2 | S | LOW | Strict TDD (log contract; RED→GREEN per step) | 010 (DONE) | DONE |
+| 018  | Correct ruff rule-selection mechanism + document deliberate suppressions (verified census: 533 in backends/**, 813 elsewhere under ANN,D,EM,TRY003,BLE,FBT,SLF001,S101,ARG002; deliberate: BLE001 176, ARG002 57, SLF001 53, ANN401 30) | 8 | P2 | S | LOW | Direct edit (config + authorized 23 S101 mechanical suppressions) | — | DONE (explicit authorization revised the approximately 10-site budget; all 23 repository S101 sites documented as programmer invariants) |
+| 019  | Re-enable ruff D on backends/** (105 sites: D102 82, D107 10, D413 9 auto-fixable, D105 2, D103 1, D401 1) | 8 | P3 | M | LOW | Direct edit (doc-only, zero behavior change, batched per-file commits) | 018 | DONE |
+| 020  | Re-enable EM+TRY003 on backends/** (72 sites: EM101 35, TRY003 30, EM102 7; behavior-preserving raise mechanics) | 8 | P3 | M | LOW | Direct edit (existing suite pins the plan-010 error contract) | 018; sequence after 019 (both touch pyproject.toml + access.py) | DONE |
+| 021  | Re-verify the CurrentDb.Name fix and unblock plan 008 | 9 | P1 | S (GREEN) / M (RED) | LOW/MED | Verification-first: reproduce single test → GREEN=docs-only, RED=probe+strict-TDD fix at accessor seam | tree containing `c955258` (merged into `main` with this plan) | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
@@ -100,6 +104,7 @@ mode was chosen per plan by the nature of the change, not by default:
   doctor/dao scope — no file conflicts, any relative order. Sequence 016
   before 015: Phase 4 shrinks `access.py` another ~300–450 lines, which
   narrows the ruff per-file-ignores surface 015 must walk.
+<<<<<<< HEAD
 - 021 is stamped against commit `c955258` (branch `plan/cleanup`, which holds
   the uncommitted-then-committed 018–020 residual). Merge `plan/cleanup` into
   `main` before executing 021 — its drift check enforces this via
@@ -107,6 +112,17 @@ mode was chosen per plan by the nature of the change, not by default:
   rows above become current and `plan/cleanup` can be deleted. 021 then
   unblocks 008 (G3+G5 re-run); tagging `v0.1.0` or a fresh 13-gate cycle is a
   separate decision.
+=======
+- 018 supersedes 015: 015's mechanism was a no-op (masked families were
+  never in `[tool.ruff.lint].select`, so per-file-ignores removal changed
+  nothing) and its Step-1 volume (157 ANN+D violations) blew the ~30 STOP
+  threshold. 018 corrects the mechanism first; 019 and 020 each own one
+  structural group from the verified census (D 105; EM101/EM102/TRY003 72).
+- 019 and 020 require 018 (the select/per-file-ignores mechanism and the
+  justification-comment convention must land first). Sequence 020 after
+  019 — both touch `pyproject.toml` and `backends/**` files including
+  `access.py`.
+>>>>>>> plan/cleanup
 
 ## Findings considered and rejected/deferred (2026-09-09 audit)
 
@@ -132,6 +148,13 @@ mode was chosen per plan by the nature of the change, not by default:
 - **`mcp_tools/automation.py` and `application/database.py` coverage
   ratios**: deferred. Re-assess after 009–013 land; 014 closes only the
   confirmed zero-coverage gaps (doctor, dao).
+- **Globally enforcing BLE / FBT / ANN401 / tractable-ANN (2026-09-11
+  census, plan 018)**: rejected/deferred. BLE001 (176 backends + 65
+  elsewhere) is the deliberate COM best-effort pattern from plans
+  010/016/017; FBT (12 backends + 341 elsewhere) and ANN401 (30 backends +
+  25 elsewhere, structural pywin32 `Any`) exceed any single-plan budget;
+  tractable ANN codes total ~36, over the ~30 threshold. Plan 018 documents
+  each with its measured count.
 
 ## Deferred backlog (do NOT plan into v1)
 

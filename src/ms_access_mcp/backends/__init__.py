@@ -75,10 +75,11 @@ MAINTENANCE_CAPS = (
 def _normalize_backend(value: str) -> str:
     normalized = value.lower().strip()
     if normalized not in _VALID_BACKEND_VALUES:
-        raise ValueError(
+        msg = (
             f"Invalid ACCESS_MCP_BACKEND value: {value!r}. "
             f"Expected one of: {', '.join(sorted(_VALID_BACKEND_VALUES))}."
         )
+        raise ValueError(msg)
     return normalized
 
 
@@ -107,6 +108,7 @@ def _is_dao_constructable() -> bool:
 
 
 def backend_available(backend: str) -> bool:
+    """Return whether the requested backend can be constructed on this platform."""
     normalized = _normalize_backend(backend)
     if normalized == "auto":
         return True
@@ -116,7 +118,8 @@ def backend_available(backend: str) -> bool:
         return sys.platform == "win32"
     if normalized == "dao":
         return _is_dao_constructable()
-    raise ValueError(f"Unknown backend: {backend!r}")
+    msg = f"Unknown backend: {backend!r}"
+    raise ValueError(msg)
 
 
 class BackendSelector:
@@ -128,6 +131,7 @@ class BackendSelector:
         backend: Literal["odbc", "com", "dao", "auto"] | None = None,
         capabilities: BackendCapabilities | None = None,
     ):
+        """Construct an adapter selected by the explicit value, environment, and capabilities."""
         env_value = os.environ.get("ACCESS_MCP_BACKEND", "auto")
         env_explicit = "ACCESS_MCP_BACKEND" in os.environ
         if backend is not None:
@@ -146,22 +150,24 @@ class BackendSelector:
                 resolved = "odbc"
 
         if resolved == "odbc" and requires_com_flag:
-            assert capabilities is not None
+            assert capabilities is not None  # noqa: S101 - requires_com_flag guarantees capabilities is present
             cap_names = _com_only_cap_names(capabilities)
             cap_list = [f.name for f in BackendCapabilities if f in capabilities]
-            raise BackendCapabilityMismatchError(
+            msg = (
                 f"ACCESS_MCP_BACKEND=odbc conflicts with capability "
                 f"{cap_names[0]} which requires COM. "
                 f"(Requested capabilities: {cap_list})"
             )
+            raise BackendCapabilityMismatchError(msg)
 
         if resolved == "dao":
             if sys.platform != "win32":
                 if backend is not None or env_explicit:
-                    raise BackendUnavailableError(
+                    msg = (
                         "DAO backend is not available on non-Windows platforms. "
                         "Use backend='odbc' or ACCESS_MCP_BACKEND=odbc."
                     )
+                    raise BackendUnavailableError(msg)
                 resolved = "odbc"
             elif not _is_dao_constructable():
                 global _dao_fallback_warned
@@ -182,18 +188,20 @@ class BackendSelector:
             if sys.platform != "win32":
                 explicit_com = backend is not None
                 if explicit_com:
-                    raise BackendUnavailableError(
+                    msg = (
                         "COM automation is not available on Linux. "
                         "Use backend='odbc' or ACCESS_MCP_BACKEND=odbc."
                     )
+                    raise BackendUnavailableError(msg)
                 else:
-                    assert capabilities is not None
+                    assert capabilities is not None  # noqa: S101 - COM resolution requires capabilities
                     cap_names = _com_only_cap_names(capabilities)
-                    raise BackendCapabilityMismatchError(
+                    msg = (
                         f"Capabilities require COM backend ({cap_names[0]}), "
                         f"but COM automation is not available on Linux. "
                         f"Use ACCESS_MCP_BACKEND=odbc or remove the COM-only capability."
                     )
+                    raise BackendCapabilityMismatchError(msg)
             from .access import AccessAdapter
 
             return AccessAdapter(db_path=db_path)
