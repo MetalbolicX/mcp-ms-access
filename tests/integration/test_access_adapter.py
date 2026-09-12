@@ -32,7 +32,7 @@ class TestAccessAdapterHidden:
         adapter.disconnect()  # should not raise
 
     def test_no_msaccess_orphans_after_disconnect(self, temp_db_copy):
-        """Integration: connect → read CurrentDb().Name → disconnect; zero orphans within 10s."""
+        """Integration: connect → read get_current_db_name() → disconnect; zero orphans within 10s."""
         pytest.importorskip("win32com")
         from ms_access_mcp.backends.access import connect_hidden
 
