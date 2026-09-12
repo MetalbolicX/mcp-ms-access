@@ -863,3 +863,178 @@ class DatabaseUseCases:
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
+
+    # -------------------------------------------------------------------------
+    # Linked Table Operations (thin wrappers — DAO backend at backends/dao.py)
+    # -------------------------------------------------------------------------
+
+    def create_linked_table(
+        self,
+        name: str,
+        source_table: str,
+        connect_string: str,
+        connection_name: str = "default",
+        confirm: bool = False,
+    ) -> Result:
+        """Create a linked (attached) table.
+
+        Args:
+            name: Name for the new linked table in this database
+            source_table: Name of the source table on the remote database
+            connect_string: ODBC or DAO connection string to the remote database
+            connection_name: Connection to use
+            confirm: Must be True to execute
+
+        Returns:
+            Ok on success, or Err
+        """
+        if ack := self._policy.require_acknowledgment("create_linked_table", confirm):
+            return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
+        adapter = self._get_adapter(connection_name)
+        if adapter is None:
+            return _err("Not connected")
+        try:
+            result = adapter.create_linked_table(name, source_table, connect_string)
+            if isinstance(result, dict) and not result.get("success", False):
+                return _err(result.get("error", "create_linked_table failed"))
+            return _ok(rowcount=1)
+        except Exception as e:
+            return _err(str(e))
+
+    def refresh_linked_table(
+        self,
+        name: str,
+        connect_string: str | None = None,
+        connection_name: str = "default",
+        confirm: bool = False,
+    ) -> Result:
+        """Re-authenticate a linked table.
+
+        Args:
+            name: Name of the linked table to refresh
+            connect_string: Updated connection string (optional)
+            connection_name: Connection to use
+            confirm: Must be True to execute
+
+        Returns:
+            Ok on success, or Err
+        """
+        if ack := self._policy.require_acknowledgment("refresh_linked_table", confirm):
+            return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
+        adapter = self._get_adapter(connection_name)
+        if adapter is None:
+            return _err("Not connected")
+        try:
+            result = adapter.refresh_linked_table(name, connect_string)
+            if isinstance(result, dict) and not result.get("success", False):
+                return _err(result.get("error", "refresh_linked_table failed"))
+            return _ok(rowcount=1)
+        except Exception as e:
+            return _err(str(e))
+
+    def unlink_table(
+        self,
+        name: str,
+        connection_name: str = "default",
+        confirm: bool = False,
+    ) -> Result:
+        """Remove a linked table without deleting the remote source table.
+
+        Args:
+            name: Name of the linked table to unlink
+            connection_name: Connection to use
+            confirm: Must be True to execute
+
+        Returns:
+            Ok on success, or Err
+        """
+        if ack := self._policy.require_acknowledgment("unlink_table", confirm):
+            return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
+        adapter = self._get_adapter(connection_name)
+        if adapter is None:
+            return _err("Not connected")
+        try:
+            result = adapter.unlink_table(name)
+            if isinstance(result, dict) and not result.get("success", False):
+                return _err(result.get("error", "unlink_table failed"))
+            return _ok(rowcount=1)
+        except Exception as e:
+            return _err(str(e))
+
+    def upsert_linked_table(
+        self,
+        name: str,
+        source_table: str,
+        connect_string: str,
+        connection_name: str = "default",
+        confirm: bool = False,
+    ) -> Result:
+        """Recreate a linked table (preserves hidden attributes).
+
+        Args:
+            name: Name of the linked table to upsert
+            source_table: Name of the source table on the remote database
+            connect_string: ODBC or DAO connection string to the remote database
+            connection_name: Connection to use
+            confirm: Must be True to execute
+
+        Returns:
+            Ok on success, or Err
+        """
+        if ack := self._policy.require_acknowledgment("upsert_linked_table", confirm):
+            return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
+        adapter = self._get_adapter(connection_name)
+        if adapter is None:
+            return _err("Not connected")
+        try:
+            result = adapter.recreate_linked_table(name, source_table, connect_string)
+            if isinstance(result, dict) and not result.get("success", False):
+                return _err(result.get("error", "upsert_linked_table failed"))
+            return _ok(rowcount=1)
+        except Exception as e:
+            return _err(str(e))
+
+    # -------------------------------------------------------------------------
+    # Database Creation
+    # -------------------------------------------------------------------------
+
+    def create_access_database(
+        self,
+        path: str,
+        confirm: bool = False,
+    ) -> Result:
+        """Create a blank Access database at the given path.
+
+        Args:
+            path: Target path for the new .accdb or .mdb file
+            confirm: Must be True to execute
+
+        Returns:
+            Ok on success, or Err
+        """
+        if ack := self._policy.require_acknowledgment("create_access_database", confirm):
+            return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
+        if not is_path_allowed(path, self._allowed_dirs):
+            return _err(f"Output path not allowed: {path}")
+        if Path(path).exists():
+            return _err(f"Database already exists: {path}")
+        try:
+            adapter = BackendSelector.get_adapter(
+                db_path=path,
+                backend=cast(Literal["odbc", "com", "dao", "auto"] | None, self._backend_name),
+                capabilities=DATA_READ_CAPS,
+            )
+            cast(Any, adapter).create_database(path)
+            return _ok(rowcount=1)
+        except Exception as e:
+            return _err(f"create_access_database failed: {e}")

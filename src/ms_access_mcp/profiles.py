@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 __all__ = ["PROFILES", "load_profile", "resolve_profile"]
 
 
-PROFILES: frozenset[str] = frozenset({"core", "automation", "maintenance", "versioning", "full"})
+PROFILES: frozenset[str] = frozenset({"core", "automation", "maintenance", "versioning", "ddl", "full"})
 
 
 def _profile_modules(profile: str) -> list[str]:
@@ -32,13 +32,18 @@ def _profile_modules(profile: str) -> list[str]:
     versioning = [
         "ms_access_mcp.mcp_tools.versioning",
     ]
+    # DDL profile (plan 022): DDL, linked-table, and database-admin tools
+    ddl = [
+        "ms_access_mcp.mcp_tools.ddl",
+    ]
 
     dispatch: dict[str, list[str]] = {
         "core": core,
         "automation": automation,
         "maintenance": maintenance,
         "versioning": versioning,
-        "full": core + automation + maintenance + versioning,
+        "ddl": ddl,
+        "full": core + automation + maintenance + versioning + ddl,
     }
     return dispatch.get(profile, [])
 
@@ -47,7 +52,7 @@ def load_profile(name: str) -> list[str]:
     """Load tool modules for the given profile.
 
     Args:
-        name: Profile name ("core", "automation", "maintenance", "versioning", "full")
+        name: Profile name ("core", "automation", "maintenance", "versioning", "ddl", "full")
 
     Returns:
         List of module names to register

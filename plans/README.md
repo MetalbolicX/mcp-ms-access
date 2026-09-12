@@ -42,6 +42,10 @@ honor its STOP conditions, and update your row when done.
 | 019  | Re-enable ruff D on backends/** (105 sites: D102 82, D107 10, D413 9 auto-fixable, D105 2, D103 1, D401 1) | 8 | P3 | M | LOW | Direct edit (doc-only, zero behavior change, batched per-file commits) | 018 | DONE |
 | 020  | Re-enable EM+TRY003 on backends/** (72 sites: EM101 35, TRY003 30, EM102 7; behavior-preserving raise mechanics) | 8 | P3 | M | LOW | Direct edit (existing suite pins the plan-010 error contract) | 018; sequence after 019 (both touch pyproject.toml + access.py) | DONE |
 | 021  | Re-verify the CurrentDb.Name fix and unblock plan 008 | 9 | P1 | S (GREEN) / M (RED) | LOW/MED | Verification-first: reproduce single test → GREEN=docs-only, RED=probe+strict-TDD fix at accessor seam | tree containing `c955258` (merged into `main` with this plan) | DONE (plan 021 executed; Step 2 test GREEN; all Step 5 gates GREEN; Resolution section added to `docs/release/0.1.0-report.md`; rows 021 and 008 updated; commit on `plan/021-currentdb-name-reverify`; see `docs/release/0.1.0-report.md` Resolution section for full gate evidence) |
+| 022  | DDL + database-admin MCP profile (`ddl`) — 16 tools over existing use cases | 10 | P1 | M | MED | @medium + strict TDD | — (lands first; 023–025 reuse the profile-add pattern) | DONE (branch plan/022-ddl-profile; 16 tools; 860 passed/2 skipped; ruff clean; pyright 0/0/0; commits on branch only) |
+| 023  | XLSX export via ACE IISAM (no new dependency) | 10 | P1 | M | MED | @medium + strict TDD (probe-first for workbook-creation semantics) | 022 | TODO |
+| 024  | External-database migration profile (extract/upload/transfer/status) | 10 | P2 | L | HIGH | **SDD cycle** (same class as plan 005; apply tasks via @medium + strict TDD) | 022, 023 | TODO |
+| 025  | Analysis & utility tool gaps (ER diagram, query analysis, save_query, discard_dev_copy, execute_sql_script) | 10 | P2 | M | MED | @medium + strict TDD | 022, 024 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
@@ -104,25 +108,29 @@ mode was chosen per plan by the nature of the change, not by default:
   doctor/dao scope — no file conflicts, any relative order. Sequence 016
   before 015: Phase 4 shrinks `access.py` another ~300–450 lines, which
   narrows the ruff per-file-ignores surface 015 must walk.
-<<<<<<< HEAD
-- 021 is stamped against commit `c955258` (branch `plan/cleanup`, which holds
-  the uncommitted-then-committed 018–020 residual). Merge `plan/cleanup` into
-  `main` before executing 021 — its drift check enforces this via
-  `git merge-base --is-ancestor c955258 HEAD`. After the merge, the 018–020
-  rows above become current and `plan/cleanup` can be deleted. 021 then
-  unblocks 008 (G3+G5 re-run); tagging `v0.1.0` or a fresh 13-gate cycle is a
-  separate decision.
-=======
-- 018 supersedes 015: 015's mechanism was a no-op (masked families were
+- 021 was stamped against commit `c955258` (branch `plan/cleanup`, which held
+  the uncommitted-then-committed 018–020 residual). `plan/cleanup` was merged
+  into `main` (`a6a10af`) before 021 executed; 021 then unblocked 008
+  (G3+G5 re-run). Tagging `v0.1.0` or a fresh 13-gate cycle is a separate
+  decision.
+- 018 superseded 015: 015's mechanism was a no-op (masked families were
   never in `[tool.ruff.lint].select`, so per-file-ignores removal changed
   nothing) and its Step-1 volume (157 ANN+D violations) blew the ~30 STOP
-  threshold. 018 corrects the mechanism first; 019 and 020 each own one
+  threshold. 018 corrected the mechanism first; 019 and 020 each owned one
   structural group from the verified census (D 105; EM101/EM102/TRY003 72).
-- 019 and 020 require 018 (the select/per-file-ignores mechanism and the
-  justification-comment convention must land first). Sequence 020 after
+- 019 and 020 required 018 (the select/per-file-ignores mechanism and the
+  justification-comment convention had to land first). 020 sequenced after
   019 — both touch `pyproject.toml` and `backends/**` files including
   `access.py`.
->>>>>>> plan/cleanup
+- 023 sequences after 022 (both touch `application/database.py`); 022 adds
+  the thin use cases, 023 extends `export_data`.
+- 024 sequences after 022 and 023 (adds a profile and edits `pyproject.toml`;
+  no concurrent edits to `profiles.py`/`server.py`/`pyproject.toml`). 024's
+  `uv lock` for the `migrate` extra is the sanctioned exception to the
+  standing "preserve uv.lock" convention — separate commit from the
+  pre-existing uncommitted modification.
+- 025 requires 022 DONE (its `execute_sql_script` tool lands in the `ddl`
+  profile) and sequences after 024 (both touch `profiles.py`/`server.py`).
 
 ## Findings considered and rejected/deferred (2026-09-09 audit)
 
@@ -156,9 +164,27 @@ mode was chosen per plan by the nature of the change, not by default:
   tractable ANN codes total ~36, over the ~30 threshold. Plan 018 documents
   each with its measured count.
 
+## Plans 022–025: mode rationale (parity-gap closure, 2026-09-11)
+
+These plans close the reference-parity gaps the operator chose to keep after
+the product comparison (HTTP/UI/auth/telemetry/LLM stay excluded by decision;
+credential vault, active-connection state, `launch/close_access`, and
+`recover_access`-as-MCP stay must-not-port or by-design).
+
+- **Strict TDD** (022, 023, 025): new MCP tool CONTRACTS over capabilities
+  that already exist in application/backend layers — cheap to pin with
+  fake-adapter tests; same mode as plans 004/006/007. Plan 023 adds a
+  probe-first step because IISAM workbook-creation semantics are an engine
+  behavior, not something to guess in a test.
+- **SDD cycle** (024): a new feature family — new profile, new optional
+  dependencies, job/status model, per-dialect connectors — the same class of
+  work as plan 005. Key decisions (verbatim oracle tool names, `migrate`
+  extra, NO credential vault, synchronous in-process jobs) are pre-decided in
+  the plan so the SDD phases don't re-litigate them.
+
 ## Deferred backlog (do NOT plan into v1)
 
-- External DB migration connectors (psycopg2, mysql-connector) — optional `migrate` extra, separate effort.
+- ~~External DB migration connectors~~ — now planned as **plan 024** (SDD; `migrate` extra, batch-first, no credential vault).
 - Portable PyInstaller onedir distribution — only when a user cannot install uv.
-- XLSX export — optional `xlsx` extra, can ride any phase after 003 without blocking.
+- ~~XLSX export~~ — now planned as **plan 023** via ACE IISAM (no dependency). The unused `xlsx = ["openpyxl>=3.1.0"]` extra in `pyproject.toml` stays until a commit deliberately runs `uv lock` (cosmetic removal; avoids churning the uncommitted lockfile mid-flight).
 - Remote transports, browser UI, auth — removed product scope; revisit only with an explicit new decision.
