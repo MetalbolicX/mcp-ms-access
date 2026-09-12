@@ -1303,6 +1303,43 @@ class AccessAdapter:
         """Set multiple properties of a form section. Returns dict of {property_name: success}."""
         return self._set_object_section_properties("form", form_name, section_id, properties)
 
+    def export_table_to_xlsx(self, table_or_query: str, target_path: str) -> int:
+        """Export a table or query to an xlsx file via DoCmd.TransferSpreadsheet.
+
+        Uses Access's built-in export engine (acSpreadsheetTypeExcel12Xml = 14).
+        This path does NOT require the ACE Excel IISAM provider — it uses the
+        Access.Application COM object directly.
+
+        Args:
+            table_or_query: Name of the table or query to export.
+            target_path: Absolute path to the output .xlsx file.
+
+        Returns:
+            Estimated row count (0 if RecordsAffected is not exposed post-call).
+
+        """
+        if not self._dispatcher._started:
+            return 0
+
+        def _do() -> int:
+            try:
+                self._dispatcher.access_app.DoCmd.TransferSpreadsheet(
+                    1,  # acExport
+                    14,  # acSpreadsheetTypeExcel12Xml
+                    table_or_query,
+                    target_path,
+                    True,  # hasfieldnames
+                )
+                # Try to read records affected; if not exposed, return 0
+                try:
+                    return int(self._dispatcher.access_app.RecordsAffected)
+                except Exception:
+                    return 0
+            except Exception:
+                return 0
+
+        return self._dispatcher.call(_do)
+
     def export_form_to_text(self, form_name: str) -> str:
         """Export a form to text representation via SaveAsText."""
         if not self._dispatcher._started:

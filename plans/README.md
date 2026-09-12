@@ -43,7 +43,7 @@ honor its STOP conditions, and update your row when done.
 | 020  | Re-enable EM+TRY003 on backends/** (72 sites: EM101 35, TRY003 30, EM102 7; behavior-preserving raise mechanics) | 8 | P3 | M | LOW | Direct edit (existing suite pins the plan-010 error contract) | 018; sequence after 019 (both touch pyproject.toml + access.py) | DONE |
 | 021  | Re-verify the CurrentDb.Name fix and unblock plan 008 | 9 | P1 | S (GREEN) / M (RED) | LOW/MED | Verification-first: reproduce single test → GREEN=docs-only, RED=probe+strict-TDD fix at accessor seam | tree containing `c955258` (merged into `main` with this plan) | DONE (plan 021 executed; Step 2 test GREEN; all Step 5 gates GREEN; Resolution section added to `docs/release/0.1.0-report.md`; rows 021 and 008 updated; commit on `plan/021-currentdb-name-reverify`; see `docs/release/0.1.0-report.md` Resolution section for full gate evidence) |
 | 022  | DDL + database-admin MCP profile (`ddl`) — 16 tools over existing use cases | 10 | P1 | M | MED | @medium + strict TDD | — (lands first; 023–025 reuse the profile-add pattern) | DONE (branch plan/022-ddl-profile; 16 tools; 860 passed/2 skipped; ruff clean; pyright 0/0/0; commits on branch only) |
-| 023  | XLSX export via ACE IISAM (no new dependency) | 10 | P1 | M | MED | @medium + strict TDD (probe-first for workbook-creation semantics) | 022 | TODO |
+| 023  | XLSX export via ACE IISAM (no new dependency) | 10 | P1 | M | MED | @medium + strict TDD (probe-first for workbook-creation semantics) | 022 | DONE (branch plan/023-xlsx-iisam-export; 859 passed; ruff clean; pyright 0/0/0; commits on branch only; DoCmd primary + probe-gated IISAM SQL fallback; zero new deps) |
 | 024  | External-database migration profile (extract/upload/transfer/status) | 10 | P2 | L | HIGH | **SDD cycle** (same class as plan 005; apply tasks via @medium + strict TDD) | 022, 023 | TODO |
 | 025  | Analysis & utility tool gaps (ER diagram, query analysis, save_query, discard_dev_copy, execute_sql_script) | 10 | P2 | M | MED | @medium + strict TDD | 022, 024 | TODO |
 
@@ -186,5 +186,5 @@ credential vault, active-connection state, `launch/close_access`, and
 
 - ~~External DB migration connectors~~ — now planned as **plan 024** (SDD; `migrate` extra, batch-first, no credential vault).
 - Portable PyInstaller onedir distribution — only when a user cannot install uv.
-- ~~XLSX export~~ — now planned as **plan 023** via ACE IISAM (no dependency). The unused `xlsx = ["openpyxl>=3.1.0"]` extra in `pyproject.toml` stays until a commit deliberately runs `uv lock` (cosmetic removal; avoids churning the uncommitted lockfile mid-flight).
+- ~~XLSX export~~ — implemented by plan 023 — primary DoCmd.TransferSpreadsheet on AccessAdapter (always works), probe-gated IISAM SQL fallback for DAO/ADO backends when the ACE Excel provider is registered. Zero new dependencies.
 - Remote transports, browser UI, auth — removed product scope; revisit only with an explicit new decision.

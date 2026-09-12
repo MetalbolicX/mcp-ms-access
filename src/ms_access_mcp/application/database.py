@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from ..backends import DATA_READ_CAPS, BackendSelector
+from ..backends.access import AccessAdapter
 from ..errors import Err, Ok, Result, err, ok
 from ..safety import WritePolicy, is_path_allowed
 from .sql_builder import build_select
+from .xlsx_capability import IisamProviderProbe
 
 # =============================================================================
 # Result Envelopes — re-exported from the shared kernel (errors module)
@@ -782,6 +784,47 @@ class DatabaseUseCases:
             return _err(str(e))
 
     # -------------------------------------------------------------------------
+    # Export helpers
+    # -------------------------------------------------------------------------
+
+    #: Maximum length of an Excel sheet name
+    _MAX_SHEET_NAME_LENGTH = 31
+
+    @staticmethod
+    def _sanitize_sheet_name(name: str) -> Result:
+        """Validate and sanitize a sheet name for xlsx export.
+
+        Rules:
+        - Must not be empty
+        - Must be at most 31 characters
+        - Must not contain ]
+        - Trailing $ is stripped
+
+        Returns Ok with sanitized name, or Err with message.
+        """
+        if not name or not name.strip():
+            return _err("Sheet name must not be empty.")
+        # Strip trailing $
+        sanitized = name.rstrip("$").strip()
+        if not sanitized:
+            return _err("Sheet name must not be empty after normalization.")
+        if "]" in sanitized:
+            return _err(f"Sheet name must not contain ']': {sanitized!r}")
+        if len(sanitized) > 31:
+            return _err(f"Sheet name must be at most 31 characters: {len(sanitized)} > 31")
+        return _ok(sanitized)
+
+    @staticmethod
+    def _build_iisam_insert_sql(table_or_query: str, output_path: str, sheet_name: str) -> str:
+        """Build the IISAM INSERT INTO SQL for xlsx export.
+
+        Returns: INSERT INTO [Excel 12.0;HDR=YES;DATABASE=<abs>].[<sheet>$] <select>
+        """
+        abs_path = str(Path(output_path).absolute())
+        select_clause = build_select(table_or_query, None, None, None)
+        return f"INSERT INTO [Excel 12.0;HDR=YES;DATABASE={abs_path}].[{sheet_name}$] {select_clause}"
+
+    # -------------------------------------------------------------------------
     # Export
     # -------------------------------------------------------------------------
 
@@ -789,16 +832,19 @@ class DatabaseUseCases:
         self,
         table_or_query: str,
         output_path: str,
-        format: Literal["csv", "json"] = "csv",
+        format: Literal["csv", "json", "xlsx"] = "csv",
         connection_name: str = "default",
+        sheet_name: str = "Sheet1",
     ) -> Result:
         """Export table or query data to a file.
 
         Args:
             table_or_query: Table name or query name
             output_path: Output file path
-            format: Export format ("csv" or "json")
+            format: Export format ("csv", "json", or "xlsx")
             connection_name: Connection to use
+            sheet_name: Sheet name for xlsx export (default "Sheet1");
+                must be 1-31 chars; ] not allowed; trailing $ is stripped.
 
         Returns:
             Ok with rowcount, or Err
@@ -806,9 +852,35 @@ class DatabaseUseCases:
         if not is_path_allowed(output_path, self._allowed_dirs):
             return _err(f"Output path not allowed: {output_path}")
 
+        # Sanitize sheet name for xlsx
+        sheet_name_sanitized: str | None = None
+        if format == "xlsx":
+            sanitized_result = self._sanitize_sheet_name(sheet_name)
+            if isinstance(sanitized_result, Err):
+                return sanitized_result
+            sheet_name_sanitized = sanitized_result.data  # type: ignore[assignment]
+
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
+
+        # xlsx routing: AccessAdapter uses DoCmd; probe-gated SQL fallback for DAO/ADO
+        if format == "xlsx":
+            if isinstance(adapter, AccessAdapter):
+                affected = adapter.export_table_to_xlsx(table_or_query, output_path)
+                return _ok(rowcount=affected)
+            if IisamProviderProbe.is_excel_provider_registered():
+                assert sheet_name_sanitized is not None
+                sql = self._build_iisam_insert_sql(table_or_query, output_path, sheet_name_sanitized)
+                affected = adapter.execute_raw_sql(sql)
+                return _ok(rowcount=affected)
+            msg = (
+                "xlsx export on this backend requires either the 'access' "
+                "backend or the ACE Excel IISAM provider. Install Microsoft "
+                "Access Database Engine 2016 Redistributable, or reconnect "
+                "with the 'access' backend."
+            )
+            return _err(msg)
 
         try:
             # Fetch the data

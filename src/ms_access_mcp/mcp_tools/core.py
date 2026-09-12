@@ -444,7 +444,7 @@ def export_data(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Export table or query data to a file."""
+    """Export table or query data to a file (supports csv, json, xlsx)."""
     db = _new_db(readonly=True)
     if path:
         result = db.open_database(path)
@@ -458,6 +458,7 @@ def export_data(
         params["source"],
         params["out"],
         format=params.get("format", "csv"),
+        sheet_name=params.get("sheet_name", "Sheet1"),
     )
     dict_result = _result_to_dict(result)
     return to_mcp_result(dict_result)

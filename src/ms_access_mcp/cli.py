@@ -230,7 +230,7 @@ def _cmd_ddl(args: argparse.Namespace, db: DatabaseUseCases) -> int:
 
 
 def _cmd_export(args: argparse.Namespace, db: DatabaseUseCases) -> int:
-    """Handle: export TABLE|--query Q --format csv|json --out PATH"""
+    """Handle: export TABLE|--query Q --format csv|json|xlsx --sheet-name SHEET --out PATH"""
     if not args.out:
         print("Error: --out required", file=sys.stderr)
         return 2
@@ -238,7 +238,12 @@ def _cmd_export(args: argparse.Namespace, db: DatabaseUseCases) -> int:
     if not source:
         print("Error: TABLE or --query required", file=sys.stderr)
         return 2
-    result = db.export_data(source, args.out, format=args.format)
+    result = db.export_data(
+        source,
+        args.out,
+        format=args.format,
+        sheet_name=args.sheet_name,
+    )
     return format_result(result, args.json)
 
 
@@ -1138,7 +1143,8 @@ def main() -> int:
     export_group = export_parser.add_mutually_exclusive_group(required=True)
     export_group.add_argument("table", type=str, nargs="?", help="Table name")
     export_group.add_argument("--query", type=str, help="Query name")
-    export_parser.add_argument("--format", choices=["csv", "json"], default="csv")
+    export_parser.add_argument("--format", choices=["csv", "json", "xlsx"], default="csv")
+    export_parser.add_argument("--sheet-name", type=str, default="Sheet1", help="Sheet name for xlsx export")
     export_parser.add_argument("--out", type=str, required=True, help="Output file path")
     _add_global_flags(export_parser)
 
