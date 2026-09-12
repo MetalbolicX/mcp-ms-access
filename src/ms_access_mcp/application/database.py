@@ -870,7 +870,8 @@ class DatabaseUseCases:
                 affected = adapter.export_table_to_xlsx(table_or_query, output_path)
                 return _ok(rowcount=affected)
             if IisamProviderProbe.is_excel_provider_registered():
-                assert sheet_name_sanitized is not None
+                if sheet_name_sanitized is None:
+                    return _err("Sheet name sanitization failed")
                 sql = self._build_iisam_insert_sql(table_or_query, output_path, sheet_name_sanitized)
                 affected = adapter.execute_raw_sql(sql)
                 return _ok(rowcount=affected)
