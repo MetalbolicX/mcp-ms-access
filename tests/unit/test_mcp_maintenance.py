@@ -20,6 +20,7 @@ class TestMaintenanceToolRegistry:
             "maintenance_dev_copy_status",
             "maintenance_dev_copy_create",
             "maintenance_dev_copy_deploy",
+            "maintenance_discard_dev_copy",
             "maintenance_compact_repair",
             "maintenance_diagnose_environment",
         }
@@ -36,12 +37,12 @@ class TestMaintenanceToolRegistry:
 class TestMaintenanceRegister:
     """Test register() adds correct tools."""
 
-    def test_register_adds_six_tools(self):
+    def test_register_adds_seven_tools(self):
         from ms_access_mcp.mcp_tools.maintenance import register
 
         mock_mcp = MagicMock()
         register(mock_mcp)
-        assert mock_mcp.add_tool.call_count == 6
+        assert mock_mcp.add_tool.call_count == 7
 
 
 class TestMaintenanceToolFunctions:

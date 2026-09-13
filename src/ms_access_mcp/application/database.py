@@ -1108,3 +1108,128 @@ class DatabaseUseCases:
             return _ok(rowcount=1)
         except Exception as e:
             return _err(f"create_access_database failed: {e}")
+
+    # -------------------------------------------------------------------------
+    # Analysis Tools (plan 025)
+    # -------------------------------------------------------------------------
+
+    def get_er_diagram(self, connection_name: str = "default") -> Result:
+        """Get the database schema as nodes and edges for ER diagram visualization.
+
+        Args:
+            connection_name: Connection to use
+
+        Returns:
+            Ok with dict containing nodes, edges, node_count, edge_count, or Err
+        """
+        adapter = self._get_adapter(connection_name)
+        if adapter is None:
+            return _err("Not connected")
+
+        tables_result = self.get_tables(connection_name)
+        if isinstance(tables_result, Err):
+            return tables_result
+
+        rels_result = self.get_relationships(connection_name)
+        if isinstance(rels_result, Err):
+            return rels_result
+
+        tables_data = tables_result.data
+        rels_data = rels_result.data
+
+        # Build nodes from table data
+        nodes = []
+        for table_dict in tables_data:
+            nodes.append({
+                "id": table_dict.get("name", ""),
+                "type": "table",
+                "data": {
+                    "label": table_dict.get("name", ""),
+                    "columns": table_dict.get("fields", []),
+                    "record_count": table_dict.get("record_count", 0),
+                },
+            })
+
+        # Build edges from relationship data
+        edges = []
+        for rel_dict in rels_data:
+            edges.append({
+                "id": rel_dict.get("name", ""),
+                "source": rel_dict.get("foreign_table", ""),
+                "target": rel_dict.get("table", ""),
+                "label": rel_dict.get("name", ""),
+                "animated": False,
+            })
+
+        return _ok(data={
+            "nodes": nodes,
+            "edges": edges,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+        })
+
+    def generate_sql(
+        self,
+        output_path: str,
+        _table_names: list[str] | None = None,
+        connection_name: str = "default",
+    ) -> Result:
+        """Generate SQL DDL script for the database schema.
+
+        Args:
+            output_path: Path to write the SQL script
+            _table_names: Optional list of table names (currently unused — adapter limitation)
+            connection_name: Connection to use
+
+        Returns:
+            Ok on success, or Err
+        """
+        if not is_path_allowed(output_path, self._allowed_dirs):
+            return _err(f"Output path not allowed: {output_path}")
+
+        adapter = self._get_adapter(connection_name)
+        if adapter is None:
+            return _err("Not connected")
+
+        try:
+            # Delegate to the adapter's generate_sql method
+            result = adapter.generate_sql(output_path)
+            if isinstance(result, dict) and not result.get("success", True):
+                return _err(result.get("error", "generate_sql failed"))
+            return _ok(rowcount=1)
+        except Exception as e:
+            return _err(str(e))
+
+    def execute_sql_script(
+        self,
+        sql: str,
+        connection_name: str = "default",
+        confirm: bool = False,
+    ) -> Result:
+        """Execute a SQL script containing multiple statements.
+
+        Args:
+            sql: SQL script with multiple statements
+            connection_name: Connection to use
+            confirm: Must be True to execute
+
+        Returns:
+            Ok with execution summary, or Err
+        """
+        if ack := self._policy.require_acknowledgment("execute_sql_script", confirm):
+            return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
+
+        adapter = self._get_adapter(connection_name)
+        if adapter is None:
+            return _err("Not connected")
+
+        try:
+            execute_script = getattr(adapter, "execute_script", None)
+            if execute_script is None:
+                return _err(f"{type(adapter).__name__} does not support execute_script")
+            result = execute_script(sql)
+            return _ok(data=result)
+        except Exception as e:
+            return _err(str(e))

@@ -83,6 +83,21 @@ def maintenance_compact_repair(
     return to_mcp_result(_result_to_dict(result))
 
 
+def maintenance_discard_dev_copy(
+    path: str,
+    params: dict[str, Any] | None = None,
+    confirm: bool = False,
+) -> CallToolResult:
+    """Discard the active dev copy without deploying to production.
+
+    Deletes the dev copy file and removes its manifest.
+    Does NOT modify the production database.
+    """
+    uc = _new_maintenance(readonly=False)
+    result = uc.discard_dev_copy(confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
+
+
 def maintenance_diagnose_environment(
     path: str,
     params: dict[str, Any] | None = None,
@@ -110,6 +125,10 @@ _TOOLS: dict[str, tuple[Any, str]] = {
     "maintenance_dev_copy_deploy": (
         maintenance_dev_copy_deploy,
         "Deploy the dev copy over the production database (destructive).",
+    ),
+    "maintenance_discard_dev_copy": (
+        maintenance_discard_dev_copy,
+        "Discard the active dev copy without deploying to production.",
     ),
     "maintenance_compact_repair": (
         maintenance_compact_repair,

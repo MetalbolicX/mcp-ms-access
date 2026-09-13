@@ -121,8 +121,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "MCP tool profile to expose. "
             "Token-cost rationale: core <= 30 tools keeps LLM context lean; "
-            "additional profiles (automation, maintenance, versioning, ddl) are opt-in. "
-            "Valid values: core, automation, maintenance, versioning, ddl, full. "
+            "additional profiles (automation, maintenance, versioning, ddl, analysis) are opt-in. "
+            "Valid values: core, automation, maintenance, versioning, ddl, analysis, full. "
             "Default: core. Can also be set via ACCESS_MCP_PROFILE env var."
         ),
     )

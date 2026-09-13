@@ -226,6 +226,29 @@ def is_connected(path: str, params: dict[str, Any] | None = None, confirm: bool 
     return to_mcp_result(_result_to_dict(result))
 
 
+def execute_sql_script(
+    path: str,
+    params: dict[str, Any] | None = None,
+    confirm: bool = False,
+) -> CallToolResult:
+    """Execute a SQL script containing multiple statements.
+
+    Parses the script and executes each statement. Returns a summary
+    of results including success status and any errors.
+    Requires confirm=True and write-enabled policy.
+    """
+    p = params or {}
+    sql = p.get("sql", "")
+    connection_name = p.get("connection_name", "default")
+
+    if not sql:
+        return to_mcp_result({"success": False, "error": "sql parameter is required"})
+
+    uc = _new_db(readonly=False)
+    result = uc.execute_sql_script(sql, connection_name=connection_name, confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
+
+
 # =============================================================================
 # Registry
 # =============================================================================
@@ -297,6 +320,11 @@ _TOOLS: dict[str, tuple[Any, str]] = {
     "is_connected": (
         is_connected,
         "Check that the database at path can be opened. Stateless probe per call.",
+    ),
+    # Script execution
+    "execute_sql_script": (
+        execute_sql_script,
+        "Execute a SQL script containing multiple statements. Requires confirm=True.",
     ),
 }
 

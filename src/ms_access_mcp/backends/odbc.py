@@ -461,6 +461,11 @@ class OdbcAdapter:
         msg = "ODBC backend execute_raw_sql is not supported."
         raise BackendCapabilityMismatchError(msg)
 
+    def execute_script(self, sql_script: str) -> dict:
+        """Reject SQL script execution via ODBC."""
+        msg = "ODBC backend execute_script is not supported."
+        raise BackendCapabilityMismatchError(msg)
+
     def export_data(self, sql: str, file_path: str, format: str = "csv", **options) -> dict:
         """Return the unsupported ODBC export result."""
         return {"success": False, "error": "Export not supported via ODBC"}

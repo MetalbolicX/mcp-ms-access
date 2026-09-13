@@ -70,6 +70,7 @@ class TestToolNames:
         "create_query",
         "set_query_sql",
         "delete_query",
+        "save_query",
         "query_data",
         "insert_data",
         "update_data",
@@ -94,8 +95,8 @@ class TestToolNames:
         assert len(extra) == 0, f"Extra tools: {extra}"
 
     def test_tool_count(self):
-        """Core profile should have exactly 20 tools."""
-        assert len(_TOOLS) == 20
+        """Core profile should have exactly 21 tools."""
+        assert len(_TOOLS) == 21
 
 
 class TestExecuteRawSqlGate:

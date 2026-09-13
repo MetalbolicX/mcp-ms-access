@@ -295,6 +295,41 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
 
         return _ok(data={"active": False})
 
+    def discard_dev_copy(self, *, confirm: bool = False) -> Result:
+        """Discard the active dev copy without deploying to production.
+
+        Deletes the dev copy file and removes its manifest.
+        Does NOT modify the production database.
+        """
+        if err := self._confirm_gate("discard_dev_copy", confirm):
+            return err
+
+        dev_dir = os.path.join(tempfile.gettempdir(), "ms_access_dev")
+        manifest_files = glob.glob(os.path.join(dev_dir, "*.json"))
+
+        if not manifest_files:
+            return _err("No active dev copy found")
+
+        for manifest_path in manifest_files:
+            try:
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+                dev_path = manifest.get("dev_path")
+                if dev_path and os.path.exists(dev_path):
+                    os.remove(dev_path)
+                os.remove(manifest_path)
+                return _ok(
+                    data={
+                        "dev_path": dev_path,
+                        "manifest_path": manifest_path,
+                        "discarded_at": datetime.now(UTC).isoformat(),
+                    }
+                )
+            except Exception:
+                continue
+
+        return _err("No active dev copy found")
+
     def compact_repair(
         self,
         path: str,

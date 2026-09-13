@@ -14,6 +14,7 @@ from .dao_sql import (
     _strip_password,
 )
 from .dispatcher import DAO_DB_FAIL_ON_ERROR, ComDispatcher
+from .script import parse_script_lines
 
 logger = logging.getLogger(__name__)
 
@@ -486,6 +487,40 @@ class DaoAdapter:
             db = self._dispatcher.current_db
             db.Execute(sql, DAO_DB_FAIL_ON_ERROR)
             return db.RecordsAffected
+
+        return self._dispatcher.call(_do)
+
+    def execute_script(self, sql_script: str) -> dict:
+        """Execute a SQL script containing multiple statements.
+
+        Parses the script into individual statements and executes
+        each one in order via DAO Execute. Returns a summary of results.
+        """
+        if not self._dispatcher.is_connected():
+            return {"success": False, "error": "Not connected"}
+
+        def _do() -> dict:
+            db = self._dispatcher.current_db
+            statements = parse_script_lines(sql_script)
+            results: list[dict] = []
+            errors: list[str] = []
+
+            for stmt in statements:
+                if not stmt.strip():
+                    continue
+                try:
+                    db.Execute(stmt, DAO_DB_FAIL_ON_ERROR)
+                    results.append({"statement": stmt[:60], "success": True})
+                except Exception as e:
+                    errors.append(str(e))
+                    results.append({"statement": stmt[:60], "success": False, "error": str(e)})
+
+            return {
+                "success": len(errors) == 0,
+                "statements": len(statements),
+                "results": results,
+                "errors": errors,
+            }
 
         return self._dispatcher.call(_do)
 

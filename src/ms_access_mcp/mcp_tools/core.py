@@ -323,6 +323,64 @@ def delete_query(
     return to_mcp_result(dict_result)
 
 
+def save_query(
+    path: str,
+    params: dict[str, Any] | None = None,
+    confirm: bool = False,
+) -> CallToolResult:
+    """Save or update a saved query definition in the Access database.
+
+    If overwrite=True and the query exists, updates the SQL.
+    If overwrite=False and the query exists, returns an error.
+    If the query does not exist, creates it.
+    """
+    db = _new_db(readonly=False)
+    if path:
+        result = db.open_database(path)
+        if isinstance(result, Err):
+            dict_result = {"success": False, "error": result.message}
+            return to_mcp_result(dict_result)
+    if not params or "name" not in params or "sql" not in params:
+        dict_result = {"success": False, "error": "name and sql required"}
+        return to_mcp_result(dict_result)
+
+    query_name = params["name"]
+    sql = params["sql"]
+    overwrite = params.get("overwrite", False)
+
+    # Check if query exists
+    existing = db.get_queries()
+    if isinstance(existing, Err):
+        dict_result = {"success": False, "error": existing.message}
+        return to_mcp_result(dict_result)
+
+    query_names = []
+    queries_data = existing.data
+    if isinstance(queries_data, list):
+        for q in queries_data:
+            if isinstance(q, dict):
+                name = q.get("name")
+                if name:
+                    query_names.append(name)
+
+    if query_name in query_names:
+        if not overwrite:
+            dict_result = {
+                "success": False,
+                "error": f"Query '{query_name}' already exists. Use overwrite=True to update.",
+            }
+            return to_mcp_result(dict_result)
+        result = db.set_query_sql(query_name, sql, confirm=confirm)
+        dict_result = _result_to_dict(result)
+        dict_result["action"] = "updated"
+        return to_mcp_result(dict_result)
+    else:
+        result = db.create_query(query_name, sql, confirm=confirm)
+        dict_result = _result_to_dict(result)
+        dict_result["action"] = "created"
+        return to_mcp_result(dict_result)
+
+
 def query_data(
     path: str,
     params: dict[str, Any] | None = None,
@@ -532,6 +590,7 @@ _TOOLS: dict[str, tuple[Any, str]] = {
     "create_query": (create_query, "Create a saved query"),
     "set_query_sql": (set_query_sql, "Update SQL for a saved query"),
     "delete_query": (delete_query, "Delete a saved query"),
+    "save_query": (save_query, "Save or update a saved query definition"),
     "query_data": (query_data, "Execute a SELECT query"),
     "insert_data": (insert_data, "Insert a row into a table"),
     "update_data": (update_data, "Update rows in a table"),

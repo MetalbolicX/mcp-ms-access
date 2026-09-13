@@ -178,8 +178,8 @@ class TestAutomationProfileIsolation:
     """Automation profile is properly isolated."""
 
     def test_core_profile_unchanged(self):
-        """Core profile still has exactly 20 tools (no regression)."""
-        assert len(CORE_TOOLS) == 20, f"Core profile regressed: {len(CORE_TOOLS)} tools"
+        """Core profile still has exactly 21 tools (no regression)."""
+        assert len(CORE_TOOLS) == 21, f"Core profile regressed: {len(CORE_TOOLS)} tools"
 
     def test_automation_profile_includes_automation_module(self):
         """Automation profile includes the automation module."""

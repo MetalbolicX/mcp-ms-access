@@ -29,6 +29,8 @@ class TestToolNames:
         "set_database_property",
         "get_object_metadata",
         "is_connected",
+        # Script execution (plan 025)
+        "execute_sql_script",
     }
 
     def test_all_tools_registered(self):
@@ -57,6 +59,7 @@ class TestConfirmGating:
         "unlink_table",
         "upsert_linked_table",
         "create_access_database",
+        "execute_sql_script",
     }
 
     def _call_without_confirm(self, name: str):

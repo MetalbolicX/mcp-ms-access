@@ -7,34 +7,14 @@ so scripts run WITHOUT MSACCESS.EXE.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
+
+from .script import parse_script_lines
 
 logger = logging.getLogger(__name__)
 
 # ACE OLE DB provider string
 ACE_PROVIDER = "Microsoft.ACE.OLEDB.12.0"
-
-
-def _parse_script_lines(sql_script: str) -> list[str]:
-    """Parse a SQL script into individual statements.
-
-    Splits on semicolon boundaries, strips whitespace, and filters
-    out empty lines and SQL comments (both comment-only lines and
-    inline -- comments).
-    """
-    lines = sql_script.splitlines()
-    # Remove comment-only lines (lines that are ONLY a SQL comment)
-    non_comment = (
-        re.sub(r"--.*$", "", line)  # strip inline -- comments
-        for line in lines
-        if not line.strip().startswith("--")
-    )
-    # Join, then split on semicolons
-    text = " ".join(non_comment)
-    statements = text.split(";")
-    # Strip and filter empty
-    return [s.strip() for s in statements if s.strip()]
 
 
 class AdoAdapter:
@@ -90,7 +70,7 @@ class AdoAdapter:
         if not self._connected or self._conn is None:
             return {"success": False, "error": "Not connected"}
 
-        statements = _parse_script_lines(sql_script)
+        statements = parse_script_lines(sql_script)
         results: list[dict] = []
         errors: list[str] = []
 

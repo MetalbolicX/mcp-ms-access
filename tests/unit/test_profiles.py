@@ -9,7 +9,7 @@ from ms_access_mcp.profiles import PROFILES, load_profile, resolve_profile
 
 class TestProfileRegistry:
     def test_profiles_contains_expected_profiles(self):
-        assert PROFILES == frozenset({"core", "automation", "maintenance", "versioning", "ddl", "full"})
+        assert PROFILES == frozenset({"core", "automation", "maintenance", "versioning", "ddl", "analysis", "full"})
 
     def test_load_profile_core_returns_list(self):
         result = load_profile("core")
