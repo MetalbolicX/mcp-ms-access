@@ -13,6 +13,7 @@ dependencies = [
 [project.optional-dependencies]
 xlsx = ["openpyxl>=3.1.0"]
 dev = ["pytest>=8.0.0", "ruff>=0.5.0", "pyright>=1.1.300"]
+migrate = ["psycopg2-binary>=2.9.0", "mysql-connector-python>=8.0.0"]
 
 [project.scripts]
 ms-access-mcp = "ms_access_mcp.cli:main"
@@ -79,11 +80,13 @@ ignore = [
 # checks intentionally access private dispatcher state (for example
 # self._dispatcher._started in access.py).
 "src/ms_access_mcp/backends/**" = ["ARG002", "SLF001"]
+# Migration connectors follow the same backend conventions (EM/TRY003 for raise mechanics, D for docstrings deferred)
+"src/ms_access_mcp/backends/migration/**" = ["ARG002", "SLF001", "D", "EM", "TRY003"]
 # D: non-backend docstrings are deferred to future scoped documentation plans.
 "src/ms_access_mcp/cli.py" = ["D", "EM", "TRY003"]
 "src/ms_access_mcp/application/**" = ["D", "EM", "TRY003"]
 "src/ms_access_mcp/mcp_tools/**" = ["D", "EM", "TRY003"]
-"src/ms_access_mcp/models.py" = ["D"]
+"src/ms_access_mcp/models/**" = ["D"]
 "src/ms_access_mcp/errors.py" = ["D", "EM", "TRY003"]
 "src/ms_access_mcp/profiles.py" = ["D", "EM", "TRY003"]
 "src/ms_access_mcp/server.py" = ["D", "EM", "TRY003"]

@@ -1,0 +1,184 @@
+"""Postgres migration connector with lazy psycopg2 import.
+
+psycopg2 is imported only inside connect() to allow the module to be imported
+without the driver installed. If connect() is called without psycopg2,
+a helpful error message is raised.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ....models import ColumnSchema, TableSchema
+from .. import CONNECTOR_FACTORIES, INSTALL_MESSAGE
+from . import BaseConnector
+
+__all__ = ["PostgresConnector", "TYPE_MAP", "quote_identifier", "render_table_ddl"]
+
+# Access source_type -> PostgreSQL type
+TYPE_MAP: dict[str, str] = {
+    "Boolean": "BOOLEAN",
+    "Byte": "SMALLINT",
+    "Unsigned Byte": "SMALLINT",
+    "Integer": "SMALLINT",
+    "Unsigned Integer": "INTEGER",
+    "Long Integer": "INTEGER",
+    "Unsigned Long Integer": "BIGINT",
+    "Big Integer": "BIGINT",
+    "Single": "REAL",
+    "Double": "DOUBLE PRECISION",
+    "Currency": "NUMERIC(19,4)",
+    "Decimal": "NUMERIC(28,14)",
+    "Date/Time": "TIMESTAMP",
+    "Text": "VARCHAR({max_length})" if False else "TEXT",
+    "Memo": "TEXT",
+    "Binary": "BYTEA",
+    "GUID": "UUID",
+    "Unknown": "TEXT",
+}
+
+
+def _access_type_to_postgres(col: ColumnSchema) -> str:
+    """Map an Access column type to PostgreSQL type."""
+    access_type = col.source_type
+    if access_type == "Text" and col.max_length:
+        return f"VARCHAR({col.max_length})"
+    return TYPE_MAP.get(access_type, "TEXT")
+
+
+def quote_identifier(name: str) -> str:
+    """Quote a PostgreSQL identifier using double quotes.
+
+    Args:
+        name: The identifier to quote.
+
+    Returns:
+        The quoted identifier.
+    """
+    if not name:
+        raise ValueError("Identifier cannot be empty")
+    return f'"{name}"'
+
+
+def render_table_ddl(table: TableSchema) -> str:
+    """Render a CREATE TABLE DDL statement for PostgreSQL.
+
+    Args:
+        table: TableSchema describing the table.
+
+    Returns:
+        A CREATE TABLE DDL string.
+    """
+    columns_ddl: list[str] = []
+
+    for col in table.columns:
+        col_ddl = f"{quote_identifier(col.name)} {_access_type_to_postgres(col)}"
+
+        # NOT NULL
+        if not col.allow_null:
+            col_ddl += " NOT NULL"
+
+        # DEFAULT value
+        if col.default_value is not None:
+            col_ddl += f" DEFAULT {col.default_value}"
+
+        # IDENTITY for autoincrement (single-column integer PK only)
+        if col.is_autoincrement and col.source_type in ("Long Integer", "Integer", "Big Integer"):
+            if len(table.primary_key) == 1 and table.primary_key[0] == col.name:
+                col_ddl += " GENERATED ALWAYS AS IDENTITY"
+
+        columns_ddl.append(col_ddl)
+
+    # Primary key constraint
+    if table.primary_key:
+        pk_parts = [quote_identifier(pk) for pk in table.primary_key]
+        columns_ddl.append(f"PRIMARY KEY ({', '.join(pk_parts)})")
+
+    # Build the statement
+    col_defs = ",\n    ".join(columns_ddl)
+    ddl = f"CREATE TABLE {quote_identifier(table.name)} (\n    {col_defs}\n)"
+
+    return ddl
+
+
+class PostgresConnector(BaseConnector):
+    """PostgreSQL migration connector with lazy psycopg2 import."""
+
+    def __init__(self, connection_string: str) -> None:
+        """Initialize PostgreSQL connector.
+
+        Args:
+            connection_string: psycopg2 connection string for PostgreSQL.
+        """
+        super().__init__(connection_string)
+        self._conn: Any = None
+        self._psycopg2: Any = None
+
+    def connect(self) -> None:
+        """Connect to the PostgreSQL database.
+
+        Raises:
+            ImportError: If psycopg2 is not installed.
+            ConnectionError: If the connection fails.
+        """
+        try:
+            import psycopg2  # type: ignore
+        except ImportError:
+            raise ImportError(
+                f"psycopg2 is required for postgres connectors. {INSTALL_MESSAGE}"
+            )
+
+        self._psycopg2 = psycopg2
+        self._conn = psycopg2.connect(self.connection_string)
+
+    def table_exists(self, table: str) -> bool:
+        """Check if a table exists in the PostgreSQL database."""
+        if self._conn is None:
+            raise RuntimeError("Not connected")
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = %s",
+            (table,),
+        )
+        result = cursor.fetchone()
+        return result is not None
+
+    def create_table(self, ddl: str) -> None:
+        """Execute a CREATE TABLE DDL statement."""
+        if self._conn is None:
+            raise RuntimeError("Not connected")
+        cursor = self._conn.cursor()
+        cursor.execute(ddl)
+        self._conn.commit()
+
+    def insert_batch(self, table: str, columns: list[str], rows: list[tuple]) -> int:
+        """Insert multiple rows using executemany with %s placeholders."""
+        if self._conn is None:
+            raise RuntimeError("Not connected")
+
+        placeholders = ", ".join(["%s"] * len(columns))
+        col_names = ", ".join(quote_identifier(c) for c in columns)
+        sql = f"INSERT INTO {quote_identifier(table)} ({col_names}) VALUES ({placeholders})"
+
+        cursor = self._conn.cursor()
+        cursor.executemany(sql, rows)
+        self._conn.commit()
+        return cursor.rowcount
+
+    def rollback_table(self, table: str) -> None:
+        """Drop the table if it exists."""
+        if self._conn is None:
+            raise RuntimeError("Not connected")
+        cursor = self._conn.cursor()
+        cursor.execute(f"DROP TABLE IF EXISTS {quote_identifier(table)} CASCADE")
+        self._conn.commit()
+
+    def disconnect(self) -> None:
+        """Close the PostgreSQL connection."""
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+
+# Register the factory
+CONNECTOR_FACTORIES["postgres"] = PostgresConnector
