@@ -185,3 +185,71 @@ class SchemaDdlResult:
     tables_exported: int = 0
     relationships_exported: int = 0
     error: str | None = None
+
+
+# =============================================================================
+# Schema-plan models (ported from oracle models/migration.py)
+# =============================================================================
+
+
+@dataclass
+class ColumnSchema:
+    """Schema for a single column, used in get_table_schema_plan."""
+
+    name: str
+    source_type: str
+    max_length: int | None = None
+    allow_null: bool = True
+    is_autoincrement: bool = False
+    default_value: str | None = None
+
+    def __post_init__(self) -> None:
+        self.name = self.name.strip()
+        self.source_type = self.source_type.strip()
+        if self.default_value is not None:
+            stripped = self.default_value.strip()
+            self.default_value = None if stripped == "" else stripped
+
+
+@dataclass
+class ForeignKeySchema:
+    """Schema for a foreign key, used in get_table_schema_plan."""
+
+    name: str
+    columns: list[str]
+    referenced_table: str
+    referenced_columns: list[str]
+
+
+@dataclass
+class IndexSchema:
+    """Schema for an index (non-primary), used in get_table_schema_plan."""
+
+    name: str
+    columns: list[str]
+    is_unique: bool = False
+
+
+@dataclass
+class UnknownMetadata:
+    """Flags for schema aspects that could not be determined."""
+
+    primary_keys: bool = False
+    foreign_keys: bool = False
+    defaults: bool = False
+    indexes: bool = False
+    autoincrement: bool = False
+
+
+@dataclass
+class TableSchema:
+    """Full schema for a table, returned by get_table_schema_plan."""
+
+    name: str
+    columns: list[ColumnSchema]
+    primary_key: list[str]
+    foreign_keys: list[ForeignKeySchema]
+    indexes: list[IndexSchema]
+
+    def __post_init__(self) -> None:
+        self.name = self.name.strip()

@@ -7,6 +7,7 @@ All destructive ops gated via safety.require_acknowledgment.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import inspect
 import json
 from functools import cache
@@ -185,7 +186,7 @@ class DatabaseUseCases:
             return _err("Not connected")
         try:
             tables = adapter.get_tables()
-            return _ok(data=tables, rowcount=len(tables))
+            return _ok(data=[dataclasses.asdict(t) for t in tables], rowcount=len(tables))
         except Exception as e:
             return _err(str(e))
 
@@ -208,21 +209,16 @@ class DatabaseUseCases:
             return _err(str(e))
 
     def get_table_schema(self, table_name: str, connection_name: str = "default") -> Result:
-        """Get schema for a table.
-
-        Args:
-            table_name: Name of the table
-            connection_name: Connection to use
-
-        Returns:
-            Ok with table schema, or Err
-        """
+        """Get schema for a table (composed from get_tables per oracle mcp/schema.py)."""
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
         try:
-            schema = adapter.get_table_schema(table_name)
-            return _ok(data=schema)
+            tables = adapter.get_tables()
+            for table in tables:
+                if table.name == table_name:
+                    return _ok(data=dataclasses.asdict(table))
+            return _err(f"Table '{table_name}' not found")
         except Exception as e:
             return _err(str(e))
 
@@ -241,7 +237,7 @@ class DatabaseUseCases:
             return _err("Not connected")
         try:
             indexes = adapter.get_indexes(table_name)
-            return _ok(data=indexes, rowcount=len(indexes))
+            return _ok(data=[dataclasses.asdict(i) for i in indexes], rowcount=len(indexes))
         except Exception as e:
             return _err(str(e))
 
@@ -259,11 +255,11 @@ class DatabaseUseCases:
             return _err("Not connected")
         try:
             rels = adapter.get_relationships()
-            return _ok(data=rels, rowcount=len(rels))
+            return _ok(data=[dataclasses.asdict(r) for r in rels], rowcount=len(rels))
         except Exception as e:
             return _err(str(e))
 
-    def get_object_metadata(self, object_name: str, object_type: str = "table", connection_name: str = "default") -> Result:
+    def get_object_metadata(self, object_name: str, _object_type: str = "table", connection_name: str = "default") -> Result:
         """Get metadata for an object.
 
         Args:
@@ -278,7 +274,7 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            meta = adapter.get_object_metadata(object_name, object_type)
+            meta = adapter.get_object_metadata(object_name)
             return _ok(data=meta)
         except Exception as e:
             return _err(str(e))
@@ -296,8 +292,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
+            from dataclasses import asdict
             queries = adapter.get_queries()
-            return _ok(data=queries, rowcount=len(queries))
+            return _ok(data=[asdict(q) for q in queries], rowcount=len(queries))
         except Exception as e:
             return _err(str(e))
 

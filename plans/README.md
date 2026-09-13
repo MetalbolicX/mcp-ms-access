@@ -44,8 +44,9 @@ honor its STOP conditions, and update your row when done.
 | 021  | Re-verify the CurrentDb.Name fix and unblock plan 008 | 9 | P1 | S (GREEN) / M (RED) | LOW/MED | Verification-first: reproduce single test → GREEN=docs-only, RED=probe+strict-TDD fix at accessor seam | tree containing `c955258` (merged into `main` with this plan) | DONE (plan 021 executed; Step 2 test GREEN; all Step 5 gates GREEN; Resolution section added to `docs/release/0.1.0-report.md`; rows 021 and 008 updated; commit on `plan/021-currentdb-name-reverify`; see `docs/release/0.1.0-report.md` Resolution section for full gate evidence) |
 | 022  | DDL + database-admin MCP profile (`ddl`) — 16 tools over existing use cases | 10 | P1 | M | MED | @medium + strict TDD | — (lands first; 023–025 reuse the profile-add pattern) | DONE (branch plan/022-ddl-profile; 16 tools; 860 passed/2 skipped; ruff clean; pyright 0/0/0; commits on branch only) |
 | 023  | XLSX export via ACE IISAM (no new dependency) | 10 | P1 | M | MED | @medium + strict TDD (probe-first for workbook-creation semantics) | 022 | DONE (branch plan/023-xlsx-iisam-export; 859 passed; ruff clean; pyright 0/0/0; commits on branch only; DoCmd primary + probe-gated IISAM SQL fallback; zero new deps) |
-| 024  | External-database migration profile (extract/upload/transfer/status) | 10 | P2 | L | HIGH | **SDD cycle** (same class as plan 005; apply tasks via @medium + strict TDD) | 022, 023 | TODO |
-| 025  | Analysis & utility tool gaps (ER diagram, query analysis, save_query, discard_dev_copy, execute_sql_script) | 10 | P2 | M | MED | @medium + strict TDD | 022, 024 | TODO |
+| 024  | External-database migration profile (extract/upload/transfer/status) | 10 | P2 | L | HIGH | **SDD cycle** (same class as plan 005; apply tasks via @medium + strict TDD) | 022, 023, 026 | BLOCKED (exploration found the source-schema seam cannot supply PK/FK/index metadata — DAO inspector stubbed, ODBC incomplete; unblocked when 026 lands) |
+| 025  | Analysis & utility tool gaps (ER diagram, query analysis, save_query, discard_dev_copy, execute_sql_script) | 10 | P2 | M | MED | @medium + strict TDD | 022, 024, 026 | TODO |
+| 026  | Backend schema-metadata completeness — real DAO/ODBC introspection (pre-024 foundation) | 10 | P1 | L | MED | @medium + strict TDD | 023 | DONE (branch plan/026-schema-metadata; 939 passed/2 skipped unit + 7/7 integration tests on fixture copy; ruff clean; pyright 0/0/0; real `SchemaInspector` (`get_tables`/`get_indexes`/`get_relationships`/`get_queries`/`get_object_metadata`/`get_table_schema_plan`/`get_database_statistics`/`generate_sql`/`create_relationship`/`delete_relationship`); new `JetSqlGenerator` (`backends/sql_generator.py`) + ODBC `OdbcSchemaReader` (`backends/odbc_schema_reader.py`); 5 new dataclasses appended to flat `models.py` (`ColumnSchema`, `ForeignKeySchema`, `IndexSchema`, `UnknownMetadata`, `TableSchema`); use-case bug A fixed (`get_object_metadata` 1-arg), bug B fixed (`get_table_schema` composes from `get_tables`); Step 7c asdict serialization on `get_tables`/`get_indexes`/`get_relationships`/`get_queries`/`get_table_schema`; fixture has zero relationships and no PKs/FKs/indexes so integration tests probe + structural-assert rather than FK/PK detection; unblocks plan 024 source-schema seam and plan 025 `get_er_diagram`) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
@@ -131,6 +132,17 @@ mode was chosen per plan by the nature of the change, not by default:
   pre-existing uncommitted modification.
 - 025 requires 022 DONE (its `execute_sql_script` tool lands in the `ddl`
   profile) and sequences after 024 (both touch `profiles.py`/`server.py`).
+  It also requires 026 (its `get_er_diagram` composes `get_relationships`
+  and its `generate_sql` tool needs the inspector's real `generate_sql`).
+- 026 was inserted by plan 024's SDD exploration
+  (`openspec/changes/plan-024-external-database-migration-profile/exploration.md`):
+  the migration schema contract needs PK/FK/index metadata that the stubbed
+  DAO `SchemaInspector` and incomplete ODBC reads cannot supply. 026 also
+  fixes two latently broken registered tools (`get_object_metadata` arity
+  mismatch at `database.py:281`; `get_table_schema` calling a backend method
+  that does not exist at `database.py:224`) and completes the DAO backends
+  for plan 022's `create_relationship`/`delete_relationship` tools.
+  **Execution order is now 022 → 023 → 026 → 024 → 025.**
 
 ## Findings considered and rejected/deferred (2026-09-09 audit)
 

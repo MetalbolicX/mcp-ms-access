@@ -12,6 +12,7 @@ from ms_access_mcp.application.database import (
     _ok,
 )
 from ms_access_mcp.backends.access import AccessAdapter
+from ms_access_mcp.models import FieldInfo, IndexInfo, RelationshipInfo, TableInfo
 
 
 class FakeAdapter:
@@ -19,7 +20,23 @@ class FakeAdapter:
 
     def __init__(self):
         self.connected = False
-        self.tables = ["Users", "Orders"]
+        self.tables = [
+            TableInfo(
+                name="Users",
+                fields=[
+                    FieldInfo(name="id", type="Long Integer", size=4),
+                    FieldInfo(name="name", type="Text", size=100),
+                ],
+                record_count=10,
+                primary_key=["id"],
+            ),
+            TableInfo(
+                name="Orders",
+                fields=[FieldInfo(name="id", type="Long Integer", size=4)],
+                record_count=5,
+                primary_key=["id"],
+            ),
+        ]
         self.queries = ["qry_ActiveUsers"]
         self._properties = {}
 
@@ -38,17 +55,29 @@ class FakeAdapter:
 
     def get_table_schema(self, table_name: str):
         if table_name == "Users":
-            return [{"name": "id", "type": "INT"}, {"name": "name", "type": "TEXT"}]
+            return [
+                {"name": "id", "type": "INT"},
+                {"name": "name", "type": "TEXT"},
+            ]
         return []
 
     def get_indexes(self, table_name: str):
-        return [{"name": "idx_id", "columns": ["id"], "unique": True}]
+        return [IndexInfo(name="idx_id", columns=["id"], is_unique=True)]
 
     def get_relationships(self):
-        return []
+        return [
+            RelationshipInfo(
+                name="FK_Users_Orders",
+                table="Users",
+                foreign_table="Orders",
+                attributes="",
+                columns=["id"],
+                foreign_columns=["user_id"],
+            )
+        ]
 
-    def get_object_metadata(self, object_name: str, object_type: str = "table"):
-        return {"name": object_name, "type": object_type}
+    def get_object_metadata(self, object_name: str):
+        return {"name": object_name, "type": "table"}
 
     def get_queries(self):
         return self.queries
@@ -538,3 +567,91 @@ class TestExportDataXlsx:
 
         # No xlsx calls made when format is csv/json
         assert len(fake_adapter._export_calls) == 0
+
+
+class TestStep7cSerialization:
+    """Step 7c: use cases must convert dataclasses to dicts before Ok/data."""
+
+    def test_get_tables_returns_plain_dicts(self) -> None:
+        """get_tables Ok.data must be JSON-serializable dicts, not dataclasses."""
+        db = DatabaseUseCases()
+        db._connections["default"] = FakeAdapter()
+        result = db.get_tables()
+        assert isinstance(result, Ok)
+        assert isinstance(result.data, list)
+        for item in result.data:
+            assert isinstance(item, dict)
+            assert "name" in item
+            assert "fields" in item
+        # Verify json.dumps works (load-bearing contract)
+        import json
+
+        json.dumps(result.data)
+
+    def test_get_indexes_returns_plain_dicts(self) -> None:
+        """get_indexes Ok.data must be JSON-serializable dicts, not dataclasses."""
+        db = DatabaseUseCases()
+        db._connections["default"] = FakeAdapter()
+        result = db.get_indexes("Users")
+        assert isinstance(result, Ok)
+        assert isinstance(result.data, list)
+        for item in result.data:
+            assert isinstance(item, dict)
+            assert "name" in item
+            assert "columns" in item
+        import json
+
+        json.dumps(result.data)
+
+    def test_get_relationships_returns_plain_dicts(self) -> None:
+        """get_relationships Ok.data must be JSON-serializable dicts, not dataclasses."""
+        db = DatabaseUseCases()
+        db._connections["default"] = FakeAdapter()
+        result = db.get_relationships()
+        assert isinstance(result, Ok)
+        assert isinstance(result.data, list)
+        for item in result.data:
+            assert isinstance(item, dict)
+            assert "name" in item
+            assert "columns" in item
+            assert "foreign_columns" in item
+        import json
+
+        json.dumps(result.data)
+
+
+class TestGetTableSchema:
+    """Tests for get_table_schema composition from get_tables (Bug B fix)."""
+
+    def test_returns_matching_table_as_dict(self) -> None:
+        """get_table_schema('Users') returns the Users TableInfo as a dict."""
+        db = DatabaseUseCases()
+        db._connections["default"] = FakeAdapter()
+        result = db.get_table_schema("Users")
+        assert isinstance(result, Ok)
+        assert isinstance(result.data, dict)
+        assert result.data["name"] == "Users"
+        # Verify json.dumps works
+        import json
+
+        json.dumps(result.data)
+
+    def test_missing_table_returns_err(self) -> None:
+        """get_table_schema('NonExistent') returns Err with not-found message."""
+        db = DatabaseUseCases()
+        db._connections["default"] = FakeAdapter()
+        result = db.get_table_schema("NonExistent")
+        assert isinstance(result, Err)
+        assert "NonExistent" in result.message
+
+
+class TestGetObjectMetadataBugA:
+    """Tests for Bug A fix: get_object_metadata is 1-arg, not 2-arg."""
+
+    def test_single_arg_call_succeeds(self) -> None:
+        """get_object_metadata(object_name) with 1 arg succeeds (Bug A fix)."""
+        db = DatabaseUseCases()
+        db._connections["default"] = FakeAdapter()
+        result = db.get_object_metadata("Users")
+        assert isinstance(result, Ok)
+        assert result.data["name"] == "Users"

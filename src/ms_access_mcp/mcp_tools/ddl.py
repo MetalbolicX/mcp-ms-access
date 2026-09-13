@@ -211,10 +211,9 @@ def get_object_metadata(path: str, params: dict[str, Any] | None = None, confirm
     """Get metadata for a database object (table, query, etc.)."""
     p = params or {}
     object_name = p.get("object_name", "")
-    object_type = p.get("object_type", "table")
     connection_name = p.get("connection_name", "default")
     uc = _new_db(readonly=True)
-    result = uc.get_object_metadata(object_name=object_name, object_type=object_type, connection_name=connection_name)
+    result = uc.get_object_metadata(object_name=object_name, connection_name=connection_name)
     return to_mcp_result(_result_to_dict(result))
 
 

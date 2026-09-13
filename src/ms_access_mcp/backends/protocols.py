@@ -69,3 +69,32 @@ class AccessDispatcherProtocol(Protocol):
     def shutdown(self) -> None:
         """Signal the dispatcher thread to stop and clean up COM objects."""
         ...
+
+
+# ComDispatcher slots actually used by SchemaInspector
+class SchemaDispatcherProtocol(Protocol):
+    """What SchemaInspector actually needs from a dispatcher.
+
+    Covers properties and methods called directly by SchemaInspector via
+    ComDispatcher: is_connected, current_db, access_app, call.
+    """
+
+    _started: bool
+
+    @property
+    def access_app(self) -> Any:
+        """Return the Access.Application COM object."""
+        ...
+
+    @property
+    def current_db(self) -> Any:
+        """Return the current DAO Database object."""
+        ...
+
+    def call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Execute fn on the STA thread, returning the result."""
+        ...
+
+    def is_connected(self) -> bool:
+        """Return True if the dispatcher is connected."""
+        ...

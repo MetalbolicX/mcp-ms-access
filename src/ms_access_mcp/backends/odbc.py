@@ -12,6 +12,8 @@ from typing import Any
 import pyodbc
 
 from ..errors import BackendCapabilityMismatchError
+from ..models import IndexInfo
+from .odbc_schema_reader import OdbcSchemaReader
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ class OdbcAdapter:
         self._db_path = db_path
         self._conn: Any = None
         self._connected = False
+        self._schema_reader: OdbcSchemaReader | None = None
 
     def connect(self, db_path: str | None = None, password: str = "") -> None:
         """Open an ODBC connection to the Access database."""
@@ -210,17 +213,80 @@ class OdbcAdapter:
         except Exception:
             return []
 
-    def get_indexes(self, table_name: str) -> list:
-        """Return index metadata via SQLPrimaryKeys/SQLStatistics."""
+    def get_indexes(self, table_name: str) -> list[IndexInfo]:
+        """Return index metadata via SQLStatistics + SQLPrimaryKeys.
+
+        Best-effort — returns ``[]`` on any failure.
+        """
         if not self._connected or self._conn is None:
             return []
-        return []
+
+        indexes: list[IndexInfo] = []
+
+        # SQLStatistics — NON_UNIQUE=0 means unique index
+        try:
+            cursor = self._conn.cursor()
+            cursor.statistics(table=table_name)
+            for row in cursor.fetchall():
+                if getattr(row, "column_name", None) is None:
+                    continue
+                index_name = getattr(row, "index_name", "") or ""
+                column_name = getattr(row, "column_name", "") or ""
+                non_unique = getattr(row, "non_unique", None)
+                is_unique = False if non_unique is None else not bool(non_unique)
+                if column_name:
+                    indexes.append(
+                        IndexInfo(
+                            name=index_name,
+                            columns=[column_name],
+                            is_unique=is_unique,
+                            is_primary=False,
+                            ignore_nulls=False,
+                        )
+                    )
+            cursor.close()
+        except Exception:
+            pass
+
+        # SQLPrimaryKeys — synthesize a PK IndexInfo
+        try:
+            cursor = self._conn.cursor()
+            cursor.primaryKeys(table=table_name)
+            pk_cols: list[str] = []
+            pk_index_name = f"PK_{table_name}"
+            for row in cursor.fetchall():
+                col = getattr(row, "column_name", None)
+                if col:
+                    pk_cols.append(col)
+            cursor.close()
+            if pk_cols:
+                indexes.append(
+                    IndexInfo(
+                        name=pk_index_name,
+                        columns=pk_cols,
+                        is_unique=True,
+                        is_primary=True,
+                        ignore_nulls=False,
+                    )
+                )
+        except Exception:
+            pass
+
+        return indexes
 
     def get_relationships(self) -> list:
-        """Return foreign key relationships."""
+        """Return foreign key relationships from MSysRelationships.
+
+        Best-effort — degrades to ``[]`` when MSysRelationships is
+        hidden or inaccessible.
+        """
         if not self._connected or self._conn is None:
             return []
-        return []
+
+        if self._schema_reader is None:
+            self._schema_reader = OdbcSchemaReader(self._conn, logger)
+
+        return self._schema_reader.get_relationships()
 
     def _query_table_list(self, table_type: str) -> list:
         """Query SQLTables for tables of a given type."""
