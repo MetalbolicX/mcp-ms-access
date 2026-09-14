@@ -51,6 +51,7 @@ honor its STOP conditions, and update your row when done.
 | 028  | Test-suite hygiene — probe-gated xlsx skips, connector-guard isolation, execute_sql_script UC tests | 5 | P1 | M | LOW | @medium + strict TDD | 027 (main at `62a0031`) | DONE (branch plan/028-suite-hygiene; 1046 passed/5 skipped unit; ruff clean; pyright 0/0/0; `test_export_xlsx.py` DoCmd tests probe-gated on ACE Excel IISAM provider + `allow_module_level` misuse fixed; `test_migration_sqlite.py` lazy imports fix collection-phase dialect pollution; `test_migration_connectors.py` guard rewritten to subprocess-isolated fresh-interpreter check — order-independent; `TestExecuteSqlScript` pins 6 UC branches; `parse_script_lines` tests pre-existed in `test_ado_adapter.py` (rg proof); `plans/README.md` stray `<<<<<<< HEAD` marker removed) |
 | 029  | Release qualification v0.2.0 — fresh 13-gate cycle + annotated tag | 7 | P1 | M | MED | @medium + orchestrator gate re-verification | main @ `d7691d1`; **030** | DONE (2026-09-13: plan 030 merged fast-forward `3152467→3ee28b8`; all 13 gates green; report at `docs/release/0.2.0-report.md`; tag `v0.2.0` on commit `4aaae84`; plans/README.md row 008 updated) |
 | 030  | Quit Access on the STA thread — fix cross-apartment teardown corrupting client RPC state | 6 | P1 | M | MED | @medium + strict TDD | `plan/029-release-v020` @ `3152467` (stacked) | DONE (branch plan/030-com-quit-sta-teardown; 20 unit pins (test_dispatcher.py) green; 1085 passed/8 skipped full suite; ruff clean; pyright 0/0/0; step5_qualify G6 green: 10/10 orphan-free rounds; test_automation_com.py 3/3 consecutive passes; ThreadPoolExecutor eliminated from _release_com_safe; gc.collect added; _access_pid capture at connect; post-shutdown PID-scoped liveness kill; /IM never emitted; fixture hash 8e1cdd683fb9cc5003dbce77e436f4537ed428defaf9755642504430de4b14e9 unchanged) |
+| 031  | PID-scoped Access kills — replace `/IM MSACCESS.EXE` in maintenance + doctor | 4 | P2 | S | LOW | @light + strict TDD | `plan/029-release-v020` @ `7f5896f` (stacked) | DONE (branch plan/031-pid-scoped-access-kill; tests: 02fab27 → fix: 55961a7; `rg -n 'taskkill.*IM' src/` 0 matches; helper `kill_access_processes` in maintenance.py reuses already-enumerated `killed_pids` + single taskkill with repeated `/PID` filters; `recover_access` envelope preserved (killed_pids now equals actually-killed); `_check_deep_access` uses helper lazily; `test_recover_access_windows_with_confirm` rewritten to assert `/PID` per PID + `/IM`-never + `killed_pids == ["111","222"]`; new `test_recover_access_skips_kill_when_no_access_running`; new `test_deep_access_never_kills_by_image_name` in test_doctor.py; unit 1050 passed/5 skipped; full 1087 passed/8 skipped in 205s; ruff clean; pyright 0/0/0; pre-existing `no_confirm`/`non_windows` doctor tests + dispatcher /IM-never pins untouched) |
 
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
@@ -154,7 +155,13 @@ mode was chosen per plan by the nature of the change, not by default:
   RPC state over 6–9 rounds). 030 is the unblocker and stacks on the release
   branch so the full matrix re-runs on the post-fix tree; **order: 030 →
   029 resume (Step 3) → merge `plan/029-release-v020` to main with tag
-  `v0.2.0`.**
+  `v0.2.0`.** (029 released 2026-09-13; the merge-to-main step is still
+  pending operator decision.)
+- 031 removes the last two production `taskkill /IM MSACCESS.EXE` sites
+  (`maintenance.py:415`, `doctor.py:205`) via a shared PID-scoped helper.
+  Stacked on `plan/029-release-v020` @ `7f5896f` pending the merge-to-main
+  decision; if main is merged first, rebase the 031 branch onto main
+  (clean — disjoint files from 030).
 
 ## Findings considered and rejected/deferred (2026-09-09 audit)
 
