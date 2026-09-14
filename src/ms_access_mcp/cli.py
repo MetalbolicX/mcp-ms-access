@@ -973,7 +973,7 @@ def _cmd_configure_opencode(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="ms-access-mcp")
-    parser.add_argument("--version", action="version", version="ms-access-mcp 0.1.0")
+    parser.add_argument("--version", action="version", version="ms-access-mcp 0.2.0")
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 

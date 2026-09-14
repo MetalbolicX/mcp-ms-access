@@ -283,7 +283,7 @@ def _run_close_stdin_round(round_idx: int, tmpdir: Path, total_timeout: float = 
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "g10-shutdown", "version": "0.1.0"},
+                "clientInfo": {"name": "g10-shutdown", "version": "0.2.0"},
             },
         })
         resp = recv(timeout=8.0)
@@ -456,7 +456,7 @@ def _run_ctrl_c_round(round_idx: int, tmpdir: Path, total_timeout: float = 30.0)
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "g10-ctrl-c", "version": "0.1.0"},
+                "clientInfo": {"name": "g10-ctrl-c", "version": "0.2.0"},
             },
         })
         resp = recv(timeout=8.0)

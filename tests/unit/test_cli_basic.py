@@ -13,7 +13,7 @@ class TestCliVersion:
             check=False,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "ms-access-mcp 0.1.0" in result.stdout, f"stdout: {result.stdout}"
+        assert "ms-access-mcp 0.2.0" in result.stdout, f"stdout: {result.stdout}"
 
     def test_help_flag(self):
         result = subprocess.run(

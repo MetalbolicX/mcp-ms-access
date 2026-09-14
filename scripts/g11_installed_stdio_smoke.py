@@ -205,7 +205,7 @@ def main() -> int:
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "g11-installed-smoke", "version": "0.1.0"},
+                "clientInfo": {"name": "g11-installed-smoke", "version": "0.2.0"},
             },
         })
         resp = recv(timeout=10.0)
