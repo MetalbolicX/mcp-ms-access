@@ -52,6 +52,7 @@ honor its STOP conditions, and update your row when done.
 | 029  | Release qualification v0.2.0 — fresh 13-gate cycle + annotated tag | 7 | P1 | M | MED | @medium + orchestrator gate re-verification | main @ `d7691d1`; **030** | DONE (2026-09-13: plan 030 merged fast-forward `3152467→3ee28b8`; all 13 gates green; report at `docs/release/0.2.0-report.md`; tag `v0.2.0` on commit `4aaae84`; plans/README.md row 008 updated) |
 | 030  | Quit Access on the STA thread — fix cross-apartment teardown corrupting client RPC state | 6 | P1 | M | MED | @medium + strict TDD | `plan/029-release-v020` @ `3152467` (stacked) | DONE (branch plan/030-com-quit-sta-teardown; 20 unit pins (test_dispatcher.py) green; 1085 passed/8 skipped full suite; ruff clean; pyright 0/0/0; step5_qualify G6 green: 10/10 orphan-free rounds; test_automation_com.py 3/3 consecutive passes; ThreadPoolExecutor eliminated from _release_com_safe; gc.collect added; _access_pid capture at connect; post-shutdown PID-scoped liveness kill; /IM never emitted; fixture hash 8e1cdd683fb9cc5003dbce77e436f4537ed428defaf9755642504430de4b14e9 unchanged) |
 | 031  | PID-scoped Access kills — replace `/IM MSACCESS.EXE` in maintenance + doctor | 4 | P2 | S | LOW | @light + strict TDD | `plan/029-release-v020` @ `7f5896f` (stacked) | DONE (branch plan/031-pid-scoped-access-kill; tests: 02fab27 → fix: 55961a7; `rg -n 'taskkill.*IM' src/` 0 matches; helper `kill_access_processes` in maintenance.py reuses already-enumerated `killed_pids` + single taskkill with repeated `/PID` filters; `recover_access` envelope preserved (killed_pids now equals actually-killed); `_check_deep_access` uses helper lazily; `test_recover_access_windows_with_confirm` rewritten to assert `/PID` per PID + `/IM`-never + `killed_pids == ["111","222"]`; new `test_recover_access_skips_kill_when_no_access_running`; new `test_deep_access_never_kills_by_image_name` in test_doctor.py; unit 1050 passed/5 skipped; full 1087 passed/8 skipped in 205s; ruff clean; pyright 0/0/0; pre-existing `no_confirm`/`non_windows` doctor tests + dispatcher /IM-never pins untouched) |
+| 032  | Portable win64 zip distribution (embeddable Python runtime, `-IncludeMigrate` build switch) | 16 | P2 | M | MED | @medium + strict TDD (src); gate-verified PS1 build | 005, 024 | TODO |
 
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
@@ -162,6 +163,9 @@ mode was chosen per plan by the nature of the change, not by default:
   Stacked on `plan/029-release-v020` @ `7f5896f` pending the merge-to-main
   decision; if main is merged first, rebase the 031 branch onto main
   (clean — disjoint files from 030).
+- 032 requires 005 (the `configure opencode` registration machinery it extends
+  with `--python-mode`) and 024 (the `migrate` extra it vendors via
+  `-IncludeMigrate`). Targets `main`; disjoint from the release branches.
 
 ## Findings considered and rejected/deferred (2026-09-09 audit)
 
@@ -216,6 +220,9 @@ credential vault, active-connection state, `launch/close_access`, and
 ## Deferred backlog (do NOT plan into v1)
 
 - ~~External DB migration connectors~~ — now planned as **plan 024** (SDD; `migrate` extra, batch-first, no credential vault).
-- Portable PyInstaller onedir distribution — only when a user cannot install uv.
+- ~~Portable PyInstaller onedir distribution~~ — now planned as **plan 032**
+  (embeddable-Python zip instead; PyInstaller rejected: Defender ML
+  heuristics false-positive packed bootloaders + pywin32 freezer failure
+  modes; operator wants a portable, AV-safe artifact).
 - ~~XLSX export~~ — implemented by plan 023 — primary DoCmd.TransferSpreadsheet on AccessAdapter (always works), probe-gated IISAM SQL fallback for DAO/ADO backends when the ACE Excel provider is registered. Zero new dependencies.
 - Remote transports, browser UI, auth — removed product scope; revisit only with an explicit new decision.
