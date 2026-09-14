@@ -78,6 +78,7 @@ class AccessAdapter:
             app.Visible = False
             app.OpenCurrentDatabase(target, False, password)
             self._dispatcher._access_app = app
+            self._dispatcher.capture_access_pid()  # plan 030: record PID for post-shutdown kill
             self._dispatcher._current_db = app.CurrentDb()
             self._dispatcher._ado_conn = app.CurrentProject.Connection
             self._dispatcher._db_path = target

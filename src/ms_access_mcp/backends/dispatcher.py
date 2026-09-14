@@ -8,6 +8,7 @@ any async worker can drive the adapter without thread-affinity errors.
 from __future__ import annotations
 
 import concurrent.futures
+import gc
 import logging
 import queue
 import subprocess
@@ -50,6 +51,7 @@ class ComDispatcher:
         self._ado_conn: Any | None = None
         self._db_path: str | None = None
         self._is_healthy: bool = True
+        self._access_pid: int | None = None  # captured at connect for post-shutdown liveness kill
 
     @property
     def access_app(self) -> Any:
@@ -109,6 +111,23 @@ class ComDispatcher:
     def reset_health(self) -> None:
         """Reset the unhealthy flag. Called after a successful reconnect."""
         self._is_healthy = True
+
+    def capture_access_pid(self) -> None:
+        """Record the Access process PID for the post-shutdown liveness kill net.
+
+        Called from the STA thread inside connect()'s _do() closure, immediately
+        after Dispatch("Access.Application") succeeds.  Best-effort — the kill
+        net degrades to a no-op if this fails.
+        """
+        if self._access_app is None:
+            self._access_pid = None
+            return
+        try:
+            import win32process
+            hwnd = self._access_app.hWndAccessApp()
+            _, self._access_pid = win32process.GetWindowThreadProcessId(hwnd)
+        except Exception:
+            self._access_pid = None
 
     def open_dao_database(
         self,
@@ -225,6 +244,11 @@ class ComDispatcher:
         finally block (_release_com_safe) owns handle release. Caller-thread
         nulling after a timed-out join races with the STA thread's finally
         block and can cause access violations.
+
+        FIX (plan 030): after the STA thread joins, poll _access_pid liveness
+        and kill by PID if still alive — runs on the caller thread (pure
+        process ops, no COM), so apartment rules do not apply. PID-scoped ONLY;
+        /IM is never used.
         """
         self._stopping = True
         self._flush_pending_futures()
@@ -232,6 +256,41 @@ class ComDispatcher:
         self._call_queue.put((lambda: None, (), {}, concurrent.futures.Future()))
         if self._thread is not None:
             self._thread.join(timeout=15.0)
+
+        # Plan 030: post-shutdown PID liveness kill — caller thread, no COM
+        pid = self._access_pid
+        if pid is not None and sys.platform == "win32":
+            process_gone = False
+            for _ in range(20):  # 20 × 250ms = 5s window
+                try:
+                    result = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    # tasklist exits 0 when process is found, 1 when no match;
+                    # but scan stdout to be robust across locales
+                    if str(pid).encode() not in result.stdout.encode():
+                        # process is gone — Quit succeeded
+                        process_gone = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.25)
+            if not process_gone:
+                # Still alive after 5s poll — kill by PID only
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
+        self._access_pid = None
+
         # NOTE: do NOT null _access_app/_current_db/_ado_conn/_db_path here.
         # The STA thread's _run finally block (_release_com_safe) owns release.
         # Nulling from the caller thread after a timed-out join races with
@@ -296,8 +355,10 @@ class ComDispatcher:
     def _release_com_safe(self) -> None:
         """Release all COM objects in order: ADO -> DAO -> Access Application.
 
-        Uses a watchdog thread to avoid hanging on Access.Quit().
-        Falls back to taskkill /F if graceful shutdown fails on Windows.
+        FIX (plan 030): Quit() runs DIRECTLY on the STA thread — no
+        ThreadPoolExecutor cross-apartment call that corrupts client RPC state.
+        gc.collect() flushes proxy Release() calls before CoUninitialize().
+        The post-shutdown liveness kill lives in shutdown(), not here.
         """
         errors: list[str] = []
 
@@ -317,56 +378,24 @@ class ComDispatcher:
                 errors.append(f"DAO Close: {e}")
             self._current_db = None
 
-        # 3. Close and quit Access Application via COM
+        # 3. Close and quit Access Application via COM — DIRECTLY on STA thread
         if self._access_app is not None:
             try:
                 self._access_app.CloseCurrentDatabase()
             except Exception as e:
                 errors.append(f"CloseCurrentDatabase: {e}")
 
-            # 4. Quit() with 5s watchdog
             app = self._access_app
-            quit_ok = False
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    fut = pool.submit(lambda: app.Quit())
-                    fut.result(timeout=5.0)
-                    quit_ok = True
-            except concurrent.futures.TimeoutError:
-                errors.append("Access.Quit() timed out after 5s")
+                app.Quit()  # direct STA-thread call — legal; no cross-apartment proxy
             except Exception as e:
                 errors.append(f"Access.Quit(): {e}")
 
             self._access_app = None
 
-            # 5. Force-kill fallback (Windows only) — PID-scoped
-            if not quit_ok and sys.platform == "win32":
-                pid_killed = False
-                try:
-                    import win32process
-
-                    hwnd = app.hWndAccessApp()
-                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                    subprocess.run(
-                        ["taskkill", "/F", "/PID", str(pid)],
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                    )
-                    pid_killed = True
-                except Exception as e:
-                    errors.append(f"PID-scoped taskkill: {e}")
-
-                if not pid_killed:
-                    try:
-                        subprocess.run(
-                            ["taskkill", "/F", "/IM", "MSACCESS.EXE"],
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                        )
-                    except Exception as e:
-                        errors.append(f"taskkill /IM fallback: {e}")
+        # 4. Force gc before CoUninitialize so all proxy Release() calls
+        #    settle inside this apartment (plan 030 — secondary hazard fix)
+        gc.collect()
 
         if errors:
             logger.warning(f"Cleanup completed with {len(errors)} warning(s): {'; '.join(errors)}")

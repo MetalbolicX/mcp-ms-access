@@ -38,6 +38,7 @@ class AccessDispatcherProtocol(Protocol):
     # Internal state — written directly by AccessAdapter
     _started: bool
     _access_app: Any | None
+    _access_pid: int | None
     _current_db: Any | None
     _ado_conn: Any | None
     _db_path: str | None
@@ -68,6 +69,10 @@ class AccessDispatcherProtocol(Protocol):
 
     def shutdown(self) -> None:
         """Signal the dispatcher thread to stop and clean up COM objects."""
+        ...
+
+    def capture_access_pid(self) -> None:
+        """Record the Access process PID for the post-shutdown liveness kill net."""
         ...
 
 
