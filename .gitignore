@@ -7,3 +7,8 @@ dist/
 *.pyo
 *.egg-info/
 .eggs/
+# Local Pi runtime state
+.atl/
+.opencode/
+.pi/
+nul
