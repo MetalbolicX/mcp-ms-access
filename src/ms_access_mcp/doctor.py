@@ -201,12 +201,9 @@ def _check_deep_access() -> Check:
         )
 
     # Kill any existing Access processes first
-    subprocess.run(
-        ["taskkill", "/F", "/IM", "MSACCESS.EXE"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    from .application.maintenance import kill_access_processes
+
+    kill_access_processes(timeout=10)
 
     try:
         import time

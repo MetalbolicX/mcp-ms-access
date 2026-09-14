@@ -24,7 +24,49 @@ from ..safety import WritePolicy
 from ._adapter_lifecycle import AdapterLifecycle
 from .protocols import MaintenanceAdapterProtocol
 
-__all__ = ["MaintenanceUseCases"]
+__all__ = ["MaintenanceUseCases", "kill_access_processes"]
+
+
+def kill_access_processes(*, timeout: int = 30) -> tuple[list[str], list[str]]:
+    """Enumerate MSACCESS.EXE PIDs via tasklist and kill each by PID.
+
+    Never emits /IM. Returns (killed_pids, errors). Skips the kill entirely
+    when enumeration yields no PIDs, including enumeration failure.
+    """
+    pids: list[str] = []
+    errors: list[str] = []
+
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        lines = result.stdout.strip().splitlines()
+        for line in lines:
+            if "MSACCESS.EXE" in line:
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    pids.append(parts[1].strip('"'))
+    except Exception as e:
+        errors.append(f"Failed to list Access processes: {e}")
+
+    if not pids:
+        return pids, errors
+
+    try:
+        subprocess.run(
+            ["taskkill", "/F"]
+            + [arg for pid in pids for arg in ("/PID", pid)],
+            check=False,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except Exception as e:
+        errors.append(f"Failed to kill Access processes: {e}")
+
+    return pids, errors
 
 
 class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
@@ -390,35 +432,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         if sys.platform != "win32":
             return _err("recover_access is only available on Windows")
 
-        killed_pids: list[str] = []
-        errors: list[str] = []
-
-        try:
-            result = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            lines = result.stdout.strip().splitlines()
-            for line in lines:
-                if "MSACCESS.EXE" in line:
-                    parts = line.split(",")
-                    if len(parts) >= 2:
-                        pid = parts[1].strip('"')
-                        killed_pids.append(pid)
-        except Exception as e:
-            errors.append(f"Failed to list Access processes: {e}")
-
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/IM", "MSACCESS.EXE"],
-                check=False,
-                capture_output=True,
-                timeout=30,
-            )
-        except Exception as e:
-            errors.append(f"Failed to kill Access processes: {e}")
+        killed_pids, errors = kill_access_processes()
 
         reconnected = False
         assert self._adapter is not None  # noqa: S101 - recover requires an initialized adapter
