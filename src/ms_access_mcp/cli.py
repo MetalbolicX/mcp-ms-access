@@ -918,7 +918,7 @@ def _run_validator(target_dir: Path) -> str:
 
 
 def _cmd_configure_opencode(args: argparse.Namespace) -> int:
-    """Handle: configure opencode [--global] [--remove] [--force] [--profile] [--exe-path].
+    """Handle: configure opencode [--global] [--remove] [--force] [--profile] [--exe-path|--python-mode].
 
     Exit codes:
         0: success, no-op, or skipped (validator unavailable + warned)
@@ -927,8 +927,14 @@ def _cmd_configure_opencode(args: argparse.Namespace) -> int:
     """
     target = _resolve_opencode_target(args.global_scope, Path.cwd())
 
-    # Resolve exe path
-    exe_path = _resolve_exe_path(args.exe_path)
+    # Resolve exe path — python_mode uses sys.executable directly
+    if getattr(args, "python_mode", False):
+        exe_path = Path(sys.executable).resolve()
+        module_mode = True
+    else:
+        exe_path = _resolve_exe_path(args.exe_path)
+        module_mode = False
+
     if exe_path is None:
         print("Error: ms-access-mcp executable not found; use --exe-path to specify", file=sys.stderr)
         return 3
@@ -951,7 +957,7 @@ def _cmd_configure_opencode(args: argparse.Namespace) -> int:
             print(f"Error: {result.message}", file=sys.stderr)
             return 1
     else:
-        entry = entry_from(exe_path, profile=args.profile or "core")
+        entry = entry_from(exe_path, profile=args.profile or "core", module_mode=module_mode)
         result = register(
             target,
             entry,
@@ -992,7 +998,9 @@ def main() -> int:
     opencode_parser.add_argument("--remove", action="store_true", help="Remove mcp.ms-access entry instead of registering")
     opencode_parser.add_argument("--force", action="store_true", help="Overwrite existing entry with different command")
     opencode_parser.add_argument("--profile", type=str, default="core", help="MCP profile (default: core)")
-    opencode_parser.add_argument("--exe-path", type=str, default=None, help="Absolute path to ms-access-mcp executable")
+    exe_path_group = opencode_parser.add_mutually_exclusive_group()
+    exe_path_group.add_argument("--exe-path", type=str, default=None, help="Absolute path to ms-access-mcp executable")
+    exe_path_group.add_argument("--python-mode", action="store_true", help="Use sys.executable with -m ms_access_mcp (portable distribution)")
 
     # db subcommands
     db_parser = subparsers.add_parser("db", help="Database connection commands")

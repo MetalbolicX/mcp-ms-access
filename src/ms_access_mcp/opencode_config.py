@@ -144,10 +144,26 @@ def _normalise(value):
     return value
 
 
-def entry_from(exe_path: Path, profile: str = "core") -> McpEntry:
-    """Build an McpEntry from the tool executable path and profile."""
+def entry_from(
+    exe_path: Path, profile: str = "core", *, module_mode: bool = False
+) -> McpEntry:
+    """Build an McpEntry from the tool executable path and profile.
+
+    Args:
+        exe_path: Absolute path to the Python runtime executable.
+        profile: MCP profile name (default: "core").
+        module_mode: If True, use ``[exe_path, "-m", "ms_access_mcp", "mcp",
+            "--profile", profile]`` to support portable embeddable distributions.
+            If False (default), use ``[exe_path, "mcp", "--profile", profile]``
+            which is the traditional uv-install exe-only argv.
+
+    """
+    if module_mode:
+        command = (str(exe_path), "-m", "ms_access_mcp", "mcp", "--profile", profile)
+    else:
+        command = (str(exe_path), "mcp", "--profile", profile)
     return McpEntry(
-        command=(str(exe_path), "mcp", "--profile", profile),
+        command=command,
         profile=profile,
         enabled=True,
         timeout=30000,
