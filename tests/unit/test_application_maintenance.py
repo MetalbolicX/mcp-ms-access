@@ -555,6 +555,13 @@ class TestRecoverAccess:
 
         def fake_run(cmd, **kwargs):
             called_commands.append(cmd)
+            if cmd[0] == "tasklist":
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    stdout='"MSACCESS.EXE","111","Console","1","12,000 K"\n"MSACCESS.EXE","222","Console","1","8,000 K"',
+                    stderr="",
+                )
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
         monkeypatch.setattr(subprocess, "run", fake_run)
@@ -563,7 +570,34 @@ class TestRecoverAccess:
         result = uc.recover_access(confirm=True)
 
         assert isinstance(result, Ok)
-        assert any("taskkill" in cmd for cmd in called_commands)
+        taskkill_commands = [cmd for cmd in called_commands if cmd[0] == "taskkill"]
+        assert len(taskkill_commands) == 1
+        assert "/PID" in taskkill_commands[0]
+        assert "111" in taskkill_commands[0]
+        assert "222" in taskkill_commands[0]
+        for cmd in called_commands:
+            assert "/IM" not in cmd, f"/IM must never appear in recover kill: {cmd}"
+        assert result.data["killed_pids"] == ["111", "222"]
+
+    def test_recover_access_skips_kill_when_no_access_running(self, monkeypatch):
+        from ms_access_mcp.application.maintenance import MaintenanceUseCases
+
+        adapter = FakeMaintenanceAdapter()
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        called_commands = []
+
+        def fake_run(cmd, **kwargs):
+            called_commands.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        result = uc.recover_access(confirm=True)
+
+        assert isinstance(result, Ok)
+        assert not any(cmd[0] == "taskkill" for cmd in called_commands)
+        assert result.data["killed_pids"] == []
 
 
 # =============================================================================

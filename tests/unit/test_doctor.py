@@ -398,6 +398,42 @@ class TestSilentSwallows:
         assert result.passed is True  # rmdir failure swallowed; orphan scan rules
         assert result.details["orphan_lines"] == []
 
+    def test_deep_access_never_kills_by_image_name(self, monkeypatch: pytest.MonkeyPatch, tmp_path):
+        fake_client = _patch_com_imports(monkeypatch)
+        monkeypatch.setattr(doctor.sys, "platform", "win32")
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        monkeypatch.setattr(doctor.tempfile, "mkdtemp", lambda prefix: str(tmp_path / prefix))
+
+        captured_commands = []
+
+        class FakeCompleted:
+            stdout = ""
+
+        monkeypatch.setattr(
+            doctor.subprocess,
+            "run",
+            lambda cmd, **kwargs: (captured_commands.append(cmd) or FakeCompleted()),
+        )
+
+        class FakeApp:
+            Visible = False
+
+            def NewCurrentDatabase(self, path: str) -> None:
+                return None
+
+            def CloseCurrentDatabase(self) -> None:
+                return None
+
+            def Quit(self) -> None:
+                return None
+
+        fake_client.Dispatch = lambda progid: FakeApp()
+
+        doctor._check_deep_access()
+
+        for cmd in captured_commands:
+            assert "/IM" not in cmd, f"/IM must never appear in deep access kill: {cmd}"
+
     def test_deep_access_com_failure_reported_not_raised(self, monkeypatch: pytest.MonkeyPatch, tmp_path):
         fake_client = _patch_com_imports(monkeypatch)
         monkeypatch.setattr(doctor.sys, "platform", "win32")
