@@ -2,49 +2,17 @@
 
 from __future__ import annotations
 
-import concurrent.futures
 import sys
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 
-class TestComDispatcherPidScopedTaskkill:
-    """Test that _release_com_safe uses /PID instead of /IM when graceful Quit fails."""
+class TestComDispatcherStaThreadQuit:
+    """Test that Quit runs on the dispatcher STA thread; ThreadPoolExecutor must NOT be used."""
 
-    def test_release_com_safe_uses_pid_based_taskkill_when_quit_fails(self):
-        from ms_access_mcp.backends.dispatcher import ComDispatcher
-
-        dispatcher = ComDispatcher()
-        mock_app = MagicMock()
-        mock_app.hWndAccessApp.return_value = 12345
-
-        dispatcher._access_app = mock_app
-        dispatcher._ado_conn = MagicMock()
-        dispatcher._current_db = MagicMock()
-
-        with patch("subprocess.run") as mock_run:
-            with patch(
-                "concurrent.futures.ThreadPoolExecutor"
-            ) as mock_tpe_cls:
-                mock_tpe = MagicMock()
-                mock_future = MagicMock()
-                mock_future.result.side_effect = concurrent.futures.TimeoutError("Quit timed out")
-                mock_tpe.__enter__ = MagicMock(return_value=mock_tpe)
-                mock_tpe.__exit__ = MagicMock(return_value=None)
-                mock_tpe.submit.return_value = mock_future
-                mock_tpe_cls.return_value = mock_tpe
-
-                with patch("win32process.GetWindowThreadProcessId", return_value=(0, 9876)):
-                    dispatcher._release_com_safe()
-
-                    mock_run.assert_called_once()
-                    call_args = mock_run.call_args[0][0]
-                    assert "/PID" in call_args
-                    assert "/IM" not in call_args
-                    assert "9876" in call_args
-
-    def test_release_com_safe_falls_back_to_im_when_hwnd_fails(self):
+    def test_release_com_safe_quits_on_dispatcher_thread(self):
+        """RED: Quit goes through ThreadPoolExecutor today; after fix it runs directly."""
         from ms_access_mcp.backends.dispatcher import ComDispatcher
 
         dispatcher = ComDispatcher()
@@ -53,22 +21,107 @@ class TestComDispatcherPidScopedTaskkill:
         dispatcher._ado_conn = MagicMock()
         dispatcher._current_db = MagicMock()
 
+        with patch("concurrent.futures.ThreadPoolExecutor") as mock_tpe_cls:
+            with patch("subprocess.run"):
+                dispatcher._release_com_safe()
+                # After the fix: Quit is called directly on the STA thread,
+                # so the ThreadPoolExecutor bypass means no pool construction.
+                # RED today: pool WAS constructed (Quit routed through pool).
+                mock_tpe_cls.assert_not_called()
+                mock_app.Quit.assert_called_once()
+
+    def test_release_com_safe_collects_garbage_before_com_uninit(self):
+        """gc.collect() must run before CoUninitialize to flush proxy Release calls."""
+        from ms_access_mcp.backends.dispatcher import ComDispatcher
+
+        dispatcher = ComDispatcher()
+        mock_app = MagicMock()
+        dispatcher._access_app = mock_app
+        dispatcher._ado_conn = MagicMock()
+        dispatcher._current_db = MagicMock()
+
+        with patch("gc.collect") as mock_gc:
+            with patch("subprocess.run"):
+                dispatcher._release_com_safe()
+                mock_gc.assert_called_once()
+
+
+class TestComDispatcherShutdownLivenessKill:
+    """Post-shutdown PID liveness kill — PID-scoped only, never /IM."""
+
+    def test_shutdown_kills_by_pid_only_never_im(self):
+        """RED today: _release_com_safe does the kill with /IM fallback.
+        After fix: shutdown() kills by PID after thread join, /IM never appears."""
+        from ms_access_mcp.backends.dispatcher import ComDispatcher
+
+        dispatcher = ComDispatcher()
+        dispatcher._access_app = MagicMock()
+        dispatcher._ado_conn = MagicMock()
+        dispatcher._current_db = MagicMock()
+        dispatcher._started = True
+        dispatcher._thread = None  # thread already dead
+        dispatcher._access_pid = 9876
+
+        # tasklist reports the PID alive once, then dead after kill
+        tasklist_responses = [
+            b"Image Name: convhw.exe\r\n PID: 9876\r\n",  # alive
+        ]
+
+        def run_side_effect(*args, **kwargs):
+            cmd = args[0]
+            if cmd[0] == "tasklist" and "/FI" in cmd:
+                return MagicMock(returncode=0, stdout=tasklist_responses.pop(0))
+            return MagicMock(returncode=0, stdout=b"")
+
+        with patch("subprocess.run", side_effect=run_side_effect) as mock_run:
+            dispatcher.shutdown()
+            # After fix: shutdown() polls liveness and kills by PID only.
+            # Today (pre-fix RED): no post-join kill exists yet.
+            for call_args in mock_run.call_args_list:
+                cmd = call_args[0][0]
+                assert "/IM" not in cmd, f"/IM must never appear in shutdown kill: {cmd}"
+
+    def test_shutdown_skips_kill_when_pid_absent_or_dead(self):
+        """No subprocess calls when _access_pid is None; zero kills when poll shows dead."""
+        import subprocess
+
+        from ms_access_mcp.backends.dispatcher import ComDispatcher
+
+        # Case A: PID absent
+        dispatcher = ComDispatcher()
+        dispatcher._access_app = MagicMock()
+        dispatcher._ado_conn = MagicMock()
+        dispatcher._current_db = MagicMock()
+        dispatcher._started = True
+        dispatcher._thread = None
+        dispatcher._access_pid = None
+
         with patch("subprocess.run") as mock_run:
-            with patch("concurrent.futures.ThreadPoolExecutor") as mock_tpe_cls:
-                mock_tpe = MagicMock()
-                mock_future = MagicMock()
-                mock_future.result.side_effect = concurrent.futures.TimeoutError("Quit timed out")
-                mock_tpe.__enter__ = MagicMock(return_value=mock_tpe)
-                mock_tpe.__exit__ = MagicMock(return_value=None)
-                mock_tpe.submit.return_value = mock_future
-                mock_tpe_cls.return_value = mock_tpe
+            dispatcher.shutdown()
+            mock_run.assert_not_called()
 
-                with patch("win32process.GetWindowThreadProcessId", side_effect=Exception("HWND unavailable")):
-                    dispatcher._release_com_safe()
+        # Case B: PID present but poll shows already dead
+        dispatcher2 = ComDispatcher()
+        dispatcher2._access_app = MagicMock()
+        dispatcher2._ado_conn = MagicMock()
+        dispatcher2._current_db = MagicMock()
+        dispatcher2._started = True
+        dispatcher2._thread = None
+        dispatcher2._access_pid = 9876
 
-                    call_args = mock_run.call_args[0][0]
-                    assert "/IM" in call_args
-                    assert "MSACCESS.EXE" in call_args
+        dead_response = "No tasks are running"  # tasklist shows dead
+
+        def run_side_effect(*args, **kwargs):
+            cmd = args[0]
+            if cmd[0] == "tasklist" and "/FI" in cmd:
+                return subprocess.CompletedProcess(args, returncode=1, stdout=dead_response, stderr="")
+            return MagicMock(returncode=0, stdout=b"")
+
+        with patch("subprocess.run", side_effect=run_side_effect) as mock_run:
+            dispatcher2.shutdown()
+            # No taskkill should fire because the process was already dead
+            kill_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "taskkill"]
+            assert len(kill_calls) == 0
 
 
 class TestComDispatcherLogging:

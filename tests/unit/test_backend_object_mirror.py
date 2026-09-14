@@ -25,6 +25,7 @@ class _FakeDispatcher:
     def __init__(self, access_app: Any):
         self._started = True
         self._access_app = access_app
+        self._access_pid: int | None = None
         self._current_db: Any = None
         self._ado_conn: Any = None
         self._db_path: Any = None
@@ -48,6 +49,9 @@ class _FakeDispatcher:
 
     def shutdown(self):
         self._started = False
+
+    def capture_access_pid(self):
+        pass
 
 
 class _FakePropItem:

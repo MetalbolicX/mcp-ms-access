@@ -17,6 +17,7 @@ class FakeDispatcher:
     def __init__(self):
         self._started = False
         self._access_app: Any = None
+        self._access_pid: int | None = None
         self._current_db: Any = None
         self._ado_conn: Any = None
         self._db_path: Any = None
@@ -55,6 +56,9 @@ class FakeDispatcher:
 
     def shutdown(self):
         self._started = False
+
+    def capture_access_pid(self):
+        pass
 
 
 def _make_form_info(name, record_source=""):
