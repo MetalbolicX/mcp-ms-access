@@ -55,14 +55,23 @@ class TestConnectorRegistry:
 
     def test_no_dialect_module_imported_at_package_import(self):
         """Registry resolution does not import dialect modules at package import time."""
-        # Before any get_connector call, dialect modules should not be imported
+        import json
+        import subprocess
         import sys
 
-        for dialect in ["sqlite", "postgres", "mysql", "sqlserver"]:
-            module_name = f"ms_access_mcp.backends.migration.connectors.{dialect}"
-            # After importing the migration package, dialect modules should NOT be loaded
-            # until get_connector is called
-            assert module_name not in sys.modules, f"{dialect} should not be imported yet"
+        code = (
+            "import sys, json; "
+            "import ms_access_mcp.backends.migration; "
+            "print(json.dumps(sorted(m for m in sys.modules "
+            "if m.startswith('ms_access_mcp.backends.migration.connectors.'))))"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert json.loads(proc.stdout.strip()) == []
 
     def test_get_connector_unknown_target_raises(self):
         """Unknown target_type raises ValueError."""

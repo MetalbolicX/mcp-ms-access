@@ -1,9 +1,11 @@
 """Integration tests for xlsx export via DoCmd.TransferSpreadsheet and IISAM SQL.
 
-PROBE VERDICT (2026-09-12, dev host):
+PROBE VERDICT (2026-09-13):
 HKLM\\SOFTWARE\\Microsoft\\Office\\16.0\\Access Connectivity Engine\\Engines\\Excel
 is ABSENT — ACE Excel IISAM provider NOT registered.
-Decision: DoCmd path is the primary test (runs on this host);
+Decision OVERTURNED (plan 028): DoCmd path is NOT viable on this host;
+DoCmd writes 0-byte files without the engine (confirmed at plan 027 execution).
+Both DoCmd tests are now probe-gated and auto-activate when provider is registered.
 SQL fallback integration test is skipif(probe=False).
 """
 
@@ -13,6 +15,7 @@ import os
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -25,9 +28,21 @@ pytestmark = [
 ]
 
 
+def _excel_provider_available() -> bool:
+    """Return True if the ACE Excel IISAM provider is registered (Windows only)."""
+    if os.name != "nt":
+        return False
+    from ms_access_mcp.application.xlsx_capability import IisamProviderProbe
+    return IisamProviderProbe.is_excel_provider_registered()
+
+
 class TestExportXlsx:
     """Test xlsx export end-to-end."""
 
+    @pytest.mark.skipif(
+        not _excel_provider_available(),
+        reason="ACE Excel IISAM provider not registered (DoCmd xlsx export writes 0 bytes without it)",
+    )
     def test_docmd_export_roundtrip(self, temp_db_copy: str) -> None:
         """DoCmd.TransferSpreadsheet creates a valid xlsx; row count verified."""
         pytest.importorskip("win32com")
@@ -48,10 +63,10 @@ class TestExportXlsx:
         adapter.connect(temp_db_copy)
 
         try:
-            db = DatabaseUseCases(backend="access", readonly=False)
-            db._connections["test_conn"] = adapter
-
             with tempfile.TemporaryDirectory() as tmpdir:
+                db = DatabaseUseCases(backend="access", readonly=False, allowed_dirs=[Path(tmpdir)])
+                db._connections["test_conn"] = adapter
+
                 xlsx_path = os.path.join(tmpdir, "exported.xlsx")
 
                 # Create the output file so is_path_allowed's p.exists() check passes
@@ -83,6 +98,10 @@ class TestExportXlsx:
         )
         assert "MSACCESS.EXE" not in result_proc.stdout, "Access orphan detected after test"
 
+    @pytest.mark.skipif(
+        not _excel_provider_available(),
+        reason="ACE Excel IISAM provider not registered (DoCmd xlsx export writes 0 bytes without it)",
+    )
     def test_docmd_export_custom_sheet_name(self, temp_db_copy: str) -> None:
         """Custom sheet name is accepted; file is created successfully."""
         pytest.importorskip("win32com")
@@ -102,10 +121,10 @@ class TestExportXlsx:
         adapter.connect(temp_db_copy)
 
         try:
-            db = DatabaseUseCases(backend="access", readonly=False)
-            db._connections["test_conn"] = adapter
-
             with tempfile.TemporaryDirectory() as tmpdir:
+                db = DatabaseUseCases(backend="access", readonly=False, allowed_dirs=[Path(tmpdir)])
+                db._connections["test_conn"] = adapter
+
                 xlsx_path = os.path.join(tmpdir, "exported_custom.xlsx")
                 with open(xlsx_path, "wb"):
                     pass
@@ -126,10 +145,7 @@ class TestExportXlsx:
 
     def test_sql_fallback_skipif_no_provider(self) -> None:
         """SQL fallback integration: skipped on hosts without ACE Excel provider."""
-        from ms_access_mcp.application.xlsx_capability import IisamProviderProbe
-
         pytest.skip(
             reason=f"ACE Excel IISAM provider not registered on this host "
-            f"(probe={IisamProviderProbe.is_excel_provider_registered()})",
-            allow_module_level=True,
+            f"(probe={_excel_provider_available()})",
         )

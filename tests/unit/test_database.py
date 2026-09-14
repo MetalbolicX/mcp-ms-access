@@ -223,6 +223,65 @@ class TestConfirmationGate:
         assert "Not connected" in result.message or "Path" in result.message
 
 
+class TestExecuteSqlScript:
+    """Test execute_sql_script use-case behavior — six branches pinned."""
+
+    def test_confirm_false_returns_err(self):
+        """confirm=False returns Err with acknowledgment message."""
+        db = DatabaseUseCases(readonly=False)
+        result = db.execute_sql_script("SELECT 1", confirm=False)
+        assert isinstance(result, Err)
+        assert result.message  # acknowledgment required
+
+    def test_readonly_returns_err(self):
+        """readonly=True, confirm=True returns Err about disabled writes."""
+        db = DatabaseUseCases(readonly=True)
+        result = db.execute_sql_script("SELECT 1", confirm=True)
+        assert isinstance(result, Err)
+        assert "Write operations are disabled" in result.message
+
+    def test_not_connected_returns_err(self):
+        """confirm=True, readonly=False, no connection returns Err 'Not connected'."""
+        db = DatabaseUseCases(readonly=False)
+        result = db.execute_sql_script("SELECT 1", confirm=True, connection_name="nonexistent")
+        assert isinstance(result, Err)
+        assert "Not connected" in result.message
+
+    def test_unsupported_adapter_returns_err(self):
+        """Adapter without execute_script returns Err about unsupported adapter."""
+        db = DatabaseUseCases(readonly=False)
+        db._connections["test_conn"] = FakeAdapter()  # has no execute_script
+        result = db.execute_sql_script("SELECT 1", confirm=True, connection_name="test_conn")
+        assert isinstance(result, Err)
+        assert "does not support execute_script" in result.message
+
+    def test_success_returns_ok_with_data(self):
+        """Successful execution returns Ok with the adapter result dict verbatim."""
+        db = DatabaseUseCases(readonly=False)
+
+        class FakeWithScript(FakeAdapter):
+            def execute_script(self, sql: str):
+                return {"success": True, "statements": ["SELECT 1"]}
+
+        db._connections["test_conn"] = FakeWithScript()
+        result = db.execute_sql_script("SELECT 1", confirm=True, connection_name="test_conn")
+        assert isinstance(result, Ok)
+        assert result.data == {"success": True, "statements": ["SELECT 1"]}
+
+    def test_exception_returns_err(self):
+        """Adapter raising exception returns Err with exception message."""
+        db = DatabaseUseCases(readonly=False)
+
+        class FakeWithScript(FakeAdapter):
+            def execute_script(self, sql: str):
+                raise RuntimeError("boom")
+
+        db._connections["test_conn"] = FakeWithScript()
+        result = db.execute_sql_script("SELECT 1", confirm=True, connection_name="test_conn")
+        assert isinstance(result, Err)
+        assert "boom" in result.message
+
+
 class TestPathValidation:
     """Test path validation via safety.is_path_allowed."""
 

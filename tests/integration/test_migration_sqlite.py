@@ -12,11 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from ms_access_mcp.backends.migration.connectors.sqlite import (
-    SqliteConnector,
-    quote_identifier,
-    render_table_ddl,
-)
 from ms_access_mcp.models import ColumnSchema, ForeignKeySchema, TableSchema
 
 pytestmark = pytest.mark.odbc_integration
@@ -38,6 +33,8 @@ class TestSqliteConnectorIntegration:
 
     def test_connect_and_disconnect(self, temp_sqlite_db):
         """Connector connects and disconnects cleanly."""
+        from ms_access_mcp.backends.migration.connectors.sqlite import SqliteConnector
+
         conn = SqliteConnector(temp_sqlite_db)
         conn.connect()
         assert conn._conn is not None
@@ -46,6 +43,8 @@ class TestSqliteConnectorIntegration:
 
     def test_create_and_query_table(self, temp_sqlite_db):
         """Connector can create a table and query it."""
+        from ms_access_mcp.backends.migration.connectors.sqlite import SqliteConnector
+
         conn = SqliteConnector(temp_sqlite_db)
         conn.connect()
 
@@ -59,6 +58,8 @@ class TestSqliteConnectorIntegration:
 
     def test_insert_batch_and_count(self, temp_sqlite_db):
         """Connector inserts rows and they are queryable."""
+        from ms_access_mcp.backends.migration.connectors.sqlite import SqliteConnector
+
         conn = SqliteConnector(temp_sqlite_db)
         conn.connect()
 
@@ -83,6 +84,8 @@ class TestSqliteConnectorIntegration:
 
     def test_rollback_table(self, temp_sqlite_db):
         """Connector can drop a table via rollback_table."""
+        from ms_access_mcp.backends.migration.connectors.sqlite import SqliteConnector
+
         conn = SqliteConnector(temp_sqlite_db)
         conn.connect()
 
@@ -101,6 +104,8 @@ class TestSqliteRenderTableDdlIntegration:
 
     def test_render_simple_table_executes(self):
         """Rendered DDL is valid SQLite DDL that executes without error."""
+        from ms_access_mcp.backends.migration.connectors.sqlite import render_table_ddl
+
         table = TableSchema(
             name="Orders",
             columns=[
@@ -197,6 +202,8 @@ class TestSqliteRenderTableDdlIntegration:
 
     def test_quote_identifier_produces_valid_sql(self):
         """Quoted identifiers are accepted by SQLite."""
+        from ms_access_mcp.backends.migration.connectors.sqlite import quote_identifier
+
         # "OrderDetails" is a valid identifier but we test the quoting path
         name = quote_identifier("OrderDetails")
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
