@@ -238,13 +238,13 @@ Behavior, in order — abort with non-zero exit on any gate failure:
    `uv export --no-dev --no-emit-project --format requirements-txt
    [--extra migrate when -IncludeMigrate] -o build\portable\requirements.txt`.
 3. **Embeddable runtime**: constants `$EmbedVersion = "3.11.9"` and
-   `$EmbedSha256 = ""` at script top. If `$EmbedSha256` is empty → STOP with
-   message: "Pin the SHA256 from
-   https://www.python.org/downloads/release/python-3119/ (Files table,
-   `python-3.11.9-embed-amd64.zip`) into `$EmbedSha256`." Otherwise download
+   `$EmbedSha256 = "009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b"`
+   at script top (SHA256 computed from the actual artifact 2026-09-14; MD5
+   cross-checked against the python.org release page,
+   `6d9aa08531d48fcc261ba667e2df17c4`). Download
    `https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip`
    to temp, `Get-FileHash -Algorithm SHA256` must equal `$EmbedSha256`
-   (case-insensitive), then `Expand-Archive` to
+   (case-insensitive; mismatch = STOP), then `Expand-Archive` to
    `build\portable\stage\ms-access-mcp-<version>-portable-win64\runtime\`
    (`<version>` read from `pyproject.toml`).
 4. **Patch `runtime\python311._pth`** to exactly:
@@ -348,8 +348,8 @@ Stop and report back (do not improvise) if:
 
 - The code at `cli.py:814-844`/`:974-995` or `opencode_config.py:147-154`
   doesn't match the "Current state" description (drift since `4aba764`).
-- The embeddable-zip SHA256 cannot be obtained from the python.org release
-  page, or a downloaded zip's hash mismatches the pinned constant.
+- The embeddable zip cannot be downloaded, or its SHA256 mismatches the
+  pinned constant `009d6bf7…fd3b`.
 - `import win32com.client` fails inside the embeddable runtime after the
   `._pth` patch, twice, after confirming `import site` is present.
 - `uv export --extra migrate` does not include `psycopg2-binary` and
@@ -360,8 +360,11 @@ Stop and report back (do not improvise) if:
 
 ## Maintenance notes
 
-- On each CPython 3.11 security release: bump `$EmbedVersion`, re-pin
-  `$EmbedSha256` from the python.org release page, rebuild both zips.
+- The embeddable pin is terminal for the 3.11 series: per PEP 664, 3.11.9 is
+  the LAST 3.11 release with binary artifacts (3.11.10+ are source-only; a
+  `3.11.16-embed-amd64.zip` does not exist — verified 404). Bumping the
+  runtime means jumping Python series (3.12/3.13 embeddable + matching
+  wheels) — its own plan; do not attempt it inside this one.
 - The zip intentionally contains no unsigned packed executables — that is the
   AV-safety property; do not add launchers/shim exes later without re-opening
   the Defender question. The registered command must stay the PSF-signed
