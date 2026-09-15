@@ -21,7 +21,8 @@ import os
 import tempfile
 import threading
 import time
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from ..errors import AccessBackendError, AccessObjectNotFoundError
 from .dispatcher import ComDispatcher
@@ -45,6 +46,24 @@ _MACRO_TEMPLATE = (
     "  </Macro>\n"
     "</Macros>\n"
 )
+
+_T = TypeVar("_T")
+
+
+def _props_to_dict(props: Any) -> dict[str, str]:
+    """Scrape a COM Properties collection into a plain dict.
+
+    Per-property COM failures are logged at debug and skipped — one broken
+    property must not poison the scrape, but it is no longer invisible.
+    """
+    result: dict[str, str] = {}
+    for prop in props:
+        try:
+            result[prop.Name] = str(prop.Value)
+        except Exception:
+            logger.debug("property %s raised during value extraction, skipping", prop.Name)
+    return result
+
 
 
 class AccessAdapter:
@@ -234,6 +253,41 @@ class AccessAdapter:
             return getattr(app, collection)(object_name)
         except Exception:
             return None
+
+    def _with_design_view(
+        self,
+        kind: str,
+        object_name: str,
+        *,
+        save_flag: int,
+        work: Callable[[Any], _T],
+        on_error: Callable[[BaseException], _T],
+        default: _T,
+    ) -> _T:
+        """Open kind/name in design view on the STA thread, run work(live_obj), always close once.
+
+        Owns the guard / open / close lifecycle so the 14 call sites cannot drift.
+        Close failures are swallowed (best-effort cleanup); work failures are routed
+        through on_error (getters return a default, setters log-and-False).
+        """
+        if not self._dispatcher._started:
+            return default
+
+        def _do() -> _T:
+            try:
+                self._open_object_in_design(kind, object_name)
+                obj = self._live_object(kind, object_name)
+                return work(obj)
+            except Exception as exc:
+                return on_error(exc)
+            finally:
+                try:
+                    close_ac = self._OBJECT_KINDS[kind]["close_ac"]
+                    self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, save_flag)
+                except Exception:
+                    pass
+
+        return self._dispatcher.call(_do)
 
     def _get_vb_project(self) -> Any:
         """Get the first VBA project via VBProjects enumeration.
@@ -582,43 +636,13 @@ class AccessAdapter:
 
     def _get_object_properties(self, kind: str, object_name: str) -> dict[str, str]:
         """Get all properties of a form/report by opening it in design view."""
-        if not self._dispatcher._started:
-            return {}
-
-        def _do() -> dict[str, str]:
-            opened = False
-            try:
-                ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                open_method = "OpenForm" if kind == "form" else "OpenReport"
-                getattr(self._dispatcher.access_app.DoCmd, open_method)(object_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    obj = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    collection = "Forms" if kind == "form" else "Reports"
-                    obj = getattr(self._dispatcher.access_app, collection)(object_name)
-
-                if obj is not None:
-                    props: dict[str, str] = {}
-                    for prop in obj.Properties:
-                        try:
-                            props[prop.Name] = str(prop.Value)
-                        except Exception:
-                            pass
-                    return props
-                return {}
-            except Exception:
-                return {}
-            finally:
-                if opened:
-                    try:
-                        ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                        self._dispatcher.access_app.DoCmd.Close(ac_type, object_name, 2)  # acSaveNo=2
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=2,
+            work=lambda obj: _props_to_dict(obj.Properties) if obj is not None else {},
+            on_error=lambda exc: {},
+            default={},
+        )
 
     def get_form_properties(self, form_name: str) -> dict[str, str]:
         """Get all properties of a form by opening it in design view."""
@@ -630,34 +654,19 @@ class AccessAdapter:
 
     def _set_object_property(self, kind: str, object_name: str, property_name: str, value: str) -> bool:
         """Set a single property of a form/report by opening it in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._open_object_in_design(kind, object_name)
-                opened = True
-
-                obj = self._live_object(kind, object_name)
-
-                if obj is not None:
-                    obj.Properties(property_name).Value = value
-                    return True
+        def work(obj):
+            if obj is None:
                 return False
-            except Exception as exc:
-                self._log_object_failure(kind, "set_property", object_name, exc)
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
-                    except Exception:
-                        pass
+            obj.Properties(property_name).Value = value
+            return True
 
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=1,
+            work=work,
+            on_error=lambda exc: self._log_object_failure(kind, "set_property", object_name, exc) or False,
+            default=False,
+        )
 
     def set_form_property(self, form_name: str, property_name: str, value: str) -> bool:
         """Set a single property of a form by opening it in design view."""
@@ -665,40 +674,27 @@ class AccessAdapter:
 
     def _set_object_properties(self, kind: str, object_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form/report. Returns dict of {property_name: success}."""
-        if not self._dispatcher._started:
-            return {}
-
-        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-
-        def _do() -> dict[str, bool]:
-            results: dict[str, bool] = {}
-            for prop_name, value in properties.items():
-                opened = False
+        def work_for_prop(prop_name: str, value: Any) -> bool:
+            def inner(obj):
+                if obj is None:
+                    return False
                 try:
-                    self._open_object_in_design(kind, object_name)
-                    opened = True
-
-                    obj = self._live_object(kind, object_name)
-
-                    success = False
-                    if obj is not None:
-                        try:
-                            obj.Properties(prop_name).Value = value
-                            success = True
-                        except Exception:
-                            pass
+                    obj.Properties(prop_name).Value = value
+                    return True
                 except Exception:
-                    success = False
-                finally:
-                    if opened:
-                        try:
-                            self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
-                        except Exception:
-                            pass
-                results[prop_name] = success
-            return results
+                    return False
+            return self._with_design_view(
+                kind, object_name,
+                save_flag=1,
+                work=inner,
+                on_error=lambda exc: self._log_object_failure(kind, "set_properties", object_name, exc) or False,
+                default=False,
+            )
 
-        return self._dispatcher.call(_do)
+        results: dict[str, bool] = {}
+        for prop_name, value in properties.items():
+            results[prop_name] = work_for_prop(prop_name, value)
+        return results
 
     def set_form_properties(self, form_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form. Returns dict of {property_name: success}."""
@@ -706,61 +702,43 @@ class AccessAdapter:
 
     def _get_object_controls(self, kind: str, object_name: str):
         """Get all controls in a form/report by opening it in design view."""
-        if not self._dispatcher._started:
-            return []
-
-        def _do():
+        def work(obj):
+            if obj is None:
+                return []
             controls = []
-            opened = False
-            try:
-                ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                open_method = "OpenForm" if kind == "form" else "OpenReport"
-                getattr(self._dispatcher.access_app.DoCmd, open_method)(object_name, 1)  # acDesign=1
-                opened = True
-
+            for i in range(obj.Controls.Count):
                 try:
-                    obj = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    collection = "Forms" if kind == "form" else "Reports"
-                    obj = getattr(self._dispatcher.access_app, collection)(object_name)
+                    ctrl = obj.Controls(i)
+                    ctrl_name = ctrl.Name
+                    ctrl_type_code = ctrl.ControlType
+                    ctrl_type = self._control_type_name(ctrl_type_code)
 
-                if obj is not None:
-                    for i in range(obj.Controls.Count):
+                    props: dict[str, str] = {}
+                    for prop_name in ("Visible", "Enabled", "Left", "Top",
+                                      "Width", "Height", "Caption",
+                                      "ControlSource", "TabIndex"):
                         try:
-                            ctrl = obj.Controls(i)
-                            ctrl_name = ctrl.Name
-                            ctrl_type_code = ctrl.ControlType
-                            ctrl_type = self._control_type_name(ctrl_type_code)
-
-                            props: dict[str, str] = {}
-                            for prop_name in ("Visible", "Enabled", "Left", "Top",
-                                              "Width", "Height", "Caption",
-                                              "ControlSource", "TabIndex"):
-                                try:
-                                    val = ctrl.Properties(prop_name).Value
-                                    if val is not None:
-                                        props[prop_name] = str(val)
-                                except Exception:
-                                    pass
-
-                            from ms_access_mcp.models import ControlInfo
-                            controls.append(ControlInfo(
-                                name=ctrl_name, type=ctrl_type, properties=props,
-                            ))
+                            val = ctrl.Properties(prop_name).Value
+                            if val is not None:
+                                props[prop_name] = str(val)
                         except Exception:
                             pass
-            except Exception:
-                pass
-            finally:
-                if opened:
-                    try:
-                        ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                        self._dispatcher.access_app.DoCmd.Close(ac_type, object_name, 2)
-                    except Exception:
-                        pass
+
+                    from ms_access_mcp.models import ControlInfo
+                    controls.append(ControlInfo(
+                        name=ctrl_name, type=ctrl_type, properties=props,
+                    ))
+                except Exception:
+                    pass
             return controls
 
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=2,
+            work=work,
+            on_error=lambda exc: [],
+            default=[],
+        )
 
     def get_form_controls(self, form_name: str):
         """Get all controls in a form by opening it in design view."""
@@ -772,44 +750,25 @@ class AccessAdapter:
 
     def _get_object_control_properties(self, kind: str, object_name: str, control_name: str) -> dict[str, str]:
         """Get all properties of a specific control by opening the form/report in design view."""
-        if not self._dispatcher._started:
+        def work(obj):
+            if obj is None:
+                return {}
+            for i in range(obj.Controls.Count):
+                try:
+                    ctrl = obj.Controls(i)
+                    if ctrl.Name == control_name:
+                        return _props_to_dict(ctrl.Properties)
+                except Exception:
+                    pass
             return {}
 
-        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-
-        def _do() -> dict[str, str]:
-            opened = False
-            try:
-                self._open_object_in_design(kind, object_name)
-                opened = True
-
-                obj = self._live_object(kind, object_name)
-
-                if obj is not None:
-                    for i in range(obj.Controls.Count):
-                        try:
-                            ctrl = obj.Controls(i)
-                            if ctrl.Name == control_name:
-                                props: dict[str, str] = {}
-                                for prop in ctrl.Properties:
-                                    try:
-                                        props[prop.Name] = str(prop.Value)
-                                    except Exception:
-                                        pass
-                                return props
-                        except Exception:
-                            pass
-                return {}
-            except Exception:
-                return {}
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=2,
+            work=work,
+            on_error=lambda exc: {},
+            default={},
+        )
 
     def get_control_properties(self, form_name: str, control_name: str) -> dict[str, str]:
         """Get all properties of a specific control by opening the form in design view."""
@@ -817,39 +776,26 @@ class AccessAdapter:
 
     def _set_object_control_property(self, kind: str, object_name: str, control_name: str, property_name: str, value: str) -> bool:
         """Set a property of a control by opening the form/report in design view."""
-        if not self._dispatcher._started:
+        def work(obj):
+            if obj is None:
+                return False
+            for i in range(obj.Controls.Count):
+                try:
+                    ctrl = obj.Controls(i)
+                    if ctrl.Name == control_name:
+                        ctrl.Properties(property_name).Value = value
+                        return True
+                except Exception:
+                    pass
             return False
 
-        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._open_object_in_design(kind, object_name)
-                opened = True
-
-                obj = self._live_object(kind, object_name)
-
-                if obj is not None:
-                    for i in range(obj.Controls.Count):
-                        try:
-                            ctrl = obj.Controls(i)
-                            if ctrl.Name == control_name:
-                                ctrl.Properties(property_name).Value = value
-                                return True
-                        except Exception:
-                            pass
-                return False
-            except Exception:
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=1,
+            work=work,
+            on_error=lambda exc: self._log_object_failure(kind, "set_control_property", object_name, exc) or False,
+            default=False,
+        )
 
     def set_control_property(self, form_name: str, control_name: str, property_name: str, value: str) -> bool:
         """Set a property of a control by opening the form in design view."""
@@ -857,47 +803,32 @@ class AccessAdapter:
 
     def _set_object_control_properties(self, kind: str, object_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form/report control. Returns dict of {property_name: success}."""
-        if not self._dispatcher._started:
-            return {}
-
-        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-
-        def _do() -> dict[str, bool]:
-            results: dict[str, bool] = {}
-            for prop_name, value in properties.items():
-                try:
-                    opened = False
+        def work_for_prop(prop_name: str, value: Any) -> bool:
+            def inner(obj):
+                if obj is None:
+                    return False
+                for i in range(obj.Controls.Count):
                     try:
-                        self._open_object_in_design(kind, object_name)
-                        opened = True
-
-                        obj = self._live_object(kind, object_name)
-
-                        success = False
-                        if obj is not None:
-                            for i in range(obj.Controls.Count):
-                                try:
-                                    ctrl = obj.Controls(i)
-                                    if ctrl.Name == control_name:
-                                        ctrl.Properties(prop_name).Value = value
-                                        success = True
-                                        break
-                                except Exception:
-                                    pass
+                        ctrl = obj.Controls(i)
+                        if ctrl.Name == control_name:
+                            ctrl.Properties(prop_name).Value = value
+                            return True
                     except Exception:
-                        success = False
-                    finally:
-                        if opened:
-                            try:
-                                self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)
-                            except Exception:
-                                pass
-                    results[prop_name] = success
-                except Exception:
-                    results[prop_name] = False
-            return results
+                        pass
+                return False
 
-        return self._dispatcher.call(_do)
+            return self._with_design_view(
+                kind, object_name,
+                save_flag=1,
+                work=inner,
+                on_error=lambda exc: self._log_object_failure(kind, "set_control_properties", object_name, exc) or False,
+                default=False,
+            )
+
+        results: dict[str, bool] = {}
+        for prop_name, value in properties.items():
+            results[prop_name] = work_for_prop(prop_name, value)
+        return results
 
     def set_control_properties(self, form_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties at once. Returns dict of {property_name: success}."""
@@ -905,43 +836,29 @@ class AccessAdapter:
 
     def _add_object_control(self, kind: str, object_name: str, control_type: str, control_name: str, section: int = 0, properties: dict[str, Any] | None = None) -> bool:
         """Add a control to a form/report by opening it in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._open_object_in_design(kind, object_name)
-                opened = True
-
-                type_int = self._control_type_id(control_type)
-                if type_int == 0:
-                    return False
-
-                ctrl = self._dispatcher.access_app.DoCmd.CreateControl(object_name, type_int, section)
-                ctrl.Name = control_name
-
-                if properties:
-                    for prop_name, value in properties.items():
-                        try:
-                            ctrl.Properties(prop_name).Value = value
-                        except Exception:
-                            pass
-
-                self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
-                return True
-            except Exception:
+        def work(obj):
+            type_int = self._control_type_id(control_type)
+            if type_int == 0:
                 return False
-            finally:
-                if opened:
+
+            ctrl = self._dispatcher.access_app.DoCmd.CreateControl(object_name, type_int, section)
+            ctrl.Name = control_name
+
+            if properties:
+                for prop_name, value in properties.items():
                     try:
-                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)  # acSaveNo=2
+                        ctrl.Properties(prop_name).Value = value
                     except Exception:
                         pass
+            return True
 
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=1,
+            work=work,
+            on_error=lambda exc: self._log_object_failure(kind, "add_object_control", object_name, exc) or False,
+            default=False,
+        )
 
     def add_control(self, form_name: str, control_type: str, control_name: str, section: int = 0, properties: dict[str, Any] | None = None) -> bool:
         """Add a control to a form by opening it in design view."""
@@ -949,43 +866,27 @@ class AccessAdapter:
 
     def _remove_object_control(self, kind: str, object_name: str, control_name: str) -> bool:
         """Remove a control from a form/report by opening it in design view."""
-        if not self._dispatcher._started:
+        def work(obj):
+            if obj is None:
+                return False
+            for i in range(obj.Controls.Count):
+                try:
+                    ctrl = obj.Controls(i)
+                    if ctrl.Name == control_name:
+                        ctrl.SetFocus()
+                        self._dispatcher.access_app.DoCmd.RunCommand(365)  # acCmdDelete
+                        return True
+                except Exception:
+                    pass
             return False
 
-        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._open_object_in_design(kind, object_name)
-                opened = True
-
-                obj = self._live_object(kind, object_name)
-
-                if obj is not None:
-                    for i in range(obj.Controls.Count):
-                        try:
-                            ctrl = obj.Controls(i)
-                            if ctrl.Name == control_name:
-                                ctrl.SetFocus()
-                                self._dispatcher.access_app.DoCmd.RunCommand(365)  # acCmdDelete
-                                self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
-                                return True
-                        except Exception:
-                            pass
-
-                self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)  # acSaveNo=2
-                return False
-            except Exception:
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=2,
+            work=work,
+            on_error=lambda exc: self._log_object_failure(kind, "remove_object_control", object_name, exc) or False,
+            default=False,
+        )
 
     def remove_control(self, form_name: str, control_name: str) -> bool:
         """Remove a control from a form by opening it in design view."""
@@ -1074,100 +975,65 @@ class AccessAdapter:
 
     def set_control_event_procedure(self, form_name: str, control_name: str, event_name: str, code: str) -> bool:
         """Set a control's event procedure by opening the form in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._dispatcher.access_app.DoCmd.OpenForm(form_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    form = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    form = self._dispatcher.access_app.Forms(form_name)
-
-                if form is None:
-                    return False
-
-                target_ctrl = None
-                for i in range(form.Controls.Count):
-                    try:
-                        ctrl = form.Controls(i)
-                        if ctrl.Name == control_name:
-                            target_ctrl = ctrl
-                            break
-                    except Exception:
-                        pass
-
-                if target_ctrl is None:
-                    return False
-
-                event_prop_name = f"On{event_name}"
-                target_ctrl.Properties(event_prop_name).Value = "[Event Procedure]"
-
-                module_name = f"Form_{form_name}"
-                proc_name = f"{control_name}_{event_name}"
-                return self.vba_replace_procedure(module_name, proc_name, code)
-            except Exception:
+        def work(form):
+            if form is None:
                 return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(2, form_name, 1)  # acSaveYes=1
-                    except Exception:
-                        pass
 
-        return self._dispatcher.call(_do)
+            target_ctrl = None
+            for i in range(form.Controls.Count):
+                try:
+                    ctrl = form.Controls(i)
+                    if ctrl.Name == control_name:
+                        target_ctrl = ctrl
+                        break
+                except Exception:
+                    pass
+
+            if target_ctrl is None:
+                return False
+
+            event_prop_name = f"On{event_name}"
+            target_ctrl.Properties(event_prop_name).Value = "[Event Procedure]"
+
+            module_name = f"Form_{form_name}"
+            proc_name = f"{control_name}_{event_name}"
+            return self.vba_replace_procedure(module_name, proc_name, code)
+
+        return self._with_design_view(
+            "form", form_name,
+            save_flag=1,
+            work=work,
+            on_error=lambda exc: self._log_object_failure("form", "set_control_event_procedure", form_name, exc) or False,
+            default=False,
+        )
 
     def _get_object_sections(self, kind: str, object_name: str) -> list[dict]:
         """Get all sections of a form/report by opening it in design view."""
-        if not self._dispatcher._started:
-            return []
-
-        def _do() -> list[dict]:
-            opened = False
-            try:
-                ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                open_method = "OpenForm" if kind == "form" else "OpenReport"
-                getattr(self._dispatcher.access_app.DoCmd, open_method)(object_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    obj = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    collection = "Forms" if kind == "form" else "Reports"
-                    obj = getattr(self._dispatcher.access_app, collection)(object_name)
-
-                if obj is None:
-                    return []
-
-                sections: list[dict] = []
-                for i in range(5):
-                    try:
-                        section = obj.Section(i)
-                        sections.append({
-                            "index": i,
-                            "name": str(section.Name),
-                            "section_type": self._section_name(i),
-                            "visible": bool(section.Visible),
-                            "height": int(section.Height),
-                        })
-                    except Exception:
-                        pass
-                return sections
-            except Exception:
+        def work(obj):
+            if obj is None:
                 return []
-            finally:
-                if opened:
-                    try:
-                        ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                        self._dispatcher.access_app.DoCmd.Close(ac_type, object_name, 2)  # acSaveNo=2
-                    except Exception:
-                        pass
+            sections: list[dict] = []
+            for i in range(5):
+                try:
+                    section = obj.Section(i)
+                    sections.append({
+                        "index": i,
+                        "name": str(section.Name),
+                        "section_type": self._section_name(i),
+                        "visible": bool(section.Visible),
+                        "height": int(section.Height),
+                    })
+                except Exception:
+                    pass
+            return sections
 
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=2,
+            work=work,
+            on_error=lambda exc: [],
+            default=[],
+        )
 
     def get_form_sections(self, form_name: str) -> list[dict]:
         """Get all sections of a form by opening it in design view."""
@@ -1179,44 +1045,19 @@ class AccessAdapter:
 
     def _get_object_section_properties(self, kind: str, object_name: str, section_id: int) -> dict[str, str]:
         """Get all properties of a specific section by opening the form/report in design view."""
-        if not self._dispatcher._started:
+        def work(obj):
+            if obj is not None:
+                section = obj.Section(section_id)
+                return _props_to_dict(section.Properties)
             return {}
 
-        def _do() -> dict[str, str]:
-            opened = False
-            try:
-                ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                open_method = "OpenForm" if kind == "form" else "OpenReport"
-                getattr(self._dispatcher.access_app.DoCmd, open_method)(object_name, 1)  # acDesign=1
-                opened = True
-
-                try:
-                    obj = self._dispatcher.access_app.Screen.ActiveForm
-                except Exception:
-                    collection = "Forms" if kind == "form" else "Reports"
-                    obj = getattr(self._dispatcher.access_app, collection)(object_name)
-
-                if obj is not None:
-                    section = obj.Section(section_id)
-                    props: dict[str, str] = {}
-                    for prop in section.Properties:
-                        try:
-                            props[prop.Name] = str(prop.Value)
-                        except Exception:
-                            pass
-                    return props
-                return {}
-            except Exception:
-                return {}
-            finally:
-                if opened:
-                    try:
-                        ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                        self._dispatcher.access_app.DoCmd.Close(ac_type, object_name, 2)  # acSaveNo=2
-                    except Exception:
-                        pass
-
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=2,
+            work=work,
+            on_error=lambda exc: {},
+            default={},
+        )
 
     def get_form_section_properties(self, form_name: str, section_id: int) -> dict[str, str]:
         """Get all properties of a specific section by opening the form in design view."""
@@ -1228,35 +1069,20 @@ class AccessAdapter:
 
     def _set_object_section_property(self, kind: str, object_name: str, section_id: int, property_name: str, value: str) -> bool:
         """Set a single property of a form/report section by opening it in design view."""
-        if not self._dispatcher._started:
-            return False
-
-        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-
-        def _do() -> bool:
-            opened = False
-            try:
-                self._open_object_in_design(kind, object_name)
-                opened = True
-
-                obj = self._live_object(kind, object_name)
-
-                if obj is not None:
-                    section = obj.Section(section_id)
-                    section.Properties(property_name).Value = value
-                    self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
-                    return True
+        def work(obj):
+            if obj is None:
                 return False
-            except Exception:
-                return False
-            finally:
-                if opened:
-                    try:
-                        self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 2)  # acSaveNo=2
-                    except Exception:
-                        pass
+            section = obj.Section(section_id)
+            section.Properties(property_name).Value = value
+            return True
 
-        return self._dispatcher.call(_do)
+        return self._with_design_view(
+            kind, object_name,
+            save_flag=1,
+            work=work,
+            on_error=lambda exc: self._log_object_failure(kind, "set_section_property", object_name, exc) or False,
+            default=False,
+        )
 
     def set_form_section_property(self, form_name: str, section_id: int, property_name: str, value: str) -> bool:
         """Set a single property of a form section by opening the form in design view."""
@@ -1264,41 +1090,29 @@ class AccessAdapter:
 
     def _set_object_section_properties(self, kind: str, object_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form/report section. Returns dict of {property_name: success}."""
-        if not self._dispatcher._started:
-            return {}
-
-        close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-
-        def _do() -> dict[str, bool]:
-            results: dict[str, bool] = {}
-            for prop_name, value in properties.items():
-                opened = False
+        def work_for_prop(prop_name: str, value: Any) -> bool:
+            def inner(obj):
+                if obj is None:
+                    return False
                 try:
-                    self._open_object_in_design(kind, object_name)
-                    opened = True
-
-                    obj = self._live_object(kind, object_name)
-
-                    success = False
-                    if obj is not None:
-                        try:
-                            section = obj.Section(section_id)
-                            section.Properties(prop_name).Value = value
-                            success = True
-                        except Exception:
-                            pass
+                    section = obj.Section(section_id)
+                    section.Properties(prop_name).Value = value
+                    return True
                 except Exception:
-                    success = False
-                finally:
-                    if opened:
-                        try:
-                            self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, 1)  # acSaveYes=1
-                        except Exception:
-                            pass
-                results[prop_name] = success
-            return results
+                    return False
 
-        return self._dispatcher.call(_do)
+            return self._with_design_view(
+                kind, object_name,
+                save_flag=1,
+                work=inner,
+                on_error=lambda exc: self._log_object_failure(kind, "set_section_properties", object_name, exc) or False,
+                default=False,
+            )
+
+        results: dict[str, bool] = {}
+        for prop_name, value in properties.items():
+            results[prop_name] = work_for_prop(prop_name, value)
+        return results
 
     def set_form_section_properties(self, form_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form section. Returns dict of {property_name: success}."""
