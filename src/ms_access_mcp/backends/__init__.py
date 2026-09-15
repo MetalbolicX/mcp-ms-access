@@ -4,11 +4,20 @@ import logging
 import os
 import sys
 from enum import Flag, auto
+from functools import cache
 from typing import Literal, cast
 
 _logger = logging.getLogger(__name__)
 
-_dao_fallback_warned: bool = False
+
+@cache
+def _warn_dao_fallback_once() -> None:
+    """Log the DAO→ODBC fallback warning exactly once per process."""
+    _logger.warning(
+        "DAO backend requested but win32com is not importable. "
+        "Falling back to OdbcAdapter. Install Microsoft Access or "
+        "the Access Runtime to enable DAO."
+    )
 
 
 class BackendCapabilities(Flag):
@@ -170,14 +179,7 @@ class BackendSelector:
                     raise BackendUnavailableError(msg)
                 resolved = "odbc"
             elif not _is_dao_constructable():
-                global _dao_fallback_warned
-                if not _dao_fallback_warned:
-                    _logger.warning(
-                        "DAO backend requested but win32com is not importable. "
-                        "Falling back to OdbcAdapter. Install Microsoft Access or "
-                        "the Access Runtime to enable DAO."
-                    )
-                    _dao_fallback_warned = True
+                _warn_dao_fallback_once()
                 resolved = "odbc"
             else:
                 from .dao import DaoAdapter

@@ -6,21 +6,23 @@ All destructive ops gated via safety.require_acknowledgment.
 
 from __future__ import annotations
 
-import csv
 import dataclasses
 import inspect
-import json
 from functools import cache
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from ..backends import DATA_READ_CAPS, BackendSelector
-from ..backends.access import AccessAdapter
-from ..errors import Err, Ok, Result, err, ok
+from ..errors import Err, Ok, Result, err, ok  # noqa: F401 — re-exported for backward compatibility
 from ..models import QueryResult
 from ..safety import WritePolicy, is_path_allowed
-from .sql_builder import build_select
-from .xlsx_capability import IisamProviderProbe
+from .db_admin import create_access_database as _create_db
+from .db_admin import get_database_properties as _get_db_props
+from .db_admin import get_database_statistics as _get_db_stats
+from .db_admin import set_database_property as _set_db_prop
+from .db_analysis import generate_sql as _gen_sql
+from .db_analysis import get_er_diagram as _get_er
+from .db_export import export_data as _export_data
 
 # =============================================================================
 # Result Envelopes — re-exported from the shared kernel (errors module)
@@ -68,6 +70,11 @@ class DatabaseUseCases:
         self._db_path: str | None = None
         self._connections: dict[str, Any] = {}
         self._active_connection: str = "default"
+
+    @property
+    def readonly(self) -> bool:
+        """Whether write operations are rejected (public read of the write policy)."""
+        return self._policy.readonly
 
     # -------------------------------------------------------------------------
     # Connection Management
@@ -311,11 +318,7 @@ class DatabaseUseCases:
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
-        try:
-            props = adapter.get_database_properties()
-            return _ok(data=props)
-        except Exception as e:
-            return _err(str(e))
+        return _get_db_props(adapter)
 
     def get_database_statistics(self, connection_name: str = "default") -> Result:
         """Get database statistics.
@@ -329,11 +332,7 @@ class DatabaseUseCases:
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
-        try:
-            stats = adapter.get_database_statistics()
-            return _ok(data=dataclasses.asdict(stats))
-        except Exception as e:
-            return _err(str(e))
+        return _get_db_stats(adapter)
 
     def get_linked_tables(self, connection_name: str = "default") -> Result:
         """Get list of linked tables.
@@ -799,40 +798,6 @@ class DatabaseUseCases:
     #: Maximum length of an Excel sheet name
     _MAX_SHEET_NAME_LENGTH = 31
 
-    @staticmethod
-    def _sanitize_sheet_name(name: str) -> Result:
-        """Validate and sanitize a sheet name for xlsx export.
-
-        Rules:
-        - Must not be empty
-        - Must be at most 31 characters
-        - Must not contain ]
-        - Trailing $ is stripped
-
-        Returns Ok with sanitized name, or Err with message.
-        """
-        if not name or not name.strip():
-            return _err("Sheet name must not be empty.")
-        # Strip trailing $
-        sanitized = name.rstrip("$").strip()
-        if not sanitized:
-            return _err("Sheet name must not be empty after normalization.")
-        if "]" in sanitized:
-            return _err(f"Sheet name must not contain ']': {sanitized!r}")
-        if len(sanitized) > 31:
-            return _err(f"Sheet name must be at most 31 characters: {len(sanitized)} > 31")
-        return _ok(sanitized)
-
-    @staticmethod
-    def _build_iisam_insert_sql(table_or_query: str, output_path: str, sheet_name: str) -> str:
-        """Build the IISAM INSERT INTO SQL for xlsx export.
-
-        Returns: INSERT INTO [Excel 12.0;HDR=YES;DATABASE=<abs>].[<sheet>$] <select>
-        """
-        abs_path = str(Path(output_path).absolute())
-        select_clause = build_select(table_or_query, None, None, None)
-        return f"INSERT INTO [Excel 12.0;HDR=YES;DATABASE={abs_path}].[{sheet_name}$] {select_clause}"
-
     # -------------------------------------------------------------------------
     # Export
     # -------------------------------------------------------------------------
@@ -860,62 +825,10 @@ class DatabaseUseCases:
         """
         if not is_path_allowed(output_path, self._allowed_dirs):
             return _err(f"Output path not allowed: {output_path}")
-
-        # Sanitize sheet name for xlsx
-        sheet_name_sanitized: str | None = None
-        if format == "xlsx":
-            sanitized_result = self._sanitize_sheet_name(sheet_name)
-            if isinstance(sanitized_result, Err):
-                return sanitized_result
-            sheet_name_sanitized = sanitized_result.data  # type: ignore[assignment]
-
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
-
-        # xlsx routing: AccessAdapter uses DoCmd; probe-gated SQL fallback for DAO/ADO
-        if format == "xlsx":
-            if isinstance(adapter, AccessAdapter):
-                affected = adapter.export_table_to_xlsx(table_or_query, output_path)
-                return _ok(rowcount=affected)
-            if IisamProviderProbe.is_excel_provider_registered():
-                if sheet_name_sanitized is None:
-                    return _err("Sheet name sanitization failed")
-                sql = self._build_iisam_insert_sql(table_or_query, output_path, sheet_name_sanitized)
-                affected = adapter.execute_raw_sql(sql)
-                return _ok(rowcount=affected)
-            msg = (
-                "xlsx export on this backend requires either the 'access' "
-                "backend or the ACE Excel IISAM provider. Install Microsoft "
-                "Access Database Engine 2016 Redistributable, or reconnect "
-                "with the 'access' backend."
-            )
-            return _err(msg)
-
-        try:
-            # Fetch the data
-            result = self.query_data(build_select(table_or_query, None, None, None), connection_name=connection_name)
-            if isinstance(result, Err):
-                return result
-
-            rows = result.data if isinstance(result, Ok) else []
-
-            # Export to file
-            if format == "csv":
-                with open(output_path, "w", newline="", encoding="utf-8") as f:
-                    if rows:
-                        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-                        writer.writeheader()
-                        writer.writerows(rows)
-                    else:
-                        f.write("")
-            else:  # json
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(rows, f, indent=2, default=str)
-
-            return _ok(rowcount=len(rows))
-        except Exception as e:
-            return _err(str(e))
+        return _export_data(adapter, self._policy, self._allowed_dirs, table_or_query, output_path, format, sheet_name)
 
     # -------------------------------------------------------------------------
     # Database Properties
@@ -933,18 +846,10 @@ class DatabaseUseCases:
         Returns:
             Ok on success, or Err
         """
-        if ack := self._policy.require_acknowledgment("set_database_property", confirm):
-            return _err(ack)
-        if not self._policy.allow_write():
-            return _err("Write operations are disabled (readonly mode)")
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
-        try:
-            adapter.set_database_property(name, value)
-            return _ok(rowcount=1)
-        except Exception as e:
-            return _err(str(e))
+        return _set_db_prop(adapter, self._policy, name, value, confirm)
 
     # -------------------------------------------------------------------------
     # Linked Table Operations (thin wrappers — DAO backend at backends/dao.py)
@@ -1102,24 +1007,7 @@ class DatabaseUseCases:
         Returns:
             Ok on success, or Err
         """
-        if ack := self._policy.require_acknowledgment("create_access_database", confirm):
-            return _err(ack)
-        if not self._policy.allow_write():
-            return _err("Write operations are disabled (readonly mode)")
-        if not is_path_allowed(path, self._allowed_dirs):
-            return _err(f"Output path not allowed: {path}")
-        if Path(path).exists():
-            return _err(f"Database already exists: {path}")
-        try:
-            adapter = BackendSelector.get_adapter(
-                db_path=path,
-                backend=cast(Literal["odbc", "com", "dao", "auto"] | None, self._backend_name),
-                capabilities=DATA_READ_CAPS,
-            )
-            cast(Any, adapter).create_database(path)
-            return _ok(rowcount=1)
-        except Exception as e:
-            return _err(f"create_access_database failed: {e}")
+        return _create_db(self._policy, self._allowed_dirs, path, self._backend_name, confirm)
 
     # -------------------------------------------------------------------------
     # Analysis Tools (plan 025)
@@ -1137,48 +1025,11 @@ class DatabaseUseCases:
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
-
-        tables_result = self.get_tables(connection_name)
-        if isinstance(tables_result, Err):
-            return tables_result
-
-        rels_result = self.get_relationships(connection_name)
-        if isinstance(rels_result, Err):
-            return rels_result
-
-        tables_data = tables_result.data
-        rels_data = rels_result.data
-
-        # Build nodes from table data
-        nodes = []
-        for table_dict in tables_data:
-            nodes.append({
-                "id": table_dict.get("name", ""),
-                "type": "table",
-                "data": {
-                    "label": table_dict.get("name", ""),
-                    "columns": table_dict.get("fields", []),
-                    "record_count": table_dict.get("record_count", 0),
-                },
-            })
-
-        # Build edges from relationship data
-        edges = []
-        for rel_dict in rels_data:
-            edges.append({
-                "id": rel_dict.get("name", ""),
-                "source": rel_dict.get("foreign_table", ""),
-                "target": rel_dict.get("table", ""),
-                "label": rel_dict.get("name", ""),
-                "animated": False,
-            })
-
-        return _ok(data={
-            "nodes": nodes,
-            "edges": edges,
-            "node_count": len(nodes),
-            "edge_count": len(edges),
-        })
+        return _get_er(
+            adapter,
+            lambda: self.get_tables(connection_name),
+            lambda: self.get_relationships(connection_name),
+        )
 
     def generate_sql(
         self,
@@ -1198,20 +1049,10 @@ class DatabaseUseCases:
         """
         if not is_path_allowed(output_path, self._allowed_dirs):
             return _err(f"Output path not allowed: {output_path}")
-
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
-
-        try:
-            # Delegate to the adapter's generate_sql method
-            result = adapter.generate_sql(output_path)
-            result_dict = dataclasses.asdict(result)
-            if not result_dict.get("success", True):
-                return _err(result_dict.get("error", "generate_sql failed"))
-            return _ok(rowcount=1)
-        except Exception as e:
-            return _err(str(e))
+        return _gen_sql(adapter, self._policy, self._allowed_dirs, output_path, _table_names)
 
     def execute_sql_script(
         self,
