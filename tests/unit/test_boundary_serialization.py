@@ -17,7 +17,7 @@ import pytest
 
 from ms_access_mcp.application.database import DatabaseUseCases
 from ms_access_mcp.errors import Ok
-from ms_access_mcp.models import WriteResult
+from ms_access_mcp.models import ObjectMetadata, WriteResult
 
 # ---------------------------------------------------------------------------
 # Fake adapters for connection-pool substitution
@@ -53,10 +53,10 @@ class FakeWriteAdapter:
 class FakeMetadataAdapter:
     """Fake adapter for schema inspector methods."""
 
-    def __init__(self, meta_result: dict) -> None:
+    def __init__(self, meta_result: ObjectMetadata | None) -> None:
         self._meta = meta_result
 
-    def get_object_metadata(self, object_name: str) -> dict:
+    def get_object_metadata(self, object_name: str) -> ObjectMetadata | None:
         return self._meta
 
 
@@ -222,11 +222,11 @@ class TestGetObjectMetadataBoundary:
         return uc
 
     def test_table_hit(self) -> None:
-        adapter = FakeMetadataAdapter({
-            "name": "MyTable",
-            "type": "table",
-            "properties": {"record_count": "10"},
-        })
+        adapter = FakeMetadataAdapter(ObjectMetadata(
+            name="MyTable",
+            type="table",
+            properties={"record_count": "10"},
+        ))
         uc = self._uc_with_adapter(adapter)
 
         result = uc.get_object_metadata("MyTable")
@@ -235,11 +235,11 @@ class TestGetObjectMetadataBoundary:
         assert hasattr(result, "data")
 
     def test_form_hit(self) -> None:
-        adapter = FakeMetadataAdapter({
-            "name": "MyForm",
-            "type": "form",
-            "properties": {},
-        })
+        adapter = FakeMetadataAdapter(ObjectMetadata(
+            name="MyForm",
+            type="form",
+            properties={},
+        ))
         uc = self._uc_with_adapter(adapter)
 
         result = uc.get_object_metadata("MyForm")
@@ -248,8 +248,8 @@ class TestGetObjectMetadataBoundary:
         assert hasattr(result, "data")
 
     def test_miss(self) -> None:
-        """Miss: backend returns {}, application layer returns Ok(data={})."""
-        adapter = FakeMetadataAdapter({})
+        """Miss: backend returns None, application layer returns Ok(data={})."""
+        adapter = FakeMetadataAdapter(None)
         uc = self._uc_with_adapter(adapter)
 
         result = uc.get_object_metadata("NonExistent")
@@ -258,7 +258,7 @@ class TestGetObjectMetadataBoundary:
         assert hasattr(result, "data")
 
     def test_not_connected(self) -> None:
-        adapter = FakeMetadataAdapter({})
+        adapter = FakeMetadataAdapter(None)
         uc = self._uc_with_adapter(adapter)
 
         result = uc.get_object_metadata("Anything")

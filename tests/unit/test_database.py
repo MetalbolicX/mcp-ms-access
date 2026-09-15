@@ -12,7 +12,7 @@ from ms_access_mcp.application.database import (
     _ok,
 )
 from ms_access_mcp.backends.access import AccessAdapter
-from ms_access_mcp.models import FieldInfo, IndexInfo, RelationshipInfo, TableInfo
+from ms_access_mcp.models import FieldInfo, IndexInfo, ObjectMetadata, RelationshipInfo, TableInfo
 
 
 class FakeAdapter:
@@ -77,7 +77,7 @@ class FakeAdapter:
         ]
 
     def get_object_metadata(self, object_name: str):
-        return {"name": object_name, "type": "table"}
+        return ObjectMetadata(name=object_name, type="table")
 
     def get_queries(self):
         return self.queries

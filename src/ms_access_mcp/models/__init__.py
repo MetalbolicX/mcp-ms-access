@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass
@@ -261,3 +261,37 @@ class WriteResult:
     success: bool
     affected: int = 0
     error: str | None = None
+
+
+@dataclass
+class ObjectMetadata:
+    """Metadata for a single database object (table/form/report/macro)."""
+    name: str
+    type: str
+    properties: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class GenerateSqlResult:
+    """Result of generate_sql writing a DDL script to disk."""
+    success: bool
+    path: str | None = None
+    statements: int = 0
+    tables: int = 0
+    error: str | None = None
+
+
+@dataclass
+class RelationshipResult:
+    """Result of create/delete relationship operations."""
+    success: bool
+    error: str | None = None
+
+
+@dataclass
+class DatabaseStatistics:
+    """Result of get_database_statistics."""
+    success: bool
+    objects: dict[str, int]
+    file: dict[str, Any]
+    system: dict[str, Any]

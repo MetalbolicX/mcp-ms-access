@@ -6,7 +6,7 @@ import logging
 from types import TracebackType
 from typing import Any
 
-from ..models import QueryResult, WriteResult
+from ..models import DatabaseStatistics, GenerateSqlResult, ObjectMetadata, QueryResult, RelationshipResult, WriteResult
 from .dao_sql import (
     _access_sql_type,
     _alter_table_add_column,
@@ -211,7 +211,7 @@ class DaoAdapter:
         """Return relationships from the schema inspector."""
         return self._schema_inspector.get_relationships()
 
-    def get_object_metadata(self, object_name: str) -> dict:
+    def get_object_metadata(self, object_name: str) -> ObjectMetadata | None:
         """Return metadata for an Access object."""
         return self._schema_inspector.get_object_metadata(object_name)
 
@@ -219,11 +219,11 @@ class DaoAdapter:
         """Return the table schema plan from the schema inspector."""
         return self._schema_inspector.get_table_schema_plan()
 
-    def generate_sql(self, output_path: str) -> dict:
+    def generate_sql(self, output_path: str) -> GenerateSqlResult:
         """Return the SQL generation result for the output path."""
         return self._schema_inspector.generate_sql(output_path)
 
-    def get_database_statistics(self) -> dict:
+    def get_database_statistics(self) -> DatabaseStatistics:
         """Return database statistics from the schema inspector."""
         return self._schema_inspector.get_database_statistics()
 
@@ -283,15 +283,15 @@ class DaoAdapter:
         columns: list[str],
         foreign_table: str,
         foreign_columns: list[str],
-    ) -> dict:
+    ) -> RelationshipResult:
         """Create a foreign-key relationship via DAO Relations."""
         if not self._dispatcher.is_connected():
-            return {"success": False, "error": "Not connected"}
+            return RelationshipResult(success=False, error="Not connected")
         if len(columns) != len(foreign_columns):
-            return {
-                "success": False,
-                "error": "columns and foreign_columns must have same length",
-            }
+            return RelationshipResult(
+                success=False,
+                error="columns and foreign_columns must have same length",
+            )
         return self._schema_inspector.create_relationship(
             table_name,
             relationship_name,
@@ -300,7 +300,7 @@ class DaoAdapter:
             foreign_columns,
         )
 
-    def delete_relationship(self, table_name: str, relationship_name: str) -> dict:
+    def delete_relationship(self, table_name: str, relationship_name: str) -> RelationshipResult:
         """Delete a foreign-key relationship via DAO Relations."""
         return self._schema_inspector.delete_relationship(table_name, relationship_name)
 

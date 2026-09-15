@@ -446,7 +446,7 @@ class TestCreateRelationship:
             foreign_table="Orders",
             foreign_columns=["customer_id"],
         )
-        assert result["success"] is True, f"Expected success, got error: {result.get('error')}"
+        assert result.success is True, f"Expected success, got error: {result.error}"
         assert "FK_Customers_Orders" in created
 
 
@@ -464,7 +464,7 @@ class TestDeleteRelationship:
         dispatcher = FakeDispatcher(db=db)
         insp = SchemaInspector(dispatcher)
         result = insp.delete_relationship("Customers", "FK_Customers_Orders")
-        assert result["success"] is True
+        assert result.success is True
         assert "FK_Customers_Orders" in deleted
 
 
@@ -475,9 +475,10 @@ class TestGetObjectMetadata:
         dispatcher = FakeDispatcher(db=db)
         insp = SchemaInspector(dispatcher)
         meta = insp.get_object_metadata("Customers")
-        assert meta["name"] == "Customers"
-        assert meta["type"] == "table"
-        assert "record_count" in meta["properties"]
+        assert meta is not None
+        assert meta.name == "Customers"
+        assert meta.type == "table"
+        assert "record_count" in meta.properties
 
 
 class TestGetDatabaseStatistics:
@@ -486,26 +487,26 @@ class TestGetDatabaseStatistics:
         dispatcher = FakeDispatcher(db=db)
         insp = SchemaInspector(dispatcher)
         stats = insp.get_database_statistics()
-        assert stats["success"] is True
-        assert "objects" in stats
-        assert "file" in stats
-        assert "system" in stats
+        assert stats.success is True
+        assert "tables" in stats.objects
+        assert "name" in stats.file
+        assert "access_version" in stats.system
 
     def test_disconnected_returns_zeroed(self) -> None:
         dispatcher = FakeDispatcher(db=None, connected=False)
         insp = SchemaInspector(dispatcher)
         stats = insp.get_database_statistics()
-        assert stats["success"] is True
-        assert stats["system"]["com_available"] is False
-        assert stats["objects"]["tables"] == 0
-        assert stats["objects"]["queries"] == 0
-        assert stats["objects"]["forms"] == 0
-        assert stats["objects"]["reports"] == 0
-        assert stats["objects"]["macros"] == 0
-        assert stats["objects"]["modules"] == 0
-        assert stats["file"]["name"] == ""
-        assert stats["file"]["size_bytes"] == 0
-        assert stats["file"]["modified"] == ""
+        assert stats.success is True
+        assert stats.system["com_available"] is False
+        assert stats.objects["tables"] == 0
+        assert stats.objects["queries"] == 0
+        assert stats.objects["forms"] == 0
+        assert stats.objects["reports"] == 0
+        assert stats.objects["macros"] == 0
+        assert stats.objects["modules"] == 0
+        assert stats.file["name"] == ""
+        assert stats.file["size_bytes"] == 0
+        assert stats.file["modified"] == ""
 
 
 class TestGenerateSql:
@@ -531,10 +532,10 @@ class TestGenerateSql:
         output_path = tmp_path / "output.sql"
         result = insp.generate_sql(str(output_path))
 
-        assert result["success"] is True
-        assert result["path"] == str(output_path)
-        assert result["statements"] >= 1
-        assert result["tables"] == 1
+        assert result.success is True
+        assert result.path == str(output_path)
+        assert result.statements >= 1
+        assert result.tables == 1
 
         content = Path(str(output_path)).read_text(encoding="utf-8")
         assert "CREATE TABLE [Customers]" in content
@@ -546,5 +547,6 @@ class TestGenerateSql:
         dispatcher = FakeDispatcher(db=None, connected=False)
         insp = SchemaInspector(dispatcher)
         result = insp.generate_sql("/tmp/out.sql")
-        assert result["success"] is False
-        assert "Not connected" in result["error"]
+        assert result.success is False
+        assert result.error is not None
+        assert "Not connected" in result.error

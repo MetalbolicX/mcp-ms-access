@@ -276,7 +276,7 @@ class DatabaseUseCases:
             return _err("Not connected")
         try:
             meta = adapter.get_object_metadata(object_name)
-            return _ok(data=meta)
+            return _ok(data=dataclasses.asdict(meta) if meta is not None else {})
         except Exception as e:
             return _err(str(e))
 
@@ -331,7 +331,7 @@ class DatabaseUseCases:
             return _err("Not connected")
         try:
             stats = adapter.get_database_statistics()
-            return _ok(data=stats)
+            return _ok(data=dataclasses.asdict(stats))
         except Exception as e:
             return _err(str(e))
 
@@ -757,7 +757,10 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.create_relationship(relationship_name, source_table, source_column, dest_table, dest_column)
+            result = adapter.create_relationship(relationship_name, source_table, source_column, dest_table, dest_column)
+            result_dict = dataclasses.asdict(result)
+            if not result_dict.get("success", False):
+                return _err(result_dict.get("error", "create_relationship failed"))
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -781,7 +784,10 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.delete_relationship(relationship_name)
+            result = adapter.delete_relationship(relationship_name)
+            result_dict = dataclasses.asdict(result)
+            if not result_dict.get("success", False):
+                return _err(result_dict.get("error", "delete_relationship failed"))
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -1200,8 +1206,9 @@ class DatabaseUseCases:
         try:
             # Delegate to the adapter's generate_sql method
             result = adapter.generate_sql(output_path)
-            if isinstance(result, dict) and not result.get("success", True):
-                return _err(result.get("error", "generate_sql failed"))
+            result_dict = dataclasses.asdict(result)
+            if not result_dict.get("success", True):
+                return _err(result_dict.get("error", "generate_sql failed"))
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))

@@ -9,13 +9,17 @@ from typing import Any
 
 from ..models import (
     ColumnSchema,
+    DatabaseStatistics,
     FieldInfo,
     ForeignKeyInfo,
     ForeignKeySchema,
+    GenerateSqlResult,
     IndexInfo,
     IndexSchema,
+    ObjectMetadata,
     QueryInfo,
     RelationshipInfo,
+    RelationshipResult,
     TableInfo,
     TableSchema,
     UnknownMetadata,
@@ -217,12 +221,12 @@ class SchemaInspector:
 
         return self._dispatcher.call(_do)
 
-    def get_object_metadata(self, object_name: str) -> dict:
+    def get_object_metadata(self, object_name: str) -> ObjectMetadata | None:
         """Return object metadata (tables, forms, reports, macros)."""
         if not self._dispatcher.is_connected():
-            return {}
+            return None
 
-        def _do() -> dict:
+        def _do() -> ObjectMetadata | None:
             db = self._dispatcher.current_db
             # Check tables first
             for tdef in db.TableDefs:
@@ -235,18 +239,18 @@ class SchemaInspector:
                         rs.Close()
                     except Exception:
                         pass
-                    return {
-                        "name": object_name,
-                        "type": "table",
-                        "properties": {"record_count": str(record_count)},
-                    }
+                    return ObjectMetadata(
+                        name=object_name,
+                        type="table",
+                        properties={"record_count": str(record_count)},
+                    )
 
             # Check forms
             try:
                 access_app = self._dispatcher.access_app
                 for form in access_app.CurrentProject.AllForms:
                     if form.Name == object_name:
-                        return {"name": object_name, "type": "form", "properties": {}}
+                        return ObjectMetadata(name=object_name, type="form", properties={})
             except Exception:
                 pass
 
@@ -255,7 +259,7 @@ class SchemaInspector:
                 access_app = self._dispatcher.access_app
                 for report in access_app.CurrentProject.AllReports:
                     if report.Name == object_name:
-                        return {"name": object_name, "type": "report", "properties": {}}
+                        return ObjectMetadata(name=object_name, type="report", properties={})
             except Exception:
                 pass
 
@@ -264,11 +268,11 @@ class SchemaInspector:
                 access_app = self._dispatcher.access_app
                 for macro in access_app.CurrentProject.AllMacros:
                     if macro.Name == object_name:
-                        return {"name": object_name, "type": "macro", "properties": {}}
+                        return ObjectMetadata(name=object_name, type="macro", properties={})
             except Exception:
                 pass
 
-            return {}
+            return None
 
         return self._dispatcher.call(_do)
 
@@ -373,16 +377,16 @@ class SchemaInspector:
 
         return self._dispatcher.call(_do)
 
-    def generate_sql(self, output_path: str) -> dict:
+    def generate_sql(self, output_path: str) -> GenerateSqlResult:
         """Generate SQL DDL and write to the specified output path.
 
         Uses direct db access inside _do() to avoid nested-dispatch deadlock
         (per oracle schema_inspector.py:670-672).
         """
         if not self._dispatcher.is_connected():
-            return {"success": False, "error": "Not connected"}
+            return GenerateSqlResult(success=False, error="Not connected")
 
-        def _do() -> dict:
+        def _do() -> GenerateSqlResult:
             db = self._dispatcher.current_db
             # Collect tables with enriched FieldInfo (is_autoincrement via attrs & 0x10)
             # and TableInfo.primary_key from idx.Primary
@@ -465,23 +469,23 @@ class SchemaInspector:
                 with open(output_path, "w", encoding="utf-8") as f:
                     f.write(content)
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return GenerateSqlResult(success=False, error=str(e))
 
-            return {
-                "success": True,
-                "path": output_path,
-                "statements": len(statements),
-                "tables": len(tables),
-            }
+            return GenerateSqlResult(
+                success=True,
+                path=output_path,
+                statements=len(statements),
+                tables=len(tables),
+            )
 
         return self._dispatcher.call(_do)
 
-    def get_database_statistics(self) -> dict:
+    def get_database_statistics(self) -> DatabaseStatistics:
         """Return database statistics."""
         if not self._dispatcher.is_connected():
-            return {
-                "success": True,
-                "objects": {
+            return DatabaseStatistics(
+                success=True,
+                objects={
                     "tables": 0,
                     "queries": 0,
                     "forms": 0,
@@ -489,11 +493,11 @@ class SchemaInspector:
                     "macros": 0,
                     "modules": 0,
                 },
-                "file": {"name": "", "size_bytes": 0, "modified": ""},
-                "system": {"access_version": "", "com_available": False},
-            }
+                file={"name": "", "size_bytes": 0, "modified": ""},
+                system={"access_version": "", "com_available": False},
+            )
 
-        def _do() -> dict:
+        def _do() -> DatabaseStatistics:
             db = self._dispatcher.current_db
             import os
 
@@ -534,9 +538,9 @@ class SchemaInspector:
             except Exception:
                 version = ""
 
-            return {
-                "success": True,
-                "objects": {
+            return DatabaseStatistics(
+                success=True,
+                objects={
                     "tables": tables_count,
                     "queries": queries_count,
                     "forms": all_forms_count,
@@ -544,9 +548,9 @@ class SchemaInspector:
                     "macros": all_macros_count,
                     "modules": 0,
                 },
-                "file": file_info,
-                "system": {"access_version": version, "com_available": com_available},
-            }
+                file=file_info,
+                system={"access_version": version, "com_available": com_available},
+            )
 
         return self._dispatcher.call(_do)
 
@@ -557,12 +561,12 @@ class SchemaInspector:
         columns: list[str],
         foreign_table: str,
         foreign_columns: list[str],
-    ) -> dict:
+    ) -> RelationshipResult:
         """Create a relationship between tables."""
         if not self._dispatcher.is_connected():
-            return {"success": False, "error": "Not connected"}
+            return RelationshipResult(success=False, error="Not connected")
 
-        def _do() -> dict:
+        def _do() -> RelationshipResult:
             db = self._dispatcher.current_db
             try:
                 rel = db.CreateRelation(relationship_name, table_name, foreign_table)
@@ -571,23 +575,23 @@ class SchemaInspector:
                     f.ForeignName = foreign_columns[i]
                     rel.Fields.Append(f)
                 db.Relations.Append(rel)
-                return {"success": True}
+                return RelationshipResult(success=True)
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return RelationshipResult(success=False, error=str(e))
 
         return self._dispatcher.call(_do)
 
-    def delete_relationship(self, table_name: str, relationship_name: str) -> dict:
+    def delete_relationship(self, table_name: str, relationship_name: str) -> RelationshipResult:
         """Delete a relationship by name."""
         if not self._dispatcher.is_connected():
-            return {"success": False, "error": "Not connected"}
+            return RelationshipResult(success=False, error="Not connected")
 
-        def _do() -> dict:
+        def _do() -> RelationshipResult:
             db = self._dispatcher.current_db
             try:
                 db.Relations.Delete(relationship_name)
-                return {"success": True}
+                return RelationshipResult(success=True)
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return RelationshipResult(success=False, error=str(e))
 
         return self._dispatcher.call(_do)
