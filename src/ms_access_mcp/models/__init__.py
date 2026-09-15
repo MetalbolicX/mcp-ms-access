@@ -253,3 +253,11 @@ class TableSchema:
 
     def __post_init__(self) -> None:
         self.name = self.name.strip()
+
+
+@dataclass
+class WriteResult:
+    """Result of an insert/update/delete or DDL write operation."""
+    success: bool
+    affected: int = 0
+    error: str | None = None

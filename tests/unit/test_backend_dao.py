@@ -401,46 +401,48 @@ class TestRowCrud:
 
         result = adapter.execute_query("SELECT 1")
 
-        assert result["success"] is False
-        assert result["rows"] == []
-        assert result["count"] == 0
-        assert result["columns"] == []
-        assert result["error"] == "Not connected"
+        assert result.success is False
+        assert result.rows == []
+        assert result.count == 0
+        assert result.columns == []
+        assert result.error == "Not connected"
 
     def test_execute_query_happy_path(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         dispatcher.db.recordset_rows = [{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}]
 
         result = adapter.execute_query("SELECT id, name FROM t")
 
-        assert result["success"] is True
-        assert result["count"] == 2
-        assert result["columns"] == ["id", "name"]
-        assert result["rows"] == [{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}]
+        assert result.success is True
+        assert result.count == 2
+        assert result.columns == ["id", "name"]
+        assert result.rows == [{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}]
 
     def test_execute_query_empty_recordset(self, adapter: DaoAdapter):
         result = adapter.execute_query("SELECT 1")
 
-        assert result["success"] is True
-        assert result["rows"] == []
-        assert result["count"] == 0
-        assert result["columns"] == []
+        assert result.success is True
+        assert result.rows == []
+        assert result.count == 0
+        assert result.columns == []
 
     def test_execute_query_com_failure(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         dispatcher.db.fail_open_recordset = True
 
         result = adapter.execute_query("SELECT 1")
 
-        assert result["success"] is False
-        assert "OpenRecordset failed" in result["error"]
-        assert result["rows"] == []
-        assert result["count"] == 0
+        assert result.success is False
+        assert result.error is not None and "OpenRecordset failed" in result.error
+        assert result.rows == []
+        assert result.count == 0
 
     def test_insert_data_happy_path(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         dispatcher.db.records_affected = 3
 
         result = adapter.insert_data("tbl", {"name": "O'Hara", "active": True, "score": 7})
 
-        assert result == {"success": True, "affected": 3}
+        assert result.success is True
+        assert result.affected == 3
+        assert result.error is None
         assert dispatcher.db.executed == [
             "INSERT INTO [tbl] ([name], [active], [score]) VALUES ('O''Hara', -1, 7)"
         ]
@@ -450,22 +452,24 @@ class TestRowCrud:
 
         result = adapter.insert_data("tbl", {"name": "x"})
 
-        assert result["success"] is False
-        assert "DAO Execute failed" in result["error"]
-        assert result["affected"] == 0
+        assert result.success is False
+        assert result.error is not None and "Execute failed" in result.error
+        assert result.affected == 0
 
     def test_insert_data_not_connected(self):
         adapter = _make_adapter(FakeDispatcher())  # disconnected
 
         result = adapter.insert_data("tbl", {"name": "x"})
 
-        assert result == {"success": False, "error": "Not connected", "affected": 0}
+        assert result.success is False
+        assert result.error == "Not connected"
+        assert result.affected == 0
 
     def test_update_data_with_dict_where(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         result = adapter.update_data("tbl", {"name": "new"}, {"id": 5})
 
-        assert result["success"] is True
-        assert result["affected"] == 1
+        assert result.success is True
+        assert result.affected == 1
         assert dispatcher.db.executed == ["UPDATE [tbl] SET [name] = 'new' WHERE [id] = 5"]
 
     def test_update_data_com_failure(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
@@ -473,20 +477,21 @@ class TestRowCrud:
 
         result = adapter.update_data("tbl", {"name": "new"})
 
-        assert result["success"] is False
-        assert result["affected"] == 0
+        assert result.success is False
+        assert result.affected == 0
 
     def test_update_data_string_where_sanitized(self, adapter: DaoAdapter):
         result = adapter.update_data("tbl", {"name": "x"}, "1=1; DROP TABLE t")
 
-        assert result["success"] is False
-        assert "SQL injection blocked" in result["error"]
-        assert result["affected"] == 0
+        assert result.success is False
+        assert result.error is not None and "SQL injection blocked" in result.error
+        assert result.affected == 0
 
     def test_delete_data_happy_path(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         result = adapter.delete_data("tbl", {"id": 5})
 
-        assert result["success"] is True
+        assert result.success is True
+        assert result.affected == 1
         assert dispatcher.db.executed == ["DELETE FROM [tbl] WHERE [id] = 5"]
 
     def test_delete_data_com_failure(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
@@ -494,8 +499,8 @@ class TestRowCrud:
 
         result = adapter.delete_data("tbl")
 
-        assert result["success"] is False
-        assert result["affected"] == 0
+        assert result.success is False
+        assert result.affected == 0
 
     def test_execute_raw_sql_happy_path(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         dispatcher.db.records_affected = 4

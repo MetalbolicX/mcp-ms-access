@@ -6,6 +6,7 @@ import logging
 from types import TracebackType
 from typing import Any
 
+from ..models import QueryResult, WriteResult
 from .dao_sql import (
     _access_sql_type,
     _alter_table_add_column,
@@ -326,25 +327,25 @@ class DaoAdapter:
     # Row CRUD via DAO
     # -------------------------------------------------------------------------- #
 
-    def execute_query(self, sql: str, params: list | None = None) -> dict:
+    def execute_query(self, sql: str, params: list | None = None) -> QueryResult:
         """Execute a SQL SELECT via DAO OpenRecordset."""
         _ = params
         if not self._dispatcher.is_connected():
-            return {
-                "success": False,
-                "rows": [],
-                "count": 0,
-                "columns": [],
-                "error": "Not connected",
-            }
+            return QueryResult(
+                success=False,
+                rows=[],
+                count=0,
+                columns=[],
+                error="Not connected",
+            )
 
-        def _do() -> dict:
+        def _do() -> QueryResult:
             try:
                 db = self._dispatcher.current_db
                 rs = db.OpenRecordset(sql)
                 if rs.EOF:
                     rs.Close()
-                    return {"success": True, "rows": [], "count": 0, "columns": []}
+                    return QueryResult(success=True, rows=[], count=0, columns=[])
 
                 columns = [rs.Fields(i).Name for i in range(rs.Fields.Count)]
 
@@ -362,29 +363,29 @@ class DaoAdapter:
                     rs.MoveNext()
 
                 rs.Close()
-                return {
-                    "success": True,
-                    "rows": results,
-                    "count": len(results),
-                    "columns": columns,
-                }
+                return QueryResult(
+                    success=True,
+                    rows=results,
+                    count=len(results),
+                    columns=columns,
+                )
             except Exception as e:
-                return {
-                    "success": False,
-                    "rows": [],
-                    "count": 0,
-                    "columns": [],
-                    "error": str(e),
-                }
+                return QueryResult(
+                    success=False,
+                    rows=[],
+                    count=0,
+                    columns=[],
+                    error=str(e),
+                )
 
         return self._dispatcher.call(_do)
 
-    def insert_data(self, table_name: str, data: dict | list[dict]) -> dict:
+    def insert_data(self, table_name: str, data: dict | list[dict]) -> WriteResult:
         """Insert one or more rows via DAO Execute with inline values."""
         if not self._dispatcher.is_connected():
-            return {"success": False, "error": "Not connected", "affected": 0}
+            return WriteResult(success=False, error="Not connected", affected=0)
 
-        def _do() -> dict:
+        def _do() -> WriteResult:
             try:
                 db = self._dispatcher.current_db
                 rows = data if isinstance(data, list) else [data]
@@ -395,9 +396,9 @@ class DaoAdapter:
                     sql = f"INSERT INTO [{table_name}] ({cols}) VALUES ({vals})"
                     db.Execute(sql, DAO_DB_FAIL_ON_ERROR)
                     total_affected += db.RecordsAffected
-                return {"success": True, "affected": total_affected}
+                return WriteResult(success=True, affected=total_affected)
             except Exception as e:
-                return {"success": False, "error": str(e), "affected": 0}
+                return WriteResult(success=False, error=str(e), affected=0)
 
         return self._dispatcher.call(_do)
 
@@ -406,20 +407,20 @@ class DaoAdapter:
         table_name: str,
         set_dict: dict,
         where_dict: dict | str | None = None,
-    ) -> dict:
+    ) -> WriteResult:
         """Update rows via DAO Execute with inline values."""
         if not self._dispatcher.is_connected():
-            return {"success": False, "error": "Not connected", "affected": 0}
+            return WriteResult(success=False, error="Not connected", affected=0)
 
         if isinstance(where_dict, str):
             if _sanitize_where_string(where_dict) is None:
-                return {
-                    "success": False,
-                    "error": "where_dict contains disallowed characters — SQL injection blocked",
-                    "affected": 0,
-                }
+                return WriteResult(
+                    success=False,
+                    error="where_dict contains disallowed characters — SQL injection blocked",
+                    affected=0,
+                )
 
-        def _do() -> dict:
+        def _do() -> WriteResult:
             try:
                 db = self._dispatcher.current_db
                 set_clause = ", ".join(
@@ -435,9 +436,9 @@ class DaoAdapter:
                         )
                         sql += f" WHERE {where_clause}"
                 db.Execute(sql, DAO_DB_FAIL_ON_ERROR)
-                return {"success": True, "affected": db.RecordsAffected}
+                return WriteResult(success=True, affected=db.RecordsAffected)
             except Exception as e:
-                return {"success": False, "error": str(e), "affected": 0}
+                return WriteResult(success=False, error=str(e), affected=0)
 
         return self._dispatcher.call(_do)
 
@@ -445,20 +446,20 @@ class DaoAdapter:
         self,
         table_name: str,
         where_dict: dict | str | None = None,
-    ) -> dict:
+    ) -> WriteResult:
         """Delete rows via DAO Execute."""
         if not self._dispatcher.is_connected():
-            return {"success": False, "error": "Not connected", "affected": 0}
+            return WriteResult(success=False, error="Not connected", affected=0)
 
         if isinstance(where_dict, str):
             if _sanitize_where_string(where_dict) is None:
-                return {
-                    "success": False,
-                    "error": "where_dict contains disallowed characters — SQL injection blocked",
-                    "affected": 0,
-                }
+                return WriteResult(
+                    success=False,
+                    error="where_dict contains disallowed characters — SQL injection blocked",
+                    affected=0,
+                )
 
-        def _do() -> dict:
+        def _do() -> WriteResult:
             try:
                 db = self._dispatcher.current_db
                 sql = f"DELETE FROM [{table_name}]"
@@ -471,9 +472,9 @@ class DaoAdapter:
                         )
                         sql += f" WHERE {where_clause}"
                 db.Execute(sql, DAO_DB_FAIL_ON_ERROR)
-                return {"success": True, "affected": db.RecordsAffected}
+                return WriteResult(success=True, affected=db.RecordsAffected)
             except Exception as e:
-                return {"success": False, "error": str(e), "affected": 0}
+                return WriteResult(success=False, error=str(e), affected=0)
 
         return self._dispatcher.call(_do)
 

@@ -17,6 +17,7 @@ from typing import Any, Literal, cast
 from ..backends import DATA_READ_CAPS, BackendSelector
 from ..backends.access import AccessAdapter
 from ..errors import Err, Ok, Result, err, ok
+from ..models import QueryResult
 from ..safety import WritePolicy, is_path_allowed
 from .sql_builder import build_select
 from .xlsx_capability import IisamProviderProbe
@@ -456,9 +457,11 @@ class DatabaseUseCases:
             if "limit" in sig.parameters:
                 kwargs["limit"] = limit
             result = method(sql, **kwargs)
+            if isinstance(result, QueryResult):
+                result = dataclasses.asdict(result)
             if isinstance(result, dict):
                 if "rows" in result:
-                    return _ok(data=result.get("rows", []), rowcount=result.get("rowcount", 0))
+                    return _ok(data=result.get("rows", []), rowcount=result.get("count", 0))
                 if "data" in result:
                     return _ok(data=result.get("data", []), rowcount=result.get("rowcount", 0))
                 return _ok(data=result, rowcount=len(result))
@@ -496,7 +499,8 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            rowcount = adapter.insert_data(table_name, data)
+            result = adapter.insert_data(table_name, data)
+            rowcount = dataclasses.asdict(result)["affected"]
             return _ok(rowcount=rowcount)
         except Exception as e:
             return _err(str(e))
@@ -529,7 +533,8 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            rowcount = adapter.update_data(table_name, data, where=where)
+            result = adapter.update_data(table_name, data, where=where)
+            rowcount = dataclasses.asdict(result)["affected"]
             return _ok(rowcount=rowcount)
         except Exception as e:
             return _err(str(e))
@@ -560,7 +565,8 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            rowcount = adapter.delete_data(table_name, where=where)
+            result = adapter.delete_data(table_name, where=where)
+            rowcount = dataclasses.asdict(result)["affected"]
             return _ok(rowcount=rowcount)
         except Exception as e:
             return _err(str(e))
