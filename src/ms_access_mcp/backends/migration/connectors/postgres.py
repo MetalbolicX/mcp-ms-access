@@ -11,7 +11,7 @@ from typing import Any
 
 from ....models import ColumnSchema, TableSchema
 from .. import CONNECTOR_FACTORIES, INSTALL_MESSAGE
-from . import BaseConnector
+from . import BaseConnector, _dialect
 
 __all__ = ["PostgresConnector", "TYPE_MAP", "quote_identifier", "render_table_ddl"]
 
@@ -30,7 +30,7 @@ TYPE_MAP: dict[str, str] = {
     "Currency": "NUMERIC(19,4)",
     "Decimal": "NUMERIC(28,14)",
     "Date/Time": "TIMESTAMP",
-    "Text": "VARCHAR({max_length})" if False else "TEXT",
+    "Text": "TEXT",
     "Memo": "TEXT",
     "Binary": "BYTEA",
     "GUID": "UUID",
@@ -60,6 +60,15 @@ def quote_identifier(name: str) -> str:
     return f'"{name}"'
 
 
+DIALECT = _dialect.DialectSpec(
+    name="postgres",
+    type_mapper=_access_type_to_postgres,
+    quote=quote_identifier,
+    autoincrement_clause="GENERATED ALWAYS AS IDENTITY",
+    inline_autoincrement_consumes_pk=False,
+)
+
+
 def render_table_ddl(table: TableSchema) -> str:
     """Render a CREATE TABLE DDL statement for PostgreSQL.
 
@@ -69,36 +78,7 @@ def render_table_ddl(table: TableSchema) -> str:
     Returns:
         A CREATE TABLE DDL string.
     """
-    columns_ddl: list[str] = []
-
-    for col in table.columns:
-        col_ddl = f"{quote_identifier(col.name)} {_access_type_to_postgres(col)}"
-
-        # NOT NULL
-        if not col.allow_null:
-            col_ddl += " NOT NULL"
-
-        # DEFAULT value
-        if col.default_value is not None:
-            col_ddl += f" DEFAULT {col.default_value}"
-
-        # IDENTITY for autoincrement (single-column integer PK only)
-        if col.is_autoincrement and col.source_type in ("Long Integer", "Integer", "Big Integer"):
-            if len(table.primary_key) == 1 and table.primary_key[0] == col.name:
-                col_ddl += " GENERATED ALWAYS AS IDENTITY"
-
-        columns_ddl.append(col_ddl)
-
-    # Primary key constraint
-    if table.primary_key:
-        pk_parts = [quote_identifier(pk) for pk in table.primary_key]
-        columns_ddl.append(f"PRIMARY KEY ({', '.join(pk_parts)})")
-
-    # Build the statement
-    col_defs = ",\n    ".join(columns_ddl)
-    ddl = f"CREATE TABLE {quote_identifier(table.name)} (\n    {col_defs}\n)"
-
-    return ddl
+    return _dialect.render_table_ddl(DIALECT, table)
 
 
 class PostgresConnector(BaseConnector):

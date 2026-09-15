@@ -6,7 +6,7 @@ import pyodbc
 
 from ....models import ColumnSchema, TableSchema
 from .. import CONNECTOR_FACTORIES
-from . import BaseConnector
+from . import BaseConnector, _dialect
 
 __all__ = ["SqlServerConnector", "TYPE_MAP", "quote_identifier", "render_table_ddl"]
 
@@ -25,9 +25,9 @@ TYPE_MAP: dict[str, str] = {
     "Currency": "NUMERIC(19,4)",
     "Decimal": "NUMERIC(28,14)",
     "Date/Time": "DATETIME2",
-    "Text": "NVARCHAR({max_length})" if False else "NVARCHAR(255)",  # Default, override per column
+    "Text": "NVARCHAR(255)",  # Default, override per column
     "Memo": "NVARCHAR(MAX)",
-    "Binary": "VARBINARY({max_length})" if False else "VARBINARY(MAX)",
+    "Binary": "VARBINARY(MAX)",
     "GUID": "UNIQUEIDENTIFIER",
     "Unknown": "NVARCHAR(MAX)",
 }
@@ -59,6 +59,15 @@ def quote_identifier(name: str) -> str:
     return f"[{name}]"
 
 
+DIALECT = _dialect.DialectSpec(
+    name="sqlserver",
+    type_mapper=_access_type_to_sqlserver,
+    quote=quote_identifier,
+    autoincrement_clause="IDENTITY(1,1)",
+    inline_autoincrement_consumes_pk=False,
+)
+
+
 def render_table_ddl(table: TableSchema) -> str:
     """Render a CREATE TABLE DDL statement for SQL Server.
 
@@ -68,40 +77,7 @@ def render_table_ddl(table: TableSchema) -> str:
     Returns:
         A CREATE TABLE DDL string.
     """
-    columns_ddl: list[str] = []
-    pk_columns: list[str] = []
-
-    for col in table.columns:
-        col_ddl = f"{quote_identifier(col.name)} {_access_type_to_sqlserver(col)}"
-
-        # NOT NULL
-        if not col.allow_null:
-            col_ddl += " NOT NULL"
-
-        # DEFAULT value
-        if col.default_value is not None:
-            col_ddl += f" DEFAULT {col.default_value}"
-
-        # IDENTITY for autoincrement
-        if col.is_autoincrement and col.source_type in ("Long Integer", "Integer", "Big Integer"):
-            # Check if this column is the sole primary key
-            if len(table.primary_key) == 1 and table.primary_key[0] == col.name:
-                col_ddl += " IDENTITY(1,1)"
-
-        columns_ddl.append(col_ddl)
-        if col.name in table.primary_key:
-            pk_columns.append(quote_identifier(col.name))
-
-    # Primary key constraint
-    if table.primary_key:
-        pk_parts = [quote_identifier(pk) for pk in table.primary_key]
-        columns_ddl.append(f"PRIMARY KEY ({', '.join(pk_parts)})")
-
-    # Build the statement
-    col_defs = ",\n    ".join(columns_ddl)
-    ddl = f"CREATE TABLE {quote_identifier(table.name)} (\n    {col_defs}\n)"
-
-    return ddl
+    return _dialect.render_table_ddl(DIALECT, table)
 
 
 class SqlServerConnector(BaseConnector):

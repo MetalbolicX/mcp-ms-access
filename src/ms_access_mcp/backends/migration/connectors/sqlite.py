@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from ....models import ColumnSchema, TableSchema
 from .. import CONNECTOR_FACTORIES
-from . import BaseConnector
+from . import BaseConnector, _dialect
 
 __all__ = ["SqliteConnector", "TYPE_MAP", "quote_identifier", "render_table_ddl"]
 
@@ -77,6 +77,15 @@ def _access_type_to_sqlite(col: ColumnSchema) -> str:
     return mapped
 
 
+DIALECT = _dialect.DialectSpec(
+    name="sqlite",
+    type_mapper=_access_type_to_sqlite,
+    quote=quote_identifier,
+    autoincrement_clause="PRIMARY KEY AUTOINCREMENT",
+    inline_autoincrement_consumes_pk=True,
+)
+
+
 def render_table_ddl(table: TableSchema) -> str:
     """Render a CREATE TABLE DDL statement for SQLite.
 
@@ -86,43 +95,7 @@ def render_table_ddl(table: TableSchema) -> str:
     Returns:
         A CREATE TABLE DDL string.
     """
-    columns_ddl: list[str] = []
-    autoincrement_col: str | None = None
-
-    for col in table.columns:
-        col_ddl = f"{quote_identifier(col.name)} {_access_type_to_sqlite(col)}"
-
-        # NOT NULL
-        if not col.allow_null:
-            col_ddl += " NOT NULL"
-
-        # DEFAULT value
-        if col.default_value is not None:
-            col_ddl += f" DEFAULT {col.default_value}"
-
-        # AUTOINCREMENT: only for single-column integer PK
-        if col.is_autoincrement and col.source_type in ("Long Integer", "Integer", "Big Integer"):
-            # Check if this column is the sole primary key
-            if len(table.primary_key) == 1 and table.primary_key[0] == col.name:
-                autoincrement_col = col.name
-                col_ddl += " PRIMARY KEY AUTOINCREMENT"
-
-        columns_ddl.append(col_ddl)
-
-    # Primary key constraint
-    if table.primary_key:
-        pk_parts = [quote_identifier(pk) for pk in table.primary_key]
-        if autoincrement_col and len(table.primary_key) == 1:
-            # SQLite AUTOINCREMENT is declared inline
-            pass  # Already handled above
-        else:
-            columns_ddl.append(f"PRIMARY KEY ({', '.join(pk_parts)})")
-
-    # Build the statement
-    col_defs = ",\n    ".join(columns_ddl)
-    ddl = f"CREATE TABLE {quote_identifier(table.name)} (\n    {col_defs}\n)"
-
-    return ddl
+    return _dialect.render_table_ddl(DIALECT, table)
 
 
 class SqliteConnector(BaseConnector):
