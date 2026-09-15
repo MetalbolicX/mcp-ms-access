@@ -977,7 +977,13 @@ def _cmd_configure_opencode(args: argparse.Namespace) -> int:
 # =============================================================================
 
 
-def main() -> int:
+# =============================================================================
+# Pure Parser Constructor
+# =============================================================================
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser (no I/O, no COM/dispatcher)."""
     parser = argparse.ArgumentParser(prog="ms-access-mcp")
     parser.add_argument("--version", action="version", version="ms-access-mcp 0.2.0")
 
@@ -1001,6 +1007,7 @@ def main() -> int:
     exe_path_group = opencode_parser.add_mutually_exclusive_group()
     exe_path_group.add_argument("--exe-path", type=str, default=None, help="Absolute path to ms-access-mcp executable")
     exe_path_group.add_argument("--python-mode", action="store_true", help="Use sys.executable with -m ms_access_mcp (portable distribution)")
+    opencode_parser.set_defaults(func=_cmd_configure_opencode)
 
     # db subcommands
     db_parser = subparsers.add_parser("db", help="Database connection commands")
@@ -1008,53 +1015,57 @@ def main() -> int:
     db_subparsers = db_parser.add_subparsers(dest="db_action")
 
     db_open = db_subparsers.add_parser("open", help="Open a database")
-    db_open.set_defaults(db_action="open")
+    db_open.set_defaults(db_action="open", func=_with_db(_cmd_db_open))
     _add_global_flags(db_open)
 
     db_close = db_subparsers.add_parser("close", help="Close connection")
-    db_close.set_defaults(db_action="close")
+    db_close.set_defaults(db_action="close", func=_with_db(_cmd_db_close))
     _add_global_flags(db_close)
 
     db_list = db_subparsers.add_parser("list", help="List connections")
-    db_list.set_defaults(db_action="list")
+    db_list.set_defaults(db_action="list", func=_with_db(_cmd_db_list))
     _add_global_flags(db_list)
 
     db_active = db_subparsers.add_parser("active", help="Show active connection")
-    db_active.set_defaults(db_action="active")
+    db_active.set_defaults(db_action="active", func=_with_db(_cmd_db_active))
     _add_global_flags(db_active)
 
     # tables
     tables_parser = subparsers.add_parser("tables", help="List tables")
     tables_parser.add_argument("--system", action="store_true", help="List system tables")
     _add_global_flags(tables_parser)
-    tables_parser.set_defaults(func=lambda opts: None)  # placeholder
+    tables_parser.set_defaults(func=_with_db(_cmd_tables))
 
     # schema
     schema_parser = subparsers.add_parser("schema", help="Get table schema")
     schema_parser.add_argument("table", type=str, help="Table name")
     _add_global_flags(schema_parser)
+    schema_parser.set_defaults(func=_with_db(_cmd_schema))
 
     # indexes
     indexes_parser = subparsers.add_parser("indexes", help="Get table indexes")
     indexes_parser.add_argument("table", type=str, help="Table name")
     _add_global_flags(indexes_parser)
+    indexes_parser.set_defaults(func=_with_db(_cmd_indexes))
 
     # relationships
     rels_parser = subparsers.add_parser("relationships", help="List relationships")
     _add_global_flags(rels_parser)
+    rels_parser.set_defaults(func=_with_db(_cmd_relationships))
 
     # stats
     stats_parser = subparsers.add_parser("stats", help="Get database statistics")
     _add_global_flags(stats_parser)
+    stats_parser.set_defaults(func=_with_db(_cmd_stats))
 
     # props
     props_parser = subparsers.add_parser("props", help="Database properties")
     props_subparsers = props_parser.add_subparsers(dest="props_action")
     props_get = props_subparsers.add_parser("get", help="Get properties")
-    props_get.set_defaults(props_action="get")
+    props_get.set_defaults(props_action="get", func=_with_db(_cmd_props))
     _add_global_flags(props_get)
     props_set = props_subparsers.add_parser("set", help="Set a property")
-    props_set.set_defaults(props_action="set")
+    props_set.set_defaults(props_action="set", func=_with_db(_cmd_props))
     props_set.add_argument("--name", type=str, required=True)
     props_set.add_argument("--value", type=str, required=True)
     _add_global_flags(props_set)
@@ -1063,20 +1074,20 @@ def main() -> int:
     queries_parser = subparsers.add_parser("queries", help="Query management")
     queries_subparsers = queries_parser.add_subparsers(dest="queries_action")
     queries_list = queries_subparsers.add_parser("list", help="List queries")
-    queries_list.set_defaults(queries_action="list")
+    queries_list.set_defaults(queries_action="list", func=_with_db(_cmd_queries))
     _add_global_flags(queries_list)
     queries_create = queries_subparsers.add_parser("create", help="Create query")
-    queries_create.set_defaults(queries_action="create")
+    queries_create.set_defaults(queries_action="create", func=_with_db(_cmd_queries))
     queries_create.add_argument("--name", type=str, required=True)
     queries_create.add_argument("--sql", type=str, required=True)
     _add_global_flags(queries_create)
     queries_set = queries_subparsers.add_parser("set", help="Set query SQL")
-    queries_set.set_defaults(queries_action="set")
+    queries_set.set_defaults(queries_action="set", func=_with_db(_cmd_queries))
     queries_set.add_argument("--name", type=str, required=True)
     queries_set.add_argument("--sql", type=str, required=True)
     _add_global_flags(queries_set)
     queries_delete = queries_subparsers.add_parser("delete", help="Delete query")
-    queries_delete.set_defaults(queries_action="delete")
+    queries_delete.set_defaults(queries_action="delete", func=_with_db(_cmd_queries))
     queries_delete.add_argument("--name", type=str, required=True)
     _add_global_flags(queries_delete)
 
@@ -1086,12 +1097,14 @@ def main() -> int:
     query_parser.add_argument("--param", nargs="*", help="Query parameters")
     query_parser.add_argument("--limit", type=int, help="Row limit")
     _add_global_flags(query_parser)
+    query_parser.set_defaults(func=_with_db(_cmd_query))
 
     # insert
     insert_parser = subparsers.add_parser("insert", help="Insert data")
     insert_parser.add_argument("table", type=str, help="Table name")
     insert_parser.add_argument("data", nargs="*", help="column=value pairs")
     _add_global_flags(insert_parser)
+    insert_parser.set_defaults(func=_with_db(_cmd_insert))
 
     # update
     update_parser = subparsers.add_parser("update", help="Update data")
@@ -1099,46 +1112,48 @@ def main() -> int:
     update_parser.add_argument("data", nargs="*", help="column=value pairs")
     update_parser.add_argument("--where", type=str, help="WHERE clause")
     _add_global_flags(update_parser)
+    update_parser.set_defaults(func=_with_db(_cmd_update))
 
     # delete
     delete_parser = subparsers.add_parser("delete", help="Delete data")
     delete_parser.add_argument("table", type=str, help="Table name")
     delete_parser.add_argument("--where", type=str, help="WHERE clause")
     _add_global_flags(delete_parser)
+    delete_parser.set_defaults(func=_with_db(_cmd_delete))
 
     # ddl
     ddl_parser = subparsers.add_parser("ddl", help="DDL operations")
     ddl_subparsers = ddl_parser.add_subparsers(dest="ddl_action")
     ddl_create_table = ddl_subparsers.add_parser("create-table", help="Create table")
-    ddl_create_table.set_defaults(ddl_action="create-table")
+    ddl_create_table.set_defaults(ddl_action="create-table", func=_with_db(_cmd_ddl))
     ddl_create_table.add_argument("--table", type=str, required=True)
     ddl_create_table.add_argument("--columns", nargs="*", help="column=type pairs")
     _add_global_flags(ddl_create_table)
     ddl_alter = ddl_subparsers.add_parser("alter", help="Alter table")
-    ddl_alter.set_defaults(ddl_action="alter")
+    ddl_alter.set_defaults(ddl_action="alter", func=_with_db(_cmd_ddl))
     ddl_alter.add_argument("--table", type=str, required=True)
     ddl_alter.add_argument("--action", choices=["add", "drop"], required=True)
     ddl_alter.add_argument("--column", type=str)
     ddl_alter.add_argument("--type", type=str)
     _add_global_flags(ddl_alter)
     ddl_drop_table = ddl_subparsers.add_parser("drop-table", help="Drop table")
-    ddl_drop_table.set_defaults(ddl_action="drop-table")
+    ddl_drop_table.set_defaults(ddl_action="drop-table", func=_with_db(_cmd_ddl))
     ddl_drop_table.add_argument("--table", type=str, required=True)
     _add_global_flags(ddl_drop_table)
     ddl_create_index = ddl_subparsers.add_parser("create-index", help="Create index")
-    ddl_create_index.set_defaults(ddl_action="create-index")
+    ddl_create_index.set_defaults(ddl_action="create-index", func=_with_db(_cmd_ddl))
     ddl_create_index.add_argument("--table", type=str, required=True)
     ddl_create_index.add_argument("--index", type=str, required=True)
     ddl_create_index.add_argument("--columns", nargs="*", required=True)
     ddl_create_index.add_argument("--unique", action="store_true")
     _add_global_flags(ddl_create_index)
     ddl_drop_index = ddl_subparsers.add_parser("drop-index", help="Drop index")
-    ddl_drop_index.set_defaults(ddl_action="drop-index")
+    ddl_drop_index.set_defaults(ddl_action="drop-index", func=_with_db(_cmd_ddl))
     ddl_drop_index.add_argument("--table", type=str, required=True)
     ddl_drop_index.add_argument("--index", type=str, required=True)
     _add_global_flags(ddl_drop_index)
     ddl_relationship = ddl_subparsers.add_parser("relationship", help="Create relationship")
-    ddl_relationship.set_defaults(ddl_action="relationship")
+    ddl_relationship.set_defaults(ddl_action="relationship", func=_with_db(_cmd_ddl))
     ddl_relationship.add_argument("--name", type=str, required=True)
     ddl_relationship.add_argument("--source-table", type=str, required=True)
     ddl_relationship.add_argument("--source-column", type=str, required=True)
@@ -1155,12 +1170,13 @@ def main() -> int:
     export_parser.add_argument("--sheet-name", type=str, default="Sheet1", help="Sheet name for xlsx export")
     export_parser.add_argument("--out", type=str, required=True, help="Output file path")
     _add_global_flags(export_parser)
+    export_parser.set_defaults(func=_with_db(_cmd_export))
 
     # links
     links_parser = subparsers.add_parser("links", help="Linked table commands")
     links_subparsers = links_parser.add_subparsers(dest="links_action")
     links_list = links_subparsers.add_parser("list", help="List linked tables")
-    links_list.set_defaults(links_action="list")
+    links_list.set_defaults(links_action="list", func=_with_db(_cmd_links))
     _add_global_flags(links_list)
 
     # mcp — stdio MCP server
@@ -1177,7 +1193,7 @@ def main() -> int:
             "Default: core. Can also be set via ACCESS_MCP_PROFILE env var."
         ),
     )
-    mcp_parser.set_defaults(command="mcp")
+    mcp_parser.set_defaults(command="mcp", func=lambda opts: mcp_main(["--profile", opts.profile] if opts.profile else None))
 
     # automation subcommand group
     automation_parser = subparsers.add_parser("automation", help="Automation commands (forms, reports, VBA, macros)")
@@ -1188,42 +1204,42 @@ def main() -> int:
     forms_parser = automation_subparsers.add_parser("forms", help="Form operations")
     forms_subparsers = forms_parser.add_subparsers(dest="forms_action")
     forms_list = forms_subparsers.add_parser("list", help="List forms")
-    forms_list.set_defaults(forms_action="list")
+    forms_list.set_defaults(forms_action="list", func=_with_automation(_cmd_automation_forms_list))
     _add_global_flags(forms_list)
 
     forms_exists = forms_subparsers.add_parser("exists", help="Check form exists")
-    forms_exists.set_defaults(forms_action="exists")
+    forms_exists.set_defaults(forms_action="exists", func=_with_automation(_cmd_automation_forms_exists))
     forms_exists.add_argument("--name", type=str, required=True)
     _add_global_flags(forms_exists)
 
     forms_create = forms_subparsers.add_parser("create", help="Create form")
-    forms_create.set_defaults(forms_action="create")
+    forms_create.set_defaults(forms_action="create", func=_with_automation(_cmd_automation_forms_create))
     forms_create.add_argument("--name", type=str, required=True)
     _add_global_flags(forms_create)
 
     forms_rename = forms_subparsers.add_parser("rename", help="Rename form")
-    forms_rename.set_defaults(forms_action="rename")
+    forms_rename.set_defaults(forms_action="rename", func=_with_automation(_cmd_automation_forms_rename))
     forms_rename.add_argument("--old-name", type=str, required=True)
     forms_rename.add_argument("--new-name", type=str, required=True)
     _add_global_flags(forms_rename)
 
     forms_delete = forms_subparsers.add_parser("delete", help="Delete form")
-    forms_delete.set_defaults(forms_action="delete")
+    forms_delete.set_defaults(forms_action="delete", func=_with_automation(_cmd_automation_forms_delete))
     forms_delete.add_argument("--name", type=str, required=True)
     _add_global_flags(forms_delete)
 
     forms_properties = forms_subparsers.add_parser("properties", help="Get form properties")
-    forms_properties.set_defaults(forms_action="properties")
+    forms_properties.set_defaults(forms_action="properties", func=_with_automation(_cmd_automation_forms_properties))
     forms_properties.add_argument("--name", type=str, required=True)
     _add_global_flags(forms_properties)
 
     forms_controls = forms_subparsers.add_parser("controls", help="Get form controls")
-    forms_controls.set_defaults(forms_action="controls")
+    forms_controls.set_defaults(forms_action="controls", func=_with_automation(_cmd_automation_forms_controls))
     forms_controls.add_argument("--name", type=str, required=True)
     _add_global_flags(forms_controls)
 
     forms_add_control = forms_subparsers.add_parser("add-control", help="Add control to form")
-    forms_add_control.set_defaults(forms_action="add-control")
+    forms_add_control.set_defaults(forms_action="add-control", func=_with_automation(_cmd_automation_forms_add_control))
     forms_add_control.add_argument("--name", type=str, required=True)
     forms_add_control.add_argument("--type", type=str, required=True)
     forms_add_control.add_argument("--control-name", type=str, required=True)
@@ -1231,23 +1247,23 @@ def main() -> int:
     _add_global_flags(forms_add_control)
 
     forms_remove_control = forms_subparsers.add_parser("remove-control", help="Remove control from form")
-    forms_remove_control.set_defaults(forms_action="remove-control")
+    forms_remove_control.set_defaults(forms_action="remove-control", func=_with_automation(_cmd_automation_forms_remove_control))
     forms_remove_control.add_argument("--name", type=str, required=True)
     forms_remove_control.add_argument("--control-name", type=str, required=True)
     _add_global_flags(forms_remove_control)
 
     forms_sections = forms_subparsers.add_parser("sections", help="Get form sections")
-    forms_sections.set_defaults(forms_action="sections")
+    forms_sections.set_defaults(forms_action="sections", func=_with_automation(_cmd_automation_forms_sections))
     forms_sections.add_argument("--name", type=str, required=True)
     _add_global_flags(forms_sections)
 
     forms_export = forms_subparsers.add_parser("export", help="Export form to text")
-    forms_export.set_defaults(forms_action="export")
+    forms_export.set_defaults(forms_action="export", func=_with_automation(_cmd_automation_forms_export))
     forms_export.add_argument("--name", type=str, required=True)
     _add_global_flags(forms_export)
 
     forms_import = forms_subparsers.add_parser("import", help="Import form from text")
-    forms_import.set_defaults(forms_action="import")
+    forms_import.set_defaults(forms_action="import", func=_with_automation(_cmd_automation_forms_import))
     forms_import.add_argument("--name", type=str, required=True)
     forms_import.add_argument("--text", type=str, required=True)
     _add_global_flags(forms_import)
@@ -1256,42 +1272,42 @@ def main() -> int:
     reports_parser = automation_subparsers.add_parser("reports", help="Report operations")
     reports_subparsers = reports_parser.add_subparsers(dest="reports_action")
     reports_list = reports_subparsers.add_parser("list", help="List reports")
-    reports_list.set_defaults(reports_action="list")
+    reports_list.set_defaults(reports_action="list", func=_with_automation(_cmd_automation_reports_list))
     _add_global_flags(reports_list)
 
     reports_exists = reports_subparsers.add_parser("exists", help="Check report exists")
-    reports_exists.set_defaults(reports_action="exists")
+    reports_exists.set_defaults(reports_action="exists", func=_with_automation(_cmd_automation_reports_exists))
     reports_exists.add_argument("--name", type=str, required=True)
     _add_global_flags(reports_exists)
 
     reports_create = reports_subparsers.add_parser("create", help="Create report")
-    reports_create.set_defaults(reports_action="create")
+    reports_create.set_defaults(reports_action="create", func=_with_automation(_cmd_automation_reports_create))
     reports_create.add_argument("--name", type=str, required=True)
     _add_global_flags(reports_create)
 
     reports_rename = reports_subparsers.add_parser("rename", help="Rename report")
-    reports_rename.set_defaults(reports_action="rename")
+    reports_rename.set_defaults(reports_action="rename", func=_with_automation(_cmd_automation_reports_rename))
     reports_rename.add_argument("--old-name", type=str, required=True)
     reports_rename.add_argument("--new-name", type=str, required=True)
     _add_global_flags(reports_rename)
 
     reports_delete = reports_subparsers.add_parser("delete", help="Delete report")
-    reports_delete.set_defaults(reports_action="delete")
+    reports_delete.set_defaults(reports_action="delete", func=_with_automation(_cmd_automation_reports_delete))
     reports_delete.add_argument("--name", type=str, required=True)
     _add_global_flags(reports_delete)
 
     reports_properties = reports_subparsers.add_parser("properties", help="Get report properties")
-    reports_properties.set_defaults(reports_action="properties")
+    reports_properties.set_defaults(reports_action="properties", func=_with_automation(_cmd_automation_reports_properties))
     reports_properties.add_argument("--name", type=str, required=True)
     _add_global_flags(reports_properties)
 
     reports_controls = reports_subparsers.add_parser("controls", help="Get report controls")
-    reports_controls.set_defaults(reports_action="controls")
+    reports_controls.set_defaults(reports_action="controls", func=_with_automation(_cmd_automation_reports_controls))
     reports_controls.add_argument("--name", type=str, required=True)
     _add_global_flags(reports_controls)
 
     reports_add_control = reports_subparsers.add_parser("add-control", help="Add control to report")
-    reports_add_control.set_defaults(reports_action="add-control")
+    reports_add_control.set_defaults(reports_action="add-control", func=_with_automation(_cmd_automation_reports_add_control))
     reports_add_control.add_argument("--name", type=str, required=True)
     reports_add_control.add_argument("--type", type=str, required=True)
     reports_add_control.add_argument("--control-name", type=str, required=True)
@@ -1299,23 +1315,23 @@ def main() -> int:
     _add_global_flags(reports_add_control)
 
     reports_remove_control = reports_subparsers.add_parser("remove-control", help="Remove control from report")
-    reports_remove_control.set_defaults(reports_action="remove-control")
+    reports_remove_control.set_defaults(reports_action="remove-control", func=_with_automation(_cmd_automation_reports_remove_control))
     reports_remove_control.add_argument("--name", type=str, required=True)
     reports_remove_control.add_argument("--control-name", type=str, required=True)
     _add_global_flags(reports_remove_control)
 
     reports_sections = reports_subparsers.add_parser("sections", help="Get report sections")
-    reports_sections.set_defaults(reports_action="sections")
+    reports_sections.set_defaults(reports_action="sections", func=_with_automation(_cmd_automation_reports_sections))
     reports_sections.add_argument("--name", type=str, required=True)
     _add_global_flags(reports_sections)
 
     reports_export = reports_subparsers.add_parser("export", help="Export report to text")
-    reports_export.set_defaults(reports_action="export")
+    reports_export.set_defaults(reports_action="export", func=_with_automation(_cmd_automation_reports_export))
     reports_export.add_argument("--name", type=str, required=True)
     _add_global_flags(reports_export)
 
     reports_import = reports_subparsers.add_parser("import", help="Import report from text")
-    reports_import.set_defaults(reports_action="import")
+    reports_import.set_defaults(reports_action="import", func=_with_automation(_cmd_automation_reports_import))
     reports_import.add_argument("--name", type=str, required=True)
     reports_import.add_argument("--text", type=str, required=True)
     _add_global_flags(reports_import)
@@ -1324,37 +1340,37 @@ def main() -> int:
     macros_parser = automation_subparsers.add_parser("macros", help="Macro operations")
     macros_subparsers = macros_parser.add_subparsers(dest="macros_action")
     macros_list = macros_subparsers.add_parser("list", help="List macros")
-    macros_list.set_defaults(macros_action="list")
+    macros_list.set_defaults(macros_action="list", func=_with_automation(_cmd_automation_macros_list))
     _add_global_flags(macros_list)
 
     macros_exists = macros_subparsers.add_parser("exists", help="Check macro exists")
-    macros_exists.set_defaults(macros_action="exists")
+    macros_exists.set_defaults(macros_action="exists", func=_with_automation(_cmd_automation_macros_exists))
     macros_exists.add_argument("--name", type=str, required=True)
     _add_global_flags(macros_exists)
 
     macros_create = macros_subparsers.add_parser("create", help="Create macro")
-    macros_create.set_defaults(macros_action="create")
+    macros_create.set_defaults(macros_action="create", func=_with_automation(_cmd_automation_macros_create))
     macros_create.add_argument("--name", type=str, required=True)
     _add_global_flags(macros_create)
 
     macros_rename = macros_subparsers.add_parser("rename", help="Rename macro")
-    macros_rename.set_defaults(macros_action="rename")
+    macros_rename.set_defaults(macros_action="rename", func=_with_automation(_cmd_automation_macros_rename))
     macros_rename.add_argument("--old-name", type=str, required=True)
     macros_rename.add_argument("--new-name", type=str, required=True)
     _add_global_flags(macros_rename)
 
     macros_delete = macros_subparsers.add_parser("delete", help="Delete macro")
-    macros_delete.set_defaults(macros_action="delete")
+    macros_delete.set_defaults(macros_action="delete", func=_with_automation(_cmd_automation_macros_delete))
     macros_delete.add_argument("--name", type=str, required=True)
     _add_global_flags(macros_delete)
 
     macros_run = macros_subparsers.add_parser("run", help="Run macro")
-    macros_run.set_defaults(macros_action="run")
+    macros_run.set_defaults(macros_action="run", func=_with_automation(_cmd_automation_macros_run))
     macros_run.add_argument("--name", type=str, required=True)
     _add_global_flags(macros_run)
 
     macros_properties = macros_subparsers.add_parser("properties", help="Get macro properties")
-    macros_properties.set_defaults(macros_action="properties")
+    macros_properties.set_defaults(macros_action="properties", func=_with_automation(_cmd_automation_macros_properties))
     macros_properties.add_argument("--name", type=str, required=True)
     _add_global_flags(macros_properties)
 
@@ -1362,70 +1378,70 @@ def main() -> int:
     vba_parser = automation_subparsers.add_parser("vba", help="VBA module operations")
     vba_subparsers = vba_parser.add_subparsers(dest="vba_action")
     vba_modules = vba_subparsers.add_parser("modules", help="List VBA modules")
-    vba_modules.set_defaults(vba_action="modules")
+    vba_modules.set_defaults(vba_action="modules", func=_with_automation(_cmd_automation_vba_modules))
     _add_global_flags(vba_modules)
 
     vba_get_code = vba_subparsers.add_parser("get-code", help="Get VBA module code")
-    vba_get_code.set_defaults(vba_action="get-code")
+    vba_get_code.set_defaults(vba_action="get-code", func=_with_automation(_cmd_automation_vba_get_code))
     vba_get_code.add_argument("--module", type=str, required=True)
     _add_global_flags(vba_get_code)
 
     vba_set_code = vba_subparsers.add_parser("set-code", help="Set VBA module code")
-    vba_set_code.set_defaults(vba_action="set-code")
+    vba_set_code.set_defaults(vba_action="set-code", func=_with_automation(_cmd_automation_vba_set_code))
     vba_set_code.add_argument("--module", type=str, required=True)
     vba_set_code.add_argument("--code", type=str, required=True)
     _add_global_flags(vba_set_code)
 
     vba_add_procedure = vba_subparsers.add_parser("add-procedure", help="Add VBA procedure")
-    vba_add_procedure.set_defaults(vba_action="add-procedure")
+    vba_add_procedure.set_defaults(vba_action="add-procedure", func=_with_automation(_cmd_automation_vba_add_procedure))
     vba_add_procedure.add_argument("--module", type=str, required=True)
     vba_add_procedure.add_argument("--procedure", type=str, required=True)
     vba_add_procedure.add_argument("--code", type=str, required=True)
     _add_global_flags(vba_add_procedure)
 
     vba_compile = vba_subparsers.add_parser("compile", help="Compile VBA project")
-    vba_compile.set_defaults(vba_action="compile")
+    vba_compile.set_defaults(vba_action="compile", func=_with_automation(_cmd_automation_vba_compile))
     _add_global_flags(vba_compile)
 
     vba_save = vba_subparsers.add_parser("save", help="Save database")
-    vba_save.set_defaults(vba_action="save")
+    vba_save.set_defaults(vba_action="save", func=_with_automation(_cmd_automation_vba_save))
     _add_global_flags(vba_save)
 
     vba_module_exists = vba_subparsers.add_parser("module-exists", help="Check module exists")
-    vba_module_exists.set_defaults(vba_action="module-exists")
+    vba_module_exists.set_defaults(vba_action="module-exists", func=_with_automation(_cmd_automation_vba_module_exists))
     vba_module_exists.add_argument("--module", type=str, required=True)
     _add_global_flags(vba_module_exists)
 
     vba_create_module = vba_subparsers.add_parser("create-module", help="Create VBA module")
-    vba_create_module.set_defaults(vba_action="create-module")
+    vba_create_module.set_defaults(vba_action="create-module", func=_with_automation(_cmd_automation_vba_create_module))
     vba_create_module.add_argument("--module", type=str, required=True)
     vba_create_module.add_argument("--module-type", type=int, default=1)
     _add_global_flags(vba_create_module)
 
     vba_delete_module = vba_subparsers.add_parser("delete-module", help="Delete VBA module")
-    vba_delete_module.set_defaults(vba_action="delete-module")
+    vba_delete_module.set_defaults(vba_action="delete-module", func=_with_automation(_cmd_automation_vba_delete_module))
     vba_delete_module.add_argument("--module", type=str, required=True)
     _add_global_flags(vba_delete_module)
 
     vba_rename_module = vba_subparsers.add_parser("rename-module", help="Rename VBA module")
-    vba_rename_module.set_defaults(vba_action="rename-module")
+    vba_rename_module.set_defaults(vba_action="rename-module", func=_with_automation(_cmd_automation_vba_rename_module))
     vba_rename_module.add_argument("--old-name", type=str, required=True)
     vba_rename_module.add_argument("--new-name", type=str, required=True)
     _add_global_flags(vba_rename_module)
 
     vba_list_procedures = vba_subparsers.add_parser("list-procedures", help="List procedures in module")
-    vba_list_procedures.set_defaults(vba_action="list-procedures")
+    vba_list_procedures.set_defaults(vba_action="list-procedures", func=_with_automation(_cmd_automation_vba_list_procedures))
     vba_list_procedures.add_argument("--module", type=str, required=True)
     _add_global_flags(vba_list_procedures)
 
     vba_get_procedure = vba_subparsers.add_parser("get-procedure", help="Get VBA procedure")
-    vba_get_procedure.set_defaults(vba_action="get-procedure")
+    vba_get_procedure.set_defaults(vba_action="get-procedure", func=_with_automation(_cmd_automation_vba_get_procedure))
     vba_get_procedure.add_argument("--module", type=str, required=True)
     vba_get_procedure.add_argument("--procedure", type=str, required=True)
     _add_global_flags(vba_get_procedure)
 
     vba_replace_procedure = vba_subparsers.add_parser("replace-procedure", help="Replace VBA procedure")
-    vba_replace_procedure.set_defaults(vba_action="replace-procedure")
+    vba_replace_procedure.set_defaults(vba_action="replace-procedure", func=_with_automation(_cmd_automation_vba_replace_procedure))
     vba_replace_procedure.add_argument("--module", type=str, required=True)
     vba_replace_procedure.add_argument("--procedure", type=str, required=True)
     vba_replace_procedure.add_argument("--code", type=str, required=True)
@@ -1437,36 +1453,36 @@ def main() -> int:
     _add_global_flags(versioning_parser)
 
     export_object = versioning_subparsers.add_parser("export-object", help="Export a single object to text")
-    export_object.set_defaults(versioning_action="export-object")
+    export_object.set_defaults(versioning_action="export-object", func=_with_versioning(_cmd_versioning_export_object))
     export_object.add_argument("--kind", type=str, required=True)
     export_object.add_argument("--name", type=str, required=True)
     export_object.add_argument("--out-dir", type=str, required=True)
     _add_global_flags(export_object)
 
     export_all = versioning_subparsers.add_parser("export-all", help="Export all objects to directory tree")
-    export_all.set_defaults(versioning_action="export-all")
+    export_all.set_defaults(versioning_action="export-all", func=_with_versioning(_cmd_versioning_export_all))
     export_all.add_argument("--out-dir", type=str, required=True)
     _add_global_flags(export_all)
 
     import_object = versioning_subparsers.add_parser("import-object", help="Import object from text (destructive)")
-    import_object.set_defaults(versioning_action="import-object")
+    import_object.set_defaults(versioning_action="import-object", func=_with_versioning(_cmd_versioning_import_object))
     import_object.add_argument("--kind", type=str, required=True)
     import_object.add_argument("--name", type=str, required=True)
     import_object.add_argument("--file-path", type=str, required=True)
     _add_global_flags(import_object)
 
     import_all = versioning_subparsers.add_parser("import-all", help="Import all objects from directory (destructive)")
-    import_all.set_defaults(versioning_action="import-all")
+    import_all.set_defaults(versioning_action="import-all", func=_with_versioning(_cmd_versioning_import_all))
     import_all.add_argument("--input-dir", type=str, required=True)
     _add_global_flags(import_all)
 
     compare = versioning_subparsers.add_parser("compare", help="Compare exported objects against database")
-    compare.set_defaults(versioning_action="compare")
+    compare.set_defaults(versioning_action="compare", func=_with_versioning(_cmd_versioning_compare))
     compare.add_argument("--export-dir", type=str, required=True)
     _add_global_flags(compare)
 
     export_schema_ddl = versioning_subparsers.add_parser("export-schema-ddl", help="Export schema DDL")
-    export_schema_ddl.set_defaults(versioning_action="export-schema-ddl")
+    export_schema_ddl.set_defaults(versioning_action="export-schema-ddl", func=_with_versioning(_cmd_versioning_export_schema_ddl))
     export_schema_ddl.add_argument("--out-dir", type=str, required=True)
     _add_global_flags(export_schema_ddl)
 
@@ -1476,277 +1492,113 @@ def main() -> int:
     _add_global_flags(maintenance_parser)
 
     m_backup = maintenance_subparsers.add_parser("backup", help="Create a timestamped backup")
-    m_backup.set_defaults(maintenance_action="backup")
+    m_backup.set_defaults(maintenance_action="backup", func=_with_maintenance(_cmd_maintenance_backup))
     m_backup.add_argument("path", type=str, help="Path to .accdb file")
     m_backup.add_argument("--retention", type=int, help="Number of backups to retain")
     _add_global_flags(m_backup)
 
     m_dev_copy_status = maintenance_subparsers.add_parser("dev-copy-status", help="Check dev copy status")
-    m_dev_copy_status.set_defaults(maintenance_action="dev-copy-status")
+    m_dev_copy_status.set_defaults(maintenance_action="dev-copy-status", func=_with_maintenance(_cmd_maintenance_dev_copy_status))
     _add_global_flags(m_dev_copy_status)
 
     m_dev_copy_create = maintenance_subparsers.add_parser("dev-copy-create", help="Create a dev copy")
-    m_dev_copy_create.set_defaults(maintenance_action="dev-copy-create")
+    m_dev_copy_create.set_defaults(maintenance_action="dev-copy-create", func=_with_maintenance(_cmd_maintenance_dev_copy_create))
     m_dev_copy_create.add_argument("--source", type=str, help="Source .accdb path")
     _add_global_flags(m_dev_copy_create)
 
     m_dev_copy_deploy = maintenance_subparsers.add_parser("dev-copy-deploy", help="Deploy dev copy over production (destructive)")
-    m_dev_copy_deploy.set_defaults(maintenance_action="dev-copy-deploy")
+    m_dev_copy_deploy.set_defaults(maintenance_action="dev-copy-deploy", func=_with_maintenance(_cmd_maintenance_dev_copy_deploy))
     m_dev_copy_deploy.add_argument("--dev-path", type=str, required=True)
     m_dev_copy_deploy.add_argument("--target", type=str, required=True)
     _add_global_flags(m_dev_copy_deploy)
 
     m_compact_repair = maintenance_subparsers.add_parser("compact-repair", help="Compact and/or repair database (destructive)")
-    m_compact_repair.set_defaults(maintenance_action="compact-repair")
+    m_compact_repair.set_defaults(maintenance_action="compact-repair", func=_with_maintenance(_cmd_maintenance_compact_repair))
     m_compact_repair.add_argument("path", type=str, help="Path to .accdb file")
     m_compact_repair.add_argument("--mode", choices=["compact", "repair", "compact_and_repair"], default="compact", help="Operation mode")
     _add_global_flags(m_compact_repair)
 
     m_diagnose = maintenance_subparsers.add_parser("diagnose", help="Run environment diagnostics")
-    m_diagnose.set_defaults(maintenance_action="diagnose")
+    m_diagnose.set_defaults(maintenance_action="diagnose", func=_with_maintenance(_cmd_maintenance_diagnose))
     _add_global_flags(m_diagnose)
 
     m_recover = maintenance_subparsers.add_parser("recover", help="Kill Access processes and attempt recovery (destructive)")
-    m_recover.set_defaults(maintenance_action="recover")
+    m_recover.set_defaults(maintenance_action="recover", func=_with_maintenance(_cmd_maintenance_recover))
     _add_global_flags(m_recover)
 
-    # Parse and execute
-    opts = parser.parse_args()
+    return parser
 
-    # Handle doctor separately (doesn't need db)
-    if hasattr(opts, "func") and opts.command == "doctor":
-        return opts.func(opts)
 
-    # Build database use cases
-    readonly = not getattr(opts, "allow_write", False)
-    db = DatabaseUseCases(
-        backend=getattr(opts, "backend", "auto"),
-        readonly=readonly,
-        allowed_dirs=cli_allowed_dirs(),
-    )
+# =============================================================================
+# Dispatch Wrapper Factories
+# =============================================================================
 
-    # Auto-open database if --db provided
-    if getattr(opts, "db", None):
-        result = db.open_database(opts.db)
-        if isinstance(result, Err):
-            return format_result(result, getattr(opts, "json", False))
 
-    # Dispatch commands
-    cmd = getattr(opts, "command", None)
+def _with_db(handler):
+    """Build DatabaseUseCases + auto-open --db, then run handler(opts, db).
 
-    if cmd == "db":
-        action = getattr(opts, "db_action", None)
-        if action == "open":
-            return _cmd_db_open(opts, db)
-        elif action == "close":
-            return _cmd_db_close(opts, db)
-        elif action == "list":
-            return _cmd_db_list(opts, db)
-        elif action == "active":
-            return _cmd_db_active(opts, db)
-        return 0
+    Preserves the exact pre-refactor ordering: construct use cases from global
+    flags, auto-open when --db is present, short-circuit on open failure.
+    """
+    def _run(opts: argparse.Namespace) -> int:
+        readonly = not getattr(opts, "allow_write", False)
+        db = DatabaseUseCases(
+            backend=getattr(opts, "backend", "auto"),
+            readonly=readonly,
+            allowed_dirs=cli_allowed_dirs(),
+        )
+        if getattr(opts, "db", None):
+            result = db.open_database(opts.db)
+            if isinstance(result, Err):
+                return format_result(result, getattr(opts, "json", False))
+        return handler(opts, db)
+    return _run
 
-    elif cmd == "tables":
-        return _cmd_tables(opts, db)
 
-    elif cmd == "schema":
-        return _cmd_schema(opts, db)
-
-    elif cmd == "indexes":
-        return _cmd_indexes(opts, db)
-
-    elif cmd == "relationships":
-        return _cmd_relationships(opts, db)
-
-    elif cmd == "stats":
-        return _cmd_stats(opts, db)
-
-    elif cmd == "props":
-        return _cmd_props(opts, db)
-
-    elif cmd == "queries":
-        return _cmd_queries(opts, db)
-
-    elif cmd == "query":
-        return _cmd_query(opts, db)
-
-    elif cmd == "insert":
-        return _cmd_insert(opts, db)
-
-    elif cmd == "update":
-        return _cmd_update(opts, db)
-
-    elif cmd == "delete":
-        return _cmd_delete(opts, db)
-
-    elif cmd == "ddl":
-        return _cmd_ddl(opts, db)
-
-    elif cmd == "export":
-        return _cmd_export(opts, db)
-
-    elif cmd == "links":
-        return _cmd_links(opts, db)
-
-    elif cmd == "mcp":
-        # mcp server has its own entry point
-        return mcp_main(["--profile", opts.profile] if opts.profile else None)
-
-    elif cmd == "configure":
-        action = getattr(opts, "configure_action", None)
-        if action == "opencode":
-            return _cmd_configure_opencode(opts)
-        return 0
-
-    elif cmd == "automation":
+def _with_automation(handler):
+    """Build AutomationUseCases and run handler(opts, uc)."""
+    def _run(opts: argparse.Namespace) -> int:
         uc = _automation_use_cases(opts)
-        action = getattr(opts, "automation_action", None)
+        return handler(opts, uc)
+    return _run
 
-        if action == "forms":
-            fa = getattr(opts, "forms_action", None)
-            if fa == "list":
-                return _cmd_automation_forms_list(opts, uc)
-            elif fa == "exists":
-                return _cmd_automation_forms_exists(opts, uc)
-            elif fa == "create":
-                return _cmd_automation_forms_create(opts, uc)
-            elif fa == "rename":
-                return _cmd_automation_forms_rename(opts, uc)
-            elif fa == "delete":
-                return _cmd_automation_forms_delete(opts, uc)
-            elif fa == "properties":
-                return _cmd_automation_forms_properties(opts, uc)
-            elif fa == "controls":
-                return _cmd_automation_forms_controls(opts, uc)
-            elif fa == "add-control":
-                return _cmd_automation_forms_add_control(opts, uc)
-            elif fa == "remove-control":
-                return _cmd_automation_forms_remove_control(opts, uc)
-            elif fa == "sections":
-                return _cmd_automation_forms_sections(opts, uc)
-            elif fa == "export":
-                return _cmd_automation_forms_export(opts, uc)
-            elif fa == "import":
-                return _cmd_automation_forms_import(opts, uc)
-            return 0
 
-        elif action == "reports":
-            ra = getattr(opts, "reports_action", None)
-            if ra == "list":
-                return _cmd_automation_reports_list(opts, uc)
-            elif ra == "exists":
-                return _cmd_automation_reports_exists(opts, uc)
-            elif ra == "create":
-                return _cmd_automation_reports_create(opts, uc)
-            elif ra == "rename":
-                return _cmd_automation_reports_rename(opts, uc)
-            elif ra == "delete":
-                return _cmd_automation_reports_delete(opts, uc)
-            elif ra == "properties":
-                return _cmd_automation_reports_properties(opts, uc)
-            elif ra == "controls":
-                return _cmd_automation_reports_controls(opts, uc)
-            elif ra == "add-control":
-                return _cmd_automation_reports_add_control(opts, uc)
-            elif ra == "remove-control":
-                return _cmd_automation_reports_remove_control(opts, uc)
-            elif ra == "sections":
-                return _cmd_automation_reports_sections(opts, uc)
-            elif ra == "export":
-                return _cmd_automation_reports_export(opts, uc)
-            elif ra == "import":
-                return _cmd_automation_reports_import(opts, uc)
-            return 0
-
-        elif action == "macros":
-            ma = getattr(opts, "macros_action", None)
-            if ma == "list":
-                return _cmd_automation_macros_list(opts, uc)
-            elif ma == "exists":
-                return _cmd_automation_macros_exists(opts, uc)
-            elif ma == "create":
-                return _cmd_automation_macros_create(opts, uc)
-            elif ma == "rename":
-                return _cmd_automation_macros_rename(opts, uc)
-            elif ma == "delete":
-                return _cmd_automation_macros_delete(opts, uc)
-            elif ma == "run":
-                return _cmd_automation_macros_run(opts, uc)
-            elif ma == "properties":
-                return _cmd_automation_macros_properties(opts, uc)
-            return 0
-
-        elif action == "vba":
-            va = getattr(opts, "vba_action", None)
-            if va == "modules":
-                return _cmd_automation_vba_modules(opts, uc)
-            elif va == "get-code":
-                return _cmd_automation_vba_get_code(opts, uc)
-            elif va == "set-code":
-                return _cmd_automation_vba_set_code(opts, uc)
-            elif va == "add-procedure":
-                return _cmd_automation_vba_add_procedure(opts, uc)
-            elif va == "compile":
-                return _cmd_automation_vba_compile(opts, uc)
-            elif va == "save":
-                return _cmd_automation_vba_save(opts, uc)
-            elif va == "module-exists":
-                return _cmd_automation_vba_module_exists(opts, uc)
-            elif va == "create-module":
-                return _cmd_automation_vba_create_module(opts, uc)
-            elif va == "delete-module":
-                return _cmd_automation_vba_delete_module(opts, uc)
-            elif va == "rename-module":
-                return _cmd_automation_vba_rename_module(opts, uc)
-            elif va == "list-procedures":
-                return _cmd_automation_vba_list_procedures(opts, uc)
-            elif va == "get-procedure":
-                return _cmd_automation_vba_get_procedure(opts, uc)
-            elif va == "replace-procedure":
-                return _cmd_automation_vba_replace_procedure(opts, uc)
-            return 0
-
-        return 0
-
-    elif cmd == "versioning":
+def _with_versioning(handler):
+    """Build VersioningUseCases and run handler(opts, uc)."""
+    def _run(opts: argparse.Namespace) -> int:
         uc = _versioning_use_cases(opts)
-        action = getattr(opts, "versioning_action", None)
+        return handler(opts, uc)
+    return _run
 
-        if action == "export-object":
-            return _cmd_versioning_export_object(opts, uc)
-        elif action == "export-all":
-            return _cmd_versioning_export_all(opts, uc)
-        elif action == "import-object":
-            return _cmd_versioning_import_object(opts, uc)
-        elif action == "import-all":
-            return _cmd_versioning_import_all(opts, uc)
-        elif action == "compare":
-            return _cmd_versioning_compare(opts, uc)
-        elif action == "export-schema-ddl":
-            return _cmd_versioning_export_schema_ddl(opts, uc)
-        return 0
 
-    elif cmd == "maintenance":
+def _with_maintenance(handler):
+    """Build MaintenanceUseCases and run handler(opts, uc)."""
+    def _run(opts: argparse.Namespace) -> int:
         uc = _maintenance_use_cases(opts)
-        action = getattr(opts, "maintenance_action", None)
+        return handler(opts, uc)
+    return _run
 
-        if action == "backup":
-            return _cmd_maintenance_backup(opts, uc)
-        elif action == "dev-copy-status":
-            return _cmd_maintenance_dev_copy_status(opts, uc)
-        elif action == "dev-copy-create":
-            return _cmd_maintenance_dev_copy_create(opts, uc)
-        elif action == "dev-copy-deploy":
-            return _cmd_maintenance_dev_copy_deploy(opts, uc)
-        elif action == "compact-repair":
-            return _cmd_maintenance_compact_repair(opts, uc)
-        elif action == "diagnose":
-            return _cmd_maintenance_diagnose(opts, uc)
-        elif action == "recover":
-            return _cmd_maintenance_recover(opts, uc)
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point.
+
+    Args:
+        argv: Optional argument list (defaults to sys.argv when None).
+    """
+    parser = build_parser()
+    opts = parser.parse_args(argv)
+
+    # Dispatch via set_defaults(func=...) registered on each subparser
+    func = getattr(opts, "func", None)
+    if func is None:
+        parser.print_help()
         return 0
-
-    return 0
+    return func(opts)
 
 
 if __name__ == "__main__":
