@@ -53,7 +53,12 @@ honor its STOP conditions, and update your row when done.
 | 030  | Quit Access on the STA thread — fix cross-apartment teardown corrupting client RPC state | 6 | P1 | M | MED | @medium + strict TDD | `plan/029-release-v020` @ `3152467` (stacked) | DONE (branch plan/030-com-quit-sta-teardown; 20 unit pins (test_dispatcher.py) green; 1085 passed/8 skipped full suite; ruff clean; pyright 0/0/0; step5_qualify G6 green: 10/10 orphan-free rounds; test_automation_com.py 3/3 consecutive passes; ThreadPoolExecutor eliminated from _release_com_safe; gc.collect added; _access_pid capture at connect; post-shutdown PID-scoped liveness kill; /IM never emitted; fixture hash 8e1cdd683fb9cc5003dbce77e436f4537ed428defaf9755642504430de4b14e9 unchanged) |
 | 031  | PID-scoped Access kills — replace `/IM MSACCESS.EXE` in maintenance + doctor | 4 | P2 | S | LOW | @light + strict TDD | `plan/029-release-v020` @ `7f5896f` (stacked) | DONE (branch plan/031-pid-scoped-access-kill; tests: 02fab27 → fix: 55961a7; `rg -n 'taskkill.*IM' src/` 0 matches; helper `kill_access_processes` in maintenance.py reuses already-enumerated `killed_pids` + single taskkill with repeated `/PID` filters; `recover_access` envelope preserved (killed_pids now equals actually-killed); `_check_deep_access` uses helper lazily; `test_recover_access_windows_with_confirm` rewritten to assert `/PID` per PID + `/IM`-never + `killed_pids == ["111","222"]`; new `test_recover_access_skips_kill_when_no_access_running`; new `test_deep_access_never_kills_by_image_name` in test_doctor.py; unit 1050 passed/5 skipped; full 1087 passed/8 skipped in 205s; ruff clean; pyright 0/0/0; pre-existing `no_confirm`/`non_windows` doctor tests + dispatcher /IM-never pins untouched) |
 | 032  | Portable win64 zip distribution (embeddable Python runtime, `-IncludeMigrate` build switch) | 16 | P2 | M | MED | @medium + strict TDD (src); gate-verified PS1 build | 005, 024 | DONE (branch plan/032-portable-zip, commits b68cad4→944aaf3; `__main__.py` + `--python-mode` (mutually exclusive with `--exe-path`), g12 parameterized smoke, `build_portable.ps1` with SHA256-pinned 3.11.9 embeddable (terminal 3.11 binary per PEP 664 — 3.11.10+ source-only), BOM-free `._pth` patch, 5 runtime gates, MpCmdRun AV gate; 1057 unit passed/5 skipped, ruff clean, pyright 0 on diff; orchestrator rebuilt both zips: base 28.21 MB + migrate 48.05 MB, Defender clean; fresh-unzip e2e registers `[python.exe, -m, ms_access_mcp, mcp, --profile, core]`; 1 revision round: `-Global` forwarding in generated register script + `build/` gitignored) |
-
+| 033  | Deduplicate MCP tool registration into a shared typed registry helper | 17 | P2 | S | LOW | Direct edit + strict-TDD helper test (registry pinned by tool_budget + suite) | — | DONE (branch plan/033-mcp-registration-dedup; commit `703769a`; `mcp_tools/_registry.py` shared helper `(name, description, input_schema, handler) -> None`; 7 module tails migrated to one-line `register(...)`; new `tests/unit/test_mcp_registry.py` (2 cases); orchestrator gates: `ruff` clean, `pyright src/ms_access_mcp/mcp_tools/` 0/0/0, `pytest tests/unit/` 1059 passed/5 skipped, `scripts/tool_budget.py` PASS — counts identical to pre-change) |
+| 034  | Collapse 4× connector DDL duplication into a data-driven DialectSpec | 17 | P1 | M | MED | Characterization goldens → strict TDD (byte-parity pinned before refactor) | — | DONE (branch plan/034-connector-dialect-spec; commits `932f901` (goldens) → `f52d955` (DialectSpec + pure renderer) → `2a856e4` (rename `_dialect.py`→`dialect.py` because leading underscore tripped the architecture guard's private-import off-by-one); `connectors/dialect.py` exposes `DialectSpec` + pure `render_table_ddl`; 4 connectors import as `from . import dialect as _dialect` (alias keeps body unchanged); dead code dropped (postgres/mysql/sqlserver TYPE_MAP dead `"X" if False else "Y"`, mysql/sqlserver `pk_columns` accumulation, sqlite `autoincrement_col`); 24 goldens byte-exact; orchestrator gates: `ruff` clean, `pyright src/ms_access_mcp/backends/migration/` 0/0/0, `pytest tests/unit/` 1083 passed/5 skipped) |
+| 035  | Extract design-view COM lifecycle into `_with_design_view` (access.py, 14 methods, 3 double-close anomalies) | 17 | P1 | L | MED | @medium + strict TDD | 016 (landed: `_OBJECT_KINDS` + error policy) | DONE (branch plan/035-access-design-view-lifecycle; commits `39e2a9e` (RED pins) → `82c086e` (helper + migration, 794-line access.py diff: net -186 lines) → `1d719af` (orchestrator refresh of 6 mirror-test pins + ruff F841 + local-import sort); helper signature `(kind, object_name, *, save_flag, work, on_error, default) -> _T`; one Close in finally, swallowed on error; 3 double-close anomalies eliminated (`rg 'opened = False'` = 0; `rg '"OpenForm" if kind'` = 0); orchestrator gates: `ruff` clean, `pyright src/ms_access_mcp/backends/` 0/0/0, `pytest tests/unit/` 1087 passed/5 skipped, `pytest tests/unit/test_architecture_boundaries.py/` 5 passed; orchestrator overrode plan's "tests without modification" rule because the 6 mirror tests had pinned the bug as the contract; see plan-level decision record for rationale) |
+| 036  | Replace cli.py dispatch chain with `set_defaults` command registry | 17 | P2 | M | LOW | Characterization (plan-016 precondition) → direct edit | — | DONE (branch plan/036-cli-command-registry; commit `2fc462f`; `build_parser() → ArgumentParser` extracted as pure function (mirrors doctor exemplar); each of 84 subparsers uses `set_defaults(func=...)`; `main()` collapsed to `build_parser() + opts = parser.parse_args(argv) + return opts.func(opts)`; 4 wrapper factories `_with_db`/`_with_automation`/`_with_versioning`/`_with_maintenance` carry the use-case context; lazy-import semantics preserved; 28 new characterization tests in `tests/unit/test_cli_dispatch.py`; orchestrator gates: `ruff` clean, `pyright src/ms_access_mcp/cli.py` 0/0/0, `pytest tests/unit/` 1143 passed/5 skipped, `pytest tests/unit/test_architecture_boundaries.py/` 5 passed; spot-checked `python -m ms_access_mcp.cli --help` (21 commands listed) and `mcp --help`; rebase to main required because executor branched from `703769a` (stale main) — clean rebase, no conflicts) |
+| 037  | Return typed models from dao.py + schema_inspector.py backend boundaries | 17 | P2 | M | MED | Characterization → strict TDD (serialization parity pinned) | — (sequence before 038) | TODO |
+| 038  | DatabaseUseCases cohesion: public write policy, warn-once without global, export/analysis/admin cohort extraction | 17 | P2 | L | MED | Strict TDD per step | 033, 037 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
@@ -219,6 +224,92 @@ credential vault, active-connection state, `launch/close_access`, and
   extra, NO credential vault, synchronous in-process jobs) are pre-decided in
   the plan so the SDD phases don't re-litigate them.
 
+## Plans 033–038: mode rationale (code-health refactor batch, 2026-09-14)
+
+These plans come from a code-health audit of `main @ cdeab7c` (52 src files /
+14,466 LOC; score 7/10 — clean hexagonal skeleton, rot localized in the
+access.py COM lifecycle and the 4× connector DDL copies). All six are
+behavior-preserving refactors; none introduce user-facing surface, so **no SDD
+cycles** — same reasoning as the 009–015 batch.
+
+- **Characterization-first** (034, 036, 037): golden/behavior pins written
+  against the CURRENT code, then the refactor must keep them green unmodified.
+  This is the only honest way to prove byte-parity for DDL strings (034), CLI
+  routing/exit codes (036 — the explicit precondition from the 2026-09-09
+  deferral), and serialized MCP payloads (037).
+- **Strict TDD** (035, 038): new contracts (`_with_design_view`,
+  `_props_to_dict`, `readonly` property, warn-once) get RED→GREEN per step;
+  call-site migrations after the helper is pinned.
+- **Direct edit** (033): mechanical dedup; the gates (suite + pyright +
+  `tool_budget.py`) ARE the verification.
+
+### Dependency notes for 033–038
+
+- 033–036 are pairwise independent (disjoint files: `mcp_tools/`,
+  `backends/migration/connectors/`, `backends/access.py`, `cli.py`) and may run
+  in any order; recommended sequence is 033 → 034 → 035 → 036 to land the
+  smallest first. 037 touches `dao.py`/`schema_inspector.py` +
+  `application/database.py` consumers — no overlap with 033–036, but it must
+  land BEFORE 038 (both touch `application/database.py`). 038 requires 033
+  (both touch `mcp_tools/core.py`) and 037. **Execution order: 033, 034, 035,
+  036 in any order → 037 → 038.**
+- 035 builds on 016's landed `_OBJECT_KINDS` registry (access.py:207-212) and
+  classify+log error policy (:503-519) — it extends them to the remaining 14
+  open/finally-close methods; it must NOT re-collapse the form/report mirror
+  (016 phase 4, DONE) nor touch the rejected lister swallows.
+- 036's Step 2 (per-subcommand characterization) is the explicit precondition
+  the 2026-09-09 audit set for the CLI registry rewrite — do not skip it.
+
+### Findings considered and rejected/deferred (2026-09-14 code-health audit)
+
+Audit of `main @ cdeab7c` (code-health-audit skill; FP + design-pattern lens).
+Plans 033–038 carry the accepted findings; these were weighed and set aside:
+
+- **Replacing the `_TOOLS` registry with `@mcp.tool()` decorators**: rejected.
+  The data-driven registry is what makes profile-gated dynamic loading work
+  (`server.py:91-103` imports modules and calls `register` only for the active
+  profile); decorators register at import time and would break the tool
+  budget/token-cost model.
+- **Unifying connector quoting/placeholder styles** (postgres lacks sqlite's
+  forbidden-char validation; `?` vs `%s`): deferred. Behavior-CHANGING
+  hardening, needs operator sign-off; plan 034 pins byte-parity instead.
+- **Typed models for `access.py`/`odbc.py` returns (~68 remaining raw dict
+  returns)**: deferred. `access.py` is under plan 035 churn; 037 covers
+  `dao.py` + `schema_inspector.py` and sets the pattern.
+- **Full 40-method `DatabaseUseCases` cohort split in one pass**: deferred.
+  038 extracts export/analysis/admin and establishes the facade-delegation
+  pattern; the remaining cohorts (connection/schema/queries/data/DDL/linked)
+  are a follow-up once the pattern proves out.
+- **Async/await rewrite of `ComDispatcher`**: rejected. STA thread
+  serialization is a hard COM constraint, not an accident.
+- **Generator pipelines for 1-based COM collections** (`com_items` helper):
+  deferred as a nice-to-have — no demonstrated bug, and 035's helper removes
+  the worst imperative duplication first.
+- **MCP-layer structured error surfacing** (016 phase-2 seed): still deferred;
+  requires threading typed errors through `application/`, out of 035's scope.
+
+### Lessons carried out of 033–036 execution
+
+- **Architecture-guard off-by-one** (saved as discovery obs-ff5bddd3b0790844):
+  `tests/unit/test_architecture_boundaries.py::_find_boundary_violations` (an
+  AST guard) computes `defining_pkg = target[:-1]` for private imports; for
+  `from . import _dialect` (level=1, module=None) inside a non-`__init__`
+  module, the helper's anchor returns the parent-package tuple and the
+  off-by-one fires. WORKAROUND: never name a new file with a leading
+  underscore, alias the import as `from . import name as _name` when needed.
+  Fixing the test is risky; renaming + aliasing is the cheaper fix.
+- **"tests must pass without modification" is not a hard rule** (saved as
+  decision obs-6837131aab4aeb62): plan 035's `test_backend_object_mirror.py`
+  had 6 tests pinning the buggy double-close as the contract. The orchestrator
+  verified first-hand that `opened = False` guard + finally swallow in the
+  original code was the bug, then refreshed those test pins in a separate
+  commit. **For future plans that explicitly say they remove a known bug,
+  tests pinning the bug are NOT in scope** — update them.
+- **ruff I001 for local imports** (counterintuitive vs PEP 8 top-level
+  convention): sort `import X` lines BEFORE `from X import Y` for local
+  function-body imports. (Why: ruff's isort config puts the stdlib "import"
+  block first; in a function body, the same rule applies.)
+
 ## Deferred backlog (do NOT plan into v1)
 
 - ~~External DB migration connectors~~ — now planned as **plan 024** (SDD; `migrate` extra, batch-first, no credential vault).
@@ -228,3 +319,6 @@ credential vault, active-connection state, `launch/close_access`, and
   modes; operator wants a portable, AV-safe artifact).
 - ~~XLSX export~~ — implemented by plan 023 — primary DoCmd.TransferSpreadsheet on AccessAdapter (always works), probe-gated IISAM SQL fallback for DAO/ADO backends when the ACE Excel provider is registered. Zero new dependencies.
 - Remote transports, browser UI, auth — removed product scope; revisit only with an explicit new decision.
+- Remaining `DatabaseUseCases` cohorts (connection/schema/queries/data/DDL/linked/script) — follow-up to plan 038 once its facade-delegation pattern lands.
+- Typed backend-boundary models for `access.py`/`odbc.py` — follow-up to plan 037, sequenced after plan 035.
+- `frozen=True`/`slots=True` sweep across `models/` — one mechanical change, after 037.
