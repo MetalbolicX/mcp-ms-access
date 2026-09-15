@@ -156,16 +156,18 @@ mode was chosen per plan by the nature of the change, not by default:
   RPC state over 6–9 rounds). 030 is the unblocker and stacks on the release
   branch so the full matrix re-runs on the post-fix tree; **order: 030 →
   029 resume (Step 3) → merge `plan/029-release-v020` to main with tag
-  `v0.2.0`.** (029 released 2026-09-13; the merge-to-main step is still
-  pending operator decision.)
-- 031 removes the last two production `taskkill /IM MSACCESS.EXE` sites
+  `v0.2.0`.** (Released 2026-09-13; merged fast-forward to `main` — tag
+  `v0.2.0` on `4aaae84`, within main's history.)
+- 031 removed the last two production `taskkill /IM MSACCESS.EXE` sites
   (`maintenance.py:415`, `doctor.py:205`) via a shared PID-scoped helper.
-  Stacked on `plan/029-release-v020` @ `7f5896f` pending the merge-to-main
-  decision; if main is merged first, rebase the 031 branch onto main
-  (clean — disjoint files from 030).
-- 032 requires 005 (the `configure opencode` registration machinery it extends
+  Originally stacked on `plan/029-release-v020` @ `7f5896f`; the stack was
+  merged fast-forward to `main` and the branches deleted (`31e0b7f` is on
+  main).
+- 032 required 005 (the `configure opencode` registration machinery it extends
   with `--python-mode`) and 024 (the `migrate` extra it vendors via
-  `-IncludeMigrate`). Targets `main`; disjoint from the release branches.
+  `-IncludeMigrate`). Executed on `plan/032-portable-zip` from `main @ 4aba764`
+  and merged fast-forward to `main` @ `39ee103` on 2026-09-14 (branch
+  deleted; tree byte-identical to the gate-verified branch).
 
 ## Findings considered and rejected/deferred (2026-09-09 audit)
 
