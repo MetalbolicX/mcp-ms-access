@@ -1364,3 +1364,152 @@ class TestSetObjectPropertyErrorClassification:
             f"Expected WARNING about 'MainReport', got: {warning_msgs}"
         )
 
+
+# -------------------------------------------------------------------------- #
+# _with_design_view helper tests
+# -------------------------------------------------------------------------- #
+
+class TestWithDesignView:
+    """Tests for _with_design_view context manager and _props_to_dict."""
+
+    def _make_disp(self, opened_obj=None, open_exc=None, live_obj=None, close_exc=None):
+        """Build a fake dispatcher that tracks open/close calls."""
+        disp = FakeDispatcher()
+        disp.start()
+
+        call_log: list[str] = []
+        close_count: list[int] = []
+
+        class _FakeDoCmd:
+            def OpenForm(self, name, mode):
+                call_log.append(f"OpenForm({name},{mode})")
+                if open_exc:
+                    raise open_exc
+
+            def OpenReport(self, name, mode):
+                call_log.append(f"OpenReport({name},{mode})")
+                if open_exc:
+                    raise open_exc
+
+            def Close(self, ac_type, name, save):
+                close_count.append(1)
+                call_log.append(f"Close({ac_type},{name},{save})")
+                if close_exc:
+                    raise close_exc
+
+        class _FakeScreen:
+            @property
+            def ActiveForm(self):
+                if opened_obj is not None:
+                    return opened_obj
+                raise RuntimeError("no active form")
+
+        class _FakeApp:
+            DoCmd = _FakeDoCmd()
+            Screen = _FakeScreen()
+            Forms = MagicMock(return_value=live_obj)
+            Reports = MagicMock(return_value=live_obj)
+
+        disp._access_app = _FakeApp()
+
+        def fake_call(fn, *args, **kwargs):
+            return fn()
+
+        disp._call_impl = fake_call
+        return disp, call_log, close_count
+
+    def test_with_design_view_opens_calls_work_and_closes(self):
+        """Open verb -> work receives live obj -> close called exactly once."""
+        from ms_access_mcp.backends.access import AccessAdapter
+
+        fake_obj = MagicMock()
+        disp, log, close_count = self._make_disp(opened_obj=fake_obj, live_obj=fake_obj)
+        adapter = AccessAdapter("test.accdb")
+        adapter._dispatcher = disp
+
+        result = adapter._with_design_view(
+            "form", "TestForm",
+            save_flag=2,
+            work=lambda obj: {"props": {}},
+            on_error=lambda exc: {},
+            default={},
+        )
+
+        assert len(close_count) == 1, f"Expected 1 close, got {len(close_count)}"
+        assert "OpenForm(TestForm,1)" in log
+        assert "Close(2,TestForm,2)" in log
+
+    def test_with_design_view_closes_when_work_raises(self):
+        """Work raising -> close called exactly once -> on_error result returned."""
+        from ms_access_mcp.backends.access import AccessAdapter
+
+        fake_obj = MagicMock()
+        disp, log, close_count = self._make_disp(opened_obj=fake_obj, live_obj=fake_obj)
+        adapter = AccessAdapter("test.accdb")
+        adapter._dispatcher = disp
+
+        result = adapter._with_design_view(
+            "form", "TestForm",
+            save_flag=1,
+            work=lambda obj: (_ for _ in ()).throw(RuntimeError("boom")),
+            on_error=lambda exc: "fallback",
+            default="fallback",
+        )
+
+        assert len(close_count) == 1, f"Expected 1 close after exception, got {len(close_count)}"
+        assert result == "fallback"
+
+    def test_with_design_view_not_started_returns_default(self):
+        """Dispatcher not started -> returns default without any COM calls."""
+        from ms_access_mcp.backends.access import AccessAdapter
+
+        disp = FakeDispatcher()
+        # do NOT start
+        adapter = AccessAdapter("test.accdb")
+        adapter._dispatcher = disp
+
+        result = adapter._with_design_view(
+            "form", "TestForm",
+            save_flag=2,
+            work=lambda obj: {"should not": "run"},
+            on_error=lambda exc: {},
+            default={"default": True},
+        )
+
+        assert result == {"default": True}
+
+    def test_props_to_dict_logs_and_skips_failing_property(self, caplog):
+        """A property whose .Value raises -> skipped with debug log; others returned."""
+        from ms_access_mcp.backends.access import _props_to_dict
+        import logging
+
+        caplog.set_level(logging.DEBUG)
+
+        class _FakeProp:
+            def __init__(self, name, value, raise_on_value=False):
+                self.Name = name
+                self._value = value
+                self._raise_on_value = raise_on_value
+
+            @property
+            def Value(self):
+                if self._raise_on_value:
+                    raise RuntimeError("COM error on value")
+                return self._value
+
+        class _FakeProps:
+            def __iter__(self):
+                return iter([
+                    _FakeProp("Name", "TestForm"),
+                    _FakeProp("Caption", "My Caption"),
+                    _FakeProp("Broken", None, raise_on_value=True),
+                    _FakeProp("Tag", ""),
+                ])
+
+        result = _props_to_dict(_FakeProps())
+
+        assert result == {"Name": "TestForm", "Caption": "My Caption", "Tag": ""}
+        assert "Broken" not in result
+        debug_msgs = [r.message for r in caplog.records if r.levelname == "DEBUG"]
+        assert any("Broken" in msg for msg in debug_msgs), f"Expected DEBUG about 'Broken', got: {debug_msgs}"
+
