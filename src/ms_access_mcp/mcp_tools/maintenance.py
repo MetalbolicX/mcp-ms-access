@@ -12,6 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.maintenance import MaintenanceUseCases
+from ._registry import ToolRegistry, register_tools
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "to_mcp_result", "_TOOLS"]
@@ -109,7 +110,7 @@ def maintenance_diagnose_environment(
     return to_mcp_result(_result_to_dict(result))
 
 
-_TOOLS: dict[str, tuple[Any, str]] = {
+_TOOLS: ToolRegistry = {
     "maintenance_backup": (
         maintenance_backup,
         "Create a timestamped backup of the database file.",
@@ -143,5 +144,4 @@ _TOOLS: dict[str, tuple[Any, str]] = {
 
 def register(mcp: FastMCP) -> None:
     """Register all maintenance tools with the FastMCP server."""
-    for name, (fn, description) in _TOOLS.items():
-        mcp.add_tool(fn, name=name, description=description)
+    register_tools(mcp, _TOOLS)

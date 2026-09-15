@@ -12,6 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.migration import MigrationUseCases
+from ._registry import ToolRegistry, register_tools
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "_TOOLS"]
@@ -184,7 +185,7 @@ def get_migration_status(
 # Registry
 # =============================================================================
 
-_TOOLS: dict[str, tuple[Any, str]] = {
+_TOOLS: ToolRegistry = {
     "extract_schema": (
         extract_schema,
         "Extract schema from an Access database for migration.",
@@ -210,5 +211,4 @@ def register(mcp: FastMCP) -> None:
     Args:
         mcp: FastMCP server instance.
     """
-    for name, (fn, description) in _TOOLS.items():
-        mcp.add_tool(fn, name=name, description=description)
+    register_tools(mcp, _TOOLS)

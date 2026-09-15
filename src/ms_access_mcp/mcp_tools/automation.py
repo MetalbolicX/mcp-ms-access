@@ -8,6 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.automation import AutomationUseCases
+from ._registry import ToolRegistry, register_tools
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "to_mcp_result", "_TOOLS"]
@@ -927,7 +928,7 @@ def module_exists(
 # Tool Registry
 # =============================================================================
 
-_TOOLS: dict[str, tuple[Any, str]] = {
+_TOOLS: ToolRegistry = {
     # Forms
     "get_forms": (get_forms, "Get all forms in the database."),
     "open_form": (open_form, "Open a form."),
@@ -1002,5 +1003,4 @@ _TOOLS: dict[str, tuple[Any, str]] = {
 
 def register(mcp: FastMCP) -> None:
     """Register all automation tools with the FastMCP server."""
-    for name, (fn, description) in _TOOLS.items():
-        mcp.add_tool(fn, name=name, description=description)
+    register_tools(mcp, _TOOLS)

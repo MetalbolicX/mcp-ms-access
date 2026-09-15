@@ -10,6 +10,7 @@ from mcp.types import CallToolResult
 from ..application.analysis import QueryAnalyzerService
 from ..application.database import DatabaseUseCases
 from ..safety import allowed_dirs_from_env
+from ._registry import ToolRegistry, register_tools
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "_TOOLS"]
@@ -117,7 +118,7 @@ def generate_sql(path: str, params: dict[str, Any] | None = None, confirm: bool 
 # =============================================================================
 
 
-_TOOLS: dict[str, tuple[Any, str]] = {
+_TOOLS: ToolRegistry = {
     "get_er_diagram": (
         get_er_diagram,
         "Get the database schema as nodes and edges for ER diagram visualization. "
@@ -138,5 +139,4 @@ _TOOLS: dict[str, tuple[Any, str]] = {
 
 def register(mcp: FastMCP) -> None:
     """Register all analysis tools with the MCP server."""
-    for name, (fn, description) in _TOOLS.items():
-        mcp.add_tool(fn, name=name, description=description)
+    register_tools(mcp, _TOOLS)

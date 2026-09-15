@@ -18,6 +18,7 @@ from mcp.types import CallToolResult, TextContent
 
 from ..application.database import DatabaseUseCases, Err, Ok
 from ..safety import allowed_dirs_from_env
+from ._registry import ToolRegistry, register_tools
 
 __all__ = ["register", "to_mcp_result"]
 
@@ -578,7 +579,7 @@ def get_linked_tables(
 # =============================================================================
 
 # Dispatch table: tool name -> (function, description)
-_TOOLS: dict[str, tuple[Any, str]] = {
+_TOOLS: ToolRegistry = {
     "connect_access": (connect_access, "Connect to an Access database"),
     "disconnect_access": (disconnect_access, "Disconnect from an Access database"),
     "list_connections": (list_connections, "List all open connections"),
@@ -609,5 +610,4 @@ def register(mcp: FastMCP) -> None:
     Args:
         mcp: FastMCP server instance
     """
-    for name, (fn, description) in _TOOLS.items():
-        mcp.add_tool(fn, name=name, description=description)
+    register_tools(mcp, _TOOLS)

@@ -9,6 +9,7 @@ from mcp.types import CallToolResult
 
 from ..application.database import DatabaseUseCases
 from ..safety import allowed_dirs_from_env
+from ._registry import ToolRegistry, register_tools
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "_TOOLS"]
@@ -253,7 +254,7 @@ def execute_sql_script(
 # Registry
 # =============================================================================
 
-_TOOLS: dict[str, tuple[Any, str]] = {
+_TOOLS: ToolRegistry = {
     # DDL
     "create_table": (
         create_table,
@@ -331,5 +332,4 @@ _TOOLS: dict[str, tuple[Any, str]] = {
 
 def register(mcp: FastMCP) -> None:
     """Register all DDL and admin tools with the FastMCP server."""
-    for name, (fn, description) in _TOOLS.items():
-        mcp.add_tool(fn, name=name, description=description)
+    register_tools(mcp, _TOOLS)

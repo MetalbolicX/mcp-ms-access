@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.versioning import VersioningUseCases
+from ._registry import ToolRegistry, register_tools
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "_TOOLS"]
@@ -59,7 +58,7 @@ def versioning_import_all(input_dir: str, confirm: bool = False) -> CallToolResu
     return to_mcp_result(_result_to_dict(result))
 
 
-_TOOLS: dict[str, tuple[Any, str]] = {
+_TOOLS: ToolRegistry = {
     "versioning_export_object": (
         versioning_export_object,
         "Export a single object to a text file.",
@@ -89,5 +88,4 @@ _TOOLS: dict[str, tuple[Any, str]] = {
 
 def register(mcp: FastMCP) -> None:
     """Register all versioning tools with the FastMCP server."""
-    for name, (fn, description) in _TOOLS.items():
-        mcp.add_tool(fn, name=name, description=description)
+    register_tools(mcp, _TOOLS)
