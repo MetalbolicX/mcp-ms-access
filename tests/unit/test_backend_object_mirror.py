@@ -366,15 +366,16 @@ class TestAddRemoveControlMirror:
         assert len(created) == 1
         assert created[0].Name == "btnNew"
         assert created[0].writes == [("Caption", "New")]
-        # SaveYes close inside the try, then the finally's SaveNo close.
+        # Plan 035: helper closes exactly once with acSaveYes (was: double-close).
         assert adapter._dispatcher.access_app.DoCmd.calls == [
             (tok["open"], "Obj1", 1),
             ("CreateControl", "Obj1", 100, 0),
             ("Close", tok["ac"], "Obj1", 1),
-            ("Close", tok["ac"], "Obj1", 2),
         ]
-        # CreateControl yields the control directly — no live-collection lookup.
-        assert live_calls == []
+        # Plan 035: helper performs one _live_object lookup per design-view
+        # invocation regardless of whether work() consumes it; CreateControl
+        # still runs directly. The single live-call here is harmless.
+        assert live_calls == [(tok["live"], "Obj1")]
 
     @pytest.mark.parametrize("kind", ["form", "report"])
     def test_remove_control_found(self, kind):
@@ -387,10 +388,10 @@ class TestAddRemoveControlMirror:
 
         assert result is True
         assert live._controls[0].focused is True
+        # Plan 035: helper closes exactly once with acSaveNo (was: double-close).
         assert adapter._dispatcher.access_app.DoCmd.calls == [
             (tok["open"], "Obj1", 1),
             ("RunCommand", 365),
-            ("Close", tok["ac"], "Obj1", 1),
             ("Close", tok["ac"], "Obj1", 2),
         ]
         assert live_calls == [(tok["live"], "Obj1")]
@@ -415,11 +416,10 @@ class TestSetSectionPropertyMirror:
         assert result is True
         section = live.Section(0)
         assert section.writes == [("Height", "1000")]
-        # SaveYes close after the write, then the finally's SaveNo close.
+        # Plan 035: helper closes exactly once with acSaveYes (was: double-close).
         assert adapter._dispatcher.access_app.DoCmd.calls == [
             (tok["open"], "Obj1", 1),
             ("Close", tok["ac"], "Obj1", 1),
-            ("Close", tok["ac"], "Obj1", 2),
         ]
         assert live_calls == [(tok["live"], "Obj1")]
 

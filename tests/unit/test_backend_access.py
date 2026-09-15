@@ -1427,7 +1427,7 @@ class TestWithDesignView:
         adapter = AccessAdapter("test.accdb")
         adapter._dispatcher = disp
 
-        result = adapter._with_design_view(
+        adapter._with_design_view(
             "form", "TestForm",
             save_flag=2,
             work=lambda obj: {"props": {}},
@@ -1480,8 +1480,9 @@ class TestWithDesignView:
 
     def test_props_to_dict_logs_and_skips_failing_property(self, caplog):
         """A property whose .Value raises -> skipped with debug log; others returned."""
-        from ms_access_mcp.backends.access import _props_to_dict
         import logging
+
+        from ms_access_mcp.backends.access import _props_to_dict
 
         caplog.set_level(logging.DEBUG)
 
