@@ -7,7 +7,8 @@ from decimal import Decimal
 
 from ....models import ColumnSchema, TableSchema
 from .. import CONNECTOR_FACTORIES
-from . import BaseConnector, _dialect
+from . import BaseConnector
+from . import dialect as _dialect
 
 __all__ = ["SqliteConnector", "TYPE_MAP", "quote_identifier", "render_table_ddl"]
 
