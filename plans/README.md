@@ -61,6 +61,12 @@ honor its STOP conditions, and update your row when done.
 | 038  | DatabaseUseCases cohesion: public write policy, warn-once without global, export/analysis/admin cohort extraction | 17 | P2 | L | MED | Strict TDD per step | 033, 037 | DONE (branch plan/038-use-case-cohesion; commit `335e783` — single atomic commit because each step's surface area is small and the steps compose into one cohesive change; Steps 1+2+3 in detail: (1) `@property readonly` on DatabaseUseCases + `mcp_tools/core.py` `db._policy.readonly` → `db.readonly` (drops `# noqa: SLF001`); (2) `_dao_fallback_warned: bool = False` global + its `global` mutation block replaced by `@cache _warn_dao_fallback_once()` in `backends/__init__.py`; (3) `database.py:828 export_data` → `application/db_export.py` (moves `csv`/`json`/`IisamProviderProbe`/`AccessAdapter` imports with it — `AccessAdapter` was load-bearing as an `isinstance(adapter, AccessAdapter)` check inside export_data, scoped-to-cohort relocation; `database.py:1116 get_er_diagram` + `:1171 generate_sql` → `application/db_analysis.py`; `database.py:301 get_database_properties` + `:319 get_database_statistics` + `:912 set_database_property` + `:1079 create_access_database` → `application/db_admin.py`); all 40 `DatabaseUseCases` public methods preserved (41 `def` lines: 40 methods + new `readonly` property); `database.py` LOC: 1248 → 1089 (-159); orchestrator gates: `ruff` clean, `pytest tests/unit/` 1156/5 passed (preserved), `pytest tests/unit/test_architecture_boundaries.py/` 5 passed, `pyright src/ms_access_mcp/application/` 0 new errors (1 pre-existing in `migration.py:499` — `query_result.get(...)` on now-`QueryResult` from plan 037's typed seam; out of 038 scope; documented as another deferred follow-up); `scripts/tool_budget.py` PASS — counts identical to pre-change; `Err`/`_err` shim preserved (load-bearing for `_adapter_lifecycle.py:16`); main fast-forwarded to `335e783`. **Batch 033-038 complete: 6/6 plans DONE in main.**) |
 | 039  | Server-side password resolution for password-protected Access databases (credentials file + CLI `credentials` subcommand + `open_database` wire-through) | 18 | P1 | M | MED | @medium + strict TDD | — | DONE (branch plan/039-server-side-db-credentials; commits `5f7e7d5` (Step 1: credentials.py resolver + 10 test cases) → `5005271` (Step 2: open_database wire-through + password scrub in errors + 4 test cases) → `ca7bc5c` (Step 3: CLI credentials subcommand set/list/remove + 11 test cases) → `f51de50` (Step 4: docs + connect_access docstring + README section); Step 5 gates: ruff clean (0 errors), pyright on changed subtree 0/0/0, pytest tests/unit/ 1181 passed/5 skipped (+19 new tests from 1162 baseline), tool_budget.py PASS, `rg -n password src/ms_access_mcp/mcp_tools/` shows only docstring mention (no tool-arg password parameter); files added: `src/ms_access_mcp/credentials.py`, `tests/unit/test_credentials.py`, `tests/unit/test_cli_credentials.py`; files modified: `src/ms_access_mcp/application/database.py`, `src/ms_access_mcp/cli.py`, `src/ms_access_mcp/mcp_tools/core.py`, `README.md`; STOP conditions verified: seam at database.py:83-109 unchanged, all 5 adapter `connect()` signatures accept `password` kwarg, `BackendSelector.get_adapter` unchanged; merged fast-forward to `main` @ `19098f2`) |
 | 040  | Named credential profiles for external databases (migration + linked tables) — credential file v2 `profiles` section, `connect_ref`/`connection_ref` tool params, hard-reject secret literals, strip/read/error leak hardening | 18 | P1 | L | MED | @medium + strict TDD | 039 | DONE (branch plan/040-named-credential-profiles; commits `af05261` (Step 1: credentials.py v2 profiles + contains_credential) → `605d3fa` (Step 2: dao_sql.py harden _strip_password + read-strip + error scrub) → `87baf97` (Step 3: linked-table use cases connect_ref + 5-rule dispatch) → `467c967` (Step 4: migration connection_ref + repr redaction) → `56ab66b` (Step 5: MCP passthrough connection_ref/connect_ref + docstring rewrite) → `7236a6a` (Step 6: CLI credentials profile set|list|remove group); Step 7 gates: ruff clean (0 errors), pyright on changed files 0/0/0, pytest tests/unit/ 1247 passed/5 skipped (+23 new tests from 1224 baseline), tool_budget.py PASS, `rg -n "PWD=|Password=" src/ms_access_mcp/mcp_tools/` docstrings only, `rg -n "pwd=" src/ms_access_mcp/backends/dao_sql.py` no matches (strip uses re.IGNORECASE); files modified: src/ms_access_mcp/mcp_tools/migration.py, src/ms_access_mcp/mcp_tools/ddl.py, src/ms_access_mcp/cli.py, README.md; files added: tests/unit/test_mcp_migration.py (connection_ref passthrough tests), tests/unit/test_mcp_ddl.py (connect_ref passthrough tests), tests/unit/test_cli_credentials.py (14 profile CLI cases); pre-existing pyright error at migration.py:563 acceptable (unrelated to plan 040)) |
+| 041  | One-command verification baseline (fast qualify gate + pyright CI/local alignment) | 19 | P1 | M | LOW | @medium + strict TDD | — | TODO |
+| 042  | Facade↔adapter contract alignment (where-kwarg drift, false-success propagation, readonly gates, signature-conformance guard test) | 19 | P1 | M | MED | @medium + strict TDD | 041 recommended | TODO |
+| 043  | Path-guard output semantics + allowed-dirs coverage for versioning/maintenance/migration | 19 | P1 | M | MED | @medium + strict TDD | — | TODO |
+| 044  | Backend SQL-boundary hardening (`]` identifier escaping + credential scrubbing in error paths) | 19 | P2 | M | LOW | @medium + strict TDD | — | TODO |
+| 045  | Typed MCP tool schemas — wave 1 (core profile; delete dead `_make_tool`) | 19 | P1 | L | MED | @medium + strict TDD | 042 | TODO |
+| 046  | MCP prompts for the three flagship workflows (analyze / develop / migrate) | 19 | P2 | M | LOW | @medium + strict TDD | 045 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
@@ -357,3 +363,104 @@ exact-match profile names.
 - Remaining `DatabaseUseCases` cohorts (connection/schema/queries/data/DDL/linked/script) — follow-up to plan 038 once its facade-delegation pattern lands.
 - Typed backend-boundary models for `access.py`/`odbc.py` — follow-up to plan 037, sequenced after plan 035.
 - `frozen=True`/`slots=True` sweep across `models/` — one mechanical change, after 037.
+- Typed MCP tool schemas wave 2 (`ddl.py` 17, `analysis.py` 3, `maintenance.py` 7, `migration.py` 4) — follow-up to plan 045; `automation.py` (~66 tools) needs a typing-strategy decision first (property bags may legitimately stay dict-typed).
+
+## Plans 041–046: mode rationale + audit record (deep audit, 2026-09-16)
+
+These plans come from an improve-skill deep audit of `main @ dde0998` (four
+parallel category audits — correctness/security/architecture-DX/direction —
+followed by a 10-claim vetting pass against live code: 9 CONFIRMED, 1 refined).
+All six are **strict TDD, no SDD**: every finding maps to directly testable
+cases and none introduce a cross-cutting feature family (046 comes closest but
+is additive surface over settled APIs).
+
+- **041 first**: it is the verification baseline every other plan's feedback
+  loop relies on. 042's contract fixes are exactly the class of change that is
+  unsafe without a fast trustworthy gate.
+- **042 before 045**: 045 mirrors facade signatures into MCP tool schemas;
+  042 settles those signatures. Running 045 first would type the drift.
+- **043 and 044 are independent** of each other and of 041/042 (disjoint files:
+  `safety.py` + path-taking use cases vs `sql_generator.py`/`dao_sql.py`/backend
+  error paths). Either order.
+- **046 after 045**: prompt recipes name tool parameters; they must describe
+  the typed surface, not the `params:` dict era.
+
+### Audit findings intentionally NOT planned (recorded so nobody re-audits)
+
+Defect findings deferred (real, but below the cut for this batch — revisit after
+041–046 land, in rough priority order):
+
+- **Per-call connection lifecycle** (`mcp_tools/core.py` builds a fresh
+  `DatabaseUseCases` per call, never closes; `disconnect_access` closes a new
+  empty instance → structurally a no-op; zombie MSACCESS.EXE / stale `.ldb`).
+  High impact, MED fix risk — needs its own dedicated plan with live-Access
+  verification, and conflicts in-flight with 045's rewrite of the same file;
+  sequence AFTER 045.
+- **Nested STA dispatch in `set_control_event_procedure`** (access.py
+  :1002→:1840 — guaranteed 120 s timeout freeze of all COM calls). Fix is S
+  (reentrancy check or split dispatch) but touches dispatcher semantics —
+  bundle with the dispatcher-timeout finding below into one COM-lifecycle plan.
+- **Dispatcher timeout does not cancel in-flight work; `start()` after
+  join-timeout can run two STA threads on one queue** (`dispatcher.py:76-97,
+  253-258`). MED risk; historically needs repro-first handling (plans 002/030).
+- **Migration extraction swallows all failures into vacuous success**
+  (`migration.py:230-231` → `upload_schema`/`transfer_data` "succeed" on zero
+  tables) + module-level `_JOBS` unlocked/unbounded (`migration.py:44`). S-M;
+  own plan with the migration test-order fix (`test_migration_connectors`).
+- **`limit` ignored on every backend; unbounded `fetchall`/export; empty
+  results lose column metadata on DAO/ADO** — M, MED risk (DAO dynaset TOP
+  semantics need live verification).
+- **FK topology possibly inverted in `get_table_schema_plan`**
+  (`schema_inspector.py:288-307`) — MED confidence; needs one live-DB check
+  before any flip.
+- **Design-view partial-save semantics** (`access.py:276-290` — `acSaveYes` in
+  `finally` commits half-applied property batches) and **N+1 `COUNT(*)` per
+  table in `get_tables`** / row-at-a-time COM marshaling (`dao.py:350-363`) —
+  perf/correctness batch, own plan.
+- **Versioning module round-trip encoding** (`versioning.py:233-238` writes
+  UTF-16-LE temp files that `LoadFromText` expects as ANSI; temp files never
+  deleted) — S-M, own plan.
+- **Windows DACL hardening for credentials files** (credentials.py applies
+  `0o600` only off-Windows) — S.
+- **`pip-audit` in CI** — S; fold into 041's gate or a one-line CI step.
+- **VBA/macro write tools behind an explicit opt-in** (confirm=True is
+  self-satisfied by the same caller) — S-M; deliberate default-on/off decision
+  needed from operator first.
+- **`cli.py` declarative command-spec table** (1842 LOC / 108 subparsers —
+  god file by volume, not logic) — M; the `_TOOLS` pattern is the exemplar.
+- **`AGENTS.md` + `.env.example` + pre-commit hooks** — S; agent-driven
+  workflow conventions currently re-derived per plan.
+- **Commit `plans/039`/`040` files** (untracked; the credential-design
+  provenance) and delete stray `pnpm-workspace.yaml` + root `nul` file — S
+  hygiene.
+
+Direction findings deferred (grounded in repo evidence; spike/design plans
+when scheduled):
+
+- **Schema as MCP resources** (`access://schema` — SchemaInspector +
+  JetSqlGenerator already build everything; only the sink is missing) and an
+  `inline: bool` on `generate_sql`.
+- **Composable profiles** (`--profile core,analysis`; `profiles.py:17-58` maps
+  each profile to exactly one module today).
+- **`import_data`** (export without import; connector batch logic exists to
+  reuse) — the seed/restore loop for new databases.
+- **`analyze_query` should read `get_indexes`** before recommending indexes
+  (`application/analysis.py:204` never checks) + a `profile_table` tool
+  (null-ratio/cardinality from existing primitives).
+- **`compare_schemas(A, B)`** — `extract_schema` + `render_schema_ddl` +
+  `versioning_compare` are each half shipped; join them for pre/post-migration
+  parity checks.
+- **Dead `path` param in all three analysis tools** (`mcp_tools/analysis.py:
+  29,57,94` — never opened; fresh unconnected use case per call). Fixed for
+  free if folded into 045's wave 2; otherwise its own bugfix.
+
+Direction findings rejected (no grounding or contradicts settled decisions):
+
+- **Naming-convention lint for new databases** — no repo evidence anyone wants it.
+- **Remote transports / browser UI / auth** — explicitly removed product scope
+  (line 356); not re-proposed.
+- **Decorator-based tool registration** — rejected 2026-09-14 (breaks
+  profile-gated dynamic loading); 045 keeps the data-driven registry.
+- **Async/await rewrite of ComDispatcher** — STA serialization is a hard COM
+  constraint (rejected 2026-09-14); the dispatcher findings above are about
+  timeout/restart semantics, not the model.
