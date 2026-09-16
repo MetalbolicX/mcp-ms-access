@@ -1,12 +1,14 @@
-"""Server-side credential resolver for password-protected Access databases.
+"""Server-side credential resolver for Access databases and external connections.
 
-Resolution order:
+Resolution order for database passwords:
   1. Local:  ``<db_dir>/.ms-access-mcp.json``
   2. Global: ``~/.ms-access-mcp/credentials.json`` (platform-appropriate)
 
-File format
-------------
+File format v1 (database passwords):
 ``{"version": 1, "credentials": {"<normalized absolute path>": "<password>"}}``
+
+File format v2 (adds named profiles for external databases):
+``{"version": 2, "credentials": {...}, "profiles": {"<name>": "<connection string>"}}``
 
 The global file location can be overridden via ``ACCESS_MCP_CREDENTIALS_FILE``.
 """
@@ -15,12 +17,23 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import tempfile
 from pathlib import Path
 from typing import TypedDict
 
-__all__ = ["resolve_password", "write_entry", "remove_entry", "list_entries"]
+__all__ = [
+    "resolve_password",
+    "write_entry",
+    "remove_entry",
+    "list_entries",
+    "resolve_profile",
+    "write_profile",
+    "remove_profile",
+    "list_profiles",
+    "contains_credential",
+]
 
 
 # =============================================================================
@@ -29,10 +42,20 @@ __all__ = ["resolve_password", "write_entry", "remove_entry", "list_entries"]
 
 
 class _CredentialsDict(TypedDict):
-    """Structure of a credentials JSON file."""
+    """Structure of a credentials JSON file (v1 or v2)."""
 
     version: int
     credentials: dict[str, str]
+    profiles: dict[str, str]
+
+
+# Compiled regex set for credential token detection (case-insensitive).
+# Each pattern matches a ;-delimited token containing a credential form.
+_CRED_PATTERNS = [
+    re.compile(r"(?i)\bPWD=[^;]*", re.IGNORECASE),
+    re.compile(r"(?i)\bPassword=[^;]*", re.IGNORECASE),
+    re.compile(r"(?i)\bJet OLEDB:Database Password=[^;]*", re.IGNORECASE),
+]
 
 
 # =============================================================================
@@ -105,6 +128,9 @@ def _read_credentials_file(path: Path) -> _CredentialsDict | None:
         The parsed credentials dict, or ``None`` if the file does not exist
         or is malformed. Never raises.
 
+    Accepts both v1 (credentials-only) and v2 (credentials + profiles) files.
+    Missing sections default to {} so that files with only one section are valid.
+
     """
     if not path.exists():
         return None
@@ -127,11 +153,13 @@ def _read_credentials_file(path: Path) -> _CredentialsDict | None:
     if not isinstance(raw, dict):
         _cache[(path, mtime)] = None
         return None
-    if "credentials" not in raw:
-        _cache[(path, mtime)] = None
-        return None
 
-    data: _CredentialsDict = {"version": raw.get("version", 1), "credentials": raw["credentials"]}
+    # v2 relaxed reader: accept either section; default missing sections to {}
+    data: _CredentialsDict = {
+        "version": raw.get("version", 1),
+        "credentials": raw.get("credentials", {}),
+        "profiles": raw.get("profiles", {}),
+    }
     _cache[cache_key] = data
     return data
 
@@ -200,11 +228,15 @@ def write_entry(db_path: str, password: str, *, local: bool = False) -> None:
     # Read existing data or start fresh
     existing = _read_credentials_file(target)
     if existing is None:
-        data: _CredentialsDict = {"version": 1, "credentials": {}}
+        data: _CredentialsDict = {"version": 1, "credentials": {}, "profiles": {}}
     else:
         # Normalize ALL existing keys so lookups are always consistent
         normalized_creds = {_normalize_path(k): v for k, v in existing["credentials"].items()}
-        data = {"version": existing.get("version", 1), "credentials": normalized_creds}
+        data = {
+            "version": existing.get("version", 1),
+            "credentials": normalized_creds,
+            "profiles": existing.get("profiles", {}),
+        }
 
     data["credentials"][normalized] = password
 
@@ -257,8 +289,9 @@ def remove_entry(db_path: str, *, local: bool = False) -> bool:
 
     del existing["credentials"][normalized]
 
-    if not existing["credentials"]:
-        # Remove the file entirely when empty
+    # Only remove the file if BOTH credentials AND profiles are empty;
+    # a file may still hold profiles even when credentials are gone.
+    if not existing["credentials"] and not existing.get("profiles"):
         try:
             os.unlink(target)
         except OSError:
@@ -328,3 +361,158 @@ def list_entries() -> list[tuple[Path, str]]:
                         results.append((Path(local_db), "local"))
 
     return results
+
+
+# =============================================================================
+# Profile API (v2 — named connection strings for external databases)
+# =============================================================================
+
+
+def contains_credential(text: str) -> bool:
+    """Return True if the text contains a credential token.
+
+    Args:
+        text: A connection string or any other string to check.
+
+    Returns:
+        True if ``text`` contains ``PWD=``, ``Password=``, or
+        ``Jet OLEDB:Database Password=`` (case-insensitive), False otherwise.
+
+    """
+    return any(pattern.search(text) for pattern in _CRED_PATTERNS)
+
+
+def resolve_profile(name: str) -> str | None:
+    """Resolve a named profile to its connection string.
+
+    Args:
+        name: The profile name (exact match, not normalized).
+
+    Returns:
+        The stored connection string, or ``None`` if no profile with that
+        name exists. Never raises. Never logs the value.
+
+    Profiles are stored in the global credentials file only (no local file).
+
+    """
+    env_override = os.environ.get("ACCESS_MCP_CREDENTIALS_FILE", "")
+    global_path = Path(env_override) if env_override else _global_credentials_path()
+    data = _read_credentials_file(global_path)
+    if data is None:
+        return None
+    return data["profiles"].get(name, None)
+
+
+def write_profile(name: str, connection_string: str) -> None:
+    """Write (or update) a named profile.
+
+    Args:
+        name: The profile name.
+        connection_string: The full ODBC / OLEDB connection string.
+
+    Raises:
+        OSError: If the directory cannot be created or the file cannot be
+                 written atomically.
+
+    """
+    env_override = os.environ.get("ACCESS_MCP_CREDENTIALS_FILE", "")
+    target = Path(env_override) if env_override else _global_credentials_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read existing data or start fresh v2
+    existing = _read_credentials_file(target)
+    if existing is None:
+        data: _CredentialsDict = {"version": 2, "credentials": {}, "profiles": {}}
+    else:
+        data = {
+            "version": existing.get("version", 1),
+            "credentials": existing.get("credentials", {}),
+            "profiles": existing.get("profiles", {}),
+        }
+
+    data["profiles"][name] = connection_string
+
+    # Atomic write
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        dir=str(target.parent),
+        suffix=".tmp",
+        prefix=".ms-access-mcp-",
+    )
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path_str, str(target))
+        if os.name != "nt":
+            os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
+    except BaseException:
+        try:
+            os.unlink(tmp_path_str)
+        except OSError:
+            pass
+        raise
+
+
+def remove_profile(name: str) -> bool:
+    """Remove a named profile.
+
+    Args:
+        name: The profile name.
+
+    Returns:
+        True if the profile existed and was removed; False if no such
+        profile exists.
+
+    """
+    env_override = os.environ.get("ACCESS_MCP_CREDENTIALS_FILE", "")
+    target = Path(env_override) if env_override else _global_credentials_path()
+    existing = _read_credentials_file(target)
+    if existing is None:
+        return False
+
+    if name not in existing.get("profiles", {}):
+        return False
+
+    # Preserve all other sections; only remove from profiles
+    existing["profiles"].pop(name, None)
+
+    # Atomic write
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        dir=str(target.parent),
+        suffix=".tmp",
+        prefix=".ms-access-mcp-",
+    )
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            json.dump(existing, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path_str, str(target))
+        if os.name != "nt":
+            os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
+    except BaseException:
+        try:
+            os.unlink(tmp_path_str)
+        except OSError:
+            pass
+        raise
+
+    return True
+
+
+def list_profiles() -> list[str]:
+    """List all profile names.
+
+    Returns:
+        A list of profile names (never connection strings). Profiles are
+        read from the global credentials file only. Malformed files are
+        silently skipped.
+
+    """
+    env_override = os.environ.get("ACCESS_MCP_CREDENTIALS_FILE", "")
+    global_path = Path(env_override) if env_override else _global_credentials_path()
+    data = _read_credentials_file(global_path)
+    if data is None:
+        return []
+    return list(data.get("profiles", {}).keys())

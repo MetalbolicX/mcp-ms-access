@@ -436,3 +436,190 @@ class TestParamsGuard:
         # not for the password (which would be a security leak).
         assert connect_called_with.get("password") == "hunter2"
         assert "hunter2" not in str(result)
+
+
+# =============================================================================
+# Step 1 RED: v2 profiles + contains_credential
+# Cases 1-8 from plan 040
+# =============================================================================
+
+
+class TestProfileRoundTrip:
+    """Case 1: v2 round-trip — write_profile then resolve_profile."""
+
+    def test_resolve_profile_returns_exact_string(self, monkeypatch, tmp_path):
+        """write_profile + resolve_profile returns the exact connection string."""
+        global_file = tmp_path / "global.json"
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        credentials.write_profile("prod_dw", "Driver={ODBC};PWD=hunter2;")
+        result = credentials.resolve_profile("prod_dw")
+        assert result == "Driver={ODBC};PWD=hunter2;"
+
+
+class TestProfileAbsent:
+    """Case 2: resolve_profile returns None when absent."""
+
+    def test_resolve_profile_returns_none_when_absent(self, monkeypatch, tmp_path):
+        """resolve_profile returns None (not '') when no such profile exists."""
+        global_file = tmp_path / "global.json"
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        result = credentials.resolve_profile("does_not_exist")
+        assert result is None
+
+
+class TestProfileBackCompat:
+    """Case 3: v1 file — resolve_profile returns None, resolve_password works."""
+
+    def test_v1_file_resolve_profile_returns_none(self, monkeypatch, tmp_path):
+        """A v1 file with no profiles key → resolve_profile returns None."""
+        global_file = tmp_path / "global.json"
+        _write_global_file(global_file, {"version": 1, "credentials": {}})
+
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        assert credentials.resolve_profile("any_profile") is None
+
+    def test_v1_file_resolve_password_still_works(self, monkeypatch, tmp_path):
+        """A v1 file still works with resolve_password for db credentials."""
+        global_file = tmp_path / "global.json"
+        db_path = str(tmp_path / "db.accdb")
+        _write_global_file(global_file, {
+            "version": 1,
+            "credentials": {_norm(db_path): "db_pw"},
+        })
+
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        assert credentials.resolve_password(db_path) == "db_pw"
+
+
+class TestProfileForwardCompat:
+    """Case 4: profiles-only file (no credentials key) is accepted."""
+
+    def test_profiles_only_file_accepted(self, monkeypatch, tmp_path):
+        """A file with 'profiles' but no 'credentials' key is valid."""
+        global_file = tmp_path / "global.json"
+        _write_global_file(global_file, {
+            "version": 2,
+            "profiles": {"my_profile": "Driver={ODBC};"},
+        })
+
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        assert credentials.resolve_profile("my_profile") == "Driver={ODBC};"
+
+
+class TestProfileNameNotNormalized:
+    """Case 5: profile names are NOT path-normalized."""
+
+    def test_profile_name_is_exact_match(self, monkeypatch, tmp_path):
+        """Profile name 'prod_dw' is stored and resolved as-is, no normalization."""
+        global_file = tmp_path / "global.json"
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        credentials.write_profile("prod_dw", "PWD=secret")
+        result = credentials.resolve_profile("prod_dw")
+        assert result == "PWD=secret"
+
+        # Name with spaces or special chars should also work (exact key)
+        credentials.write_profile("my profile", "PWD=foo")
+        assert credentials.resolve_profile("my profile") == "PWD=foo"
+
+
+class TestListProfiles:
+    """Case 6: list_profiles returns names only, never values."""
+
+    def test_list_profiles_returns_names_only(self, monkeypatch, tmp_path):
+        """list_profiles returns a list of profile names, never connection strings."""
+        global_file = tmp_path / "global.json"
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        # Use connection strings WITHOUT credential tokens for this test
+        credentials.write_profile("profile_a", "Driver={ODBC};Server=srv;Database=db;")
+        credentials.write_profile("profile_b", "DSN=mydsn;UID=me;")
+
+        names = credentials.list_profiles()
+        assert set(names) == {"profile_a", "profile_b"}
+        # Values must never appear
+        for name in names:
+            resolved = credentials.resolve_profile(name)
+            assert resolved is not None
+            assert "PWD=" not in resolved
+            assert "Password=" not in resolved
+
+
+class TestRemoveProfile:
+    """Case 7: remove_profile returns True/False; leaves profiles as {}."""
+
+    def test_remove_profile_returns_true_when_existed(self, monkeypatch, tmp_path):
+        """remove_profile returns True when the profile existed."""
+        global_file = tmp_path / "global.json"
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        credentials.write_profile("to_remove", "PWD=secret")
+        assert credentials.remove_profile("to_remove") is True
+        assert credentials.resolve_profile("to_remove") is None
+
+    def test_remove_profile_returns_false_when_missing(self, monkeypatch, tmp_path):
+        """remove_profile returns False when no such profile exists."""
+        global_file = tmp_path / "global.json"
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        assert credentials.remove_profile("never_existed") is False
+
+    def test_remove_last_profile_leaves_profiles_as_empty_dict(self, monkeypatch, tmp_path):
+        """Removing the last profile leaves profiles:{} not credentials:{}."""
+        global_file = tmp_path / "global.json"
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        credentials.write_profile("only", "PWD=secret")
+        credentials.remove_profile("only")
+
+        # File should still exist (with empty profiles) since it may hold credentials
+        text = global_file.read_text(encoding="utf-8")
+        import json as _json
+
+        data = _json.loads(text)
+        assert data.get("profiles") == {}
+        assert data.get("credentials", {}) == {}
+
+
+class TestContainsCredential:
+    """Case 8: contains_credential matrix."""
+
+    @staticmethod
+    def _assert_contains(text: str, expected: bool) -> None:
+        result = credentials.contains_credential(text)
+        assert result is expected, f"contains_credential({text!r}) = {result}, expected {expected}"
+
+    def test_contains_credential_pwd_lowercase(self):
+        """PWD=x and pwd=x and Pwd=x all return True."""
+        self._assert_contains("PWD=hunter2", True)
+        self._assert_contains("pwd=hunter2", True)
+        self._assert_contains("Pwd=hunter2", True)
+
+    def test_contains_credential_password_keyword(self):
+        """Password= returns True (case-insensitive)."""
+        self._assert_contains("Password=hunter2", True)
+        self._assert_contains("PASSWORD=hunter2", True)
+        self._assert_contains("password=hunter2", True)
+
+    def test_contains_credential_jet_oledb(self):
+        """Jet OLEDB:Database Password= returns True."""
+        self._assert_contains("Jet OLEDB:Database Password=hunter2", True)
+        self._assert_contains("jet oleDB:database password=hunter2", True)
+
+    def test_contains_credential_false_positives(self):
+        """Trusted_Connection, DSN, Driver, paths return False."""
+        self._assert_contains("Trusted_Connection=yes", False)
+        self._assert_contains("C:\\data\\db.sqlite", False)
+        self._assert_contains("DSN=mydsn;UID=me", False)
+        self._assert_contains("Driver={ODBC Driver 18 for SQL Server}", False)
+
+    def test_contains_credential_token_positions(self):
+        """Password token at start, mid-string, end of string returns True."""
+        self._assert_contains("PWD=secret;other=data", True)
+        self._assert_contains("other=data;PWD=secret", True)
+        self._assert_contains("Server=srv;PWD=secret;Port=1433", True)
