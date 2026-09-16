@@ -1037,7 +1037,6 @@ def _cmd_credentials_set(args: argparse.Namespace) -> int:
         print(f"Error: cannot write credentials file: {e}", file=sys.stderr)
         return 2
 
-    target = Path(db_path).resolve().parent / ".ms-access-mcp.json" if getattr(args, "local", False) else Path.home() / ".ms-access-mcp" / "credentials.json"
     print(f"Saved credentials for {db_path}", file=sys.stderr)
     return 0
 

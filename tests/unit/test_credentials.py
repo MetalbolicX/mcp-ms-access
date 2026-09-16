@@ -14,16 +14,11 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 # The module under test
 from ms_access_mcp import credentials
 from ms_access_mcp.errors import Err, Ok
-
 
 # =============================================================================
 # Helpers
@@ -178,7 +173,6 @@ class TestLocalShadowsGlobal:
         """Local credentials file entry takes precedence over global entry."""
         db_path = str(tmp_path / "db.accdb")
         global_file = tmp_path / "global.json"
-        local_file = _local_credentials_path(db_path)
 
         _write_global_file(global_file, {
             "version": 1,

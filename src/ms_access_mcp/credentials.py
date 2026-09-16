@@ -48,14 +48,12 @@ _cache: dict[tuple[Path, float], _CredentialsDict | None] = {}
 
 
 def _global_credentials_path() -> Path:
-    """Return the platform-appropriate global credentials file path.
+    r"""Return the platform-appropriate global credentials file path.
 
     Returns:
-        ``%USERPROFILE%\\.ms-access-mcp\\credentials.json`` on Windows,
+        ``%USERPROFILE%\.ms-access-mcp\credentials.json`` on Windows,
         ``~/.ms-access-mcp/credentials.json`` on POSIX.
 
-    Raises:
-        KeyError: if ``USERPROFILE`` (Windows) or ``HOME`` (POSIX) is not set.
     """
     if os.name == "nt":
         base = Path(os.environ["USERPROFILE"])
@@ -72,6 +70,7 @@ def _local_credentials_path(db_path: str | Path) -> Path:
 
     Returns:
         ``<db_dir>/.ms-access-mcp.json``.
+
     """
     return Path(db_path).resolve().parent / ".ms-access-mcp.json"
 
@@ -86,6 +85,7 @@ def _normalize_path(db_path: str) -> str:
         The normalized absolute path, using ``os.path.normcase`` so that
         Windows drive-letter case and forward/back-slash differences do not
         cause a cache miss.
+
     """
     return os.path.normcase(os.path.normpath(str(Path(db_path).resolve())))
 
@@ -104,6 +104,7 @@ def _read_credentials_file(path: Path) -> _CredentialsDict | None:
     Returns:
         The parsed credentials dict, or ``None`` if the file does not exist
         or is malformed. Never raises.
+
     """
     if not path.exists():
         return None
@@ -157,6 +158,7 @@ def resolve_password(db_path: str) -> str:
 
     The global file path can be overridden by setting the
     ``ACCESS_MCP_CREDENTIALS_FILE`` environment variable.
+
     """
     normalized = _normalize_path(db_path)
 
@@ -188,6 +190,7 @@ def write_entry(db_path: str, password: str, *, local: bool = False) -> None:
     Raises:
         OSError: If the directory cannot be created or the file cannot be
                  written atomically.
+
     """
     target = _local_credentials_path(db_path) if local else _global_credentials_path()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -199,7 +202,9 @@ def write_entry(db_path: str, password: str, *, local: bool = False) -> None:
     if existing is None:
         data: _CredentialsDict = {"version": 1, "credentials": {}}
     else:
-        data = existing
+        # Normalize ALL existing keys so lookups are always consistent
+        normalized_creds = {_normalize_path(k): v for k, v in existing["credentials"].items()}
+        data = {"version": existing.get("version", 1), "credentials": normalized_creds}
 
     data["credentials"][normalized] = password
 
@@ -239,6 +244,7 @@ def remove_entry(db_path: str, *, local: bool = False) -> bool:
 
     Returns:
         True if an entry was removed, False if no entry existed.
+
     """
     target = _local_credentials_path(db_path) if local else _global_credentials_path()
     existing = _read_credentials_file(target)
@@ -290,6 +296,7 @@ def list_entries() -> list[tuple[Path, str]]:
         ``"global"`` or ``"local"``. The paths are the raw keys stored in the
         JSON files (not resolved/normalized). Passwords are never returned.
         Malformed files are silently skipped.
+
     """
     results: list[tuple[Path, str]] = []
 
