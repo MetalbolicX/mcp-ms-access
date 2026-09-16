@@ -140,7 +140,12 @@ def connect_access(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Connect to an Access database."""
+    """Connect to an Access database.
+
+    Password-protected databases resolve credentials server-side; if connection
+    fails with an auth error, ask the user to run
+    ``ms-access-mcp credentials set --db <path>`` — never request passwords.
+    """
     db = _new_db(readonly=True)
     result = db.open_database(path)
     dict_result = _result_to_dict(result)
