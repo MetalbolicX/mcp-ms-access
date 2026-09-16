@@ -129,16 +129,39 @@ def _alter_table_add_column(
 
 
 def _strip_password(connect_string: str) -> str:
-    """Strip PWD=... from a DAO connect string.
+    """Strip credential tokens from a DAO connect string.
 
-    Uses a simple regex approach to remove password from ODBC and other
-    connect strings. This prevents passwords from being persisted in
-    linked table definitions.
+    Removes ``PWD=``, ``Password=``, and ``Jet OLEDB:Database Password=``
+    tokens (case-insensitive) from ODBC and other connect strings.
+    This prevents passwords from being persisted in linked table definitions.
+
+    Credential tokens are matched as complete ;-delimited tokens. The
+    surrounding semicolons are preserved so the remaining connection string
+    structure is intact. After token removal, any resulting leading or
+    trailing semicolons are stripped to prevent artifacts like
+    ``ODBC;;DBQ=x``.
+
+    Args:
+        connect_string: The DAO connect string to sanitize.
+
+    Returns:
+        The connect string with any credential token removed.
+
     """
     import re
 
-    # Strip PWD=... (handles both ;PWD= and PWD= forms)
-    stripped = re.sub(r"(?<=[;])PWD=[^;]*", "", connect_string)
-    stripped = re.sub(r"\bPWD=[^;]*", "", stripped)
+    # Case-insensitive patterns for each credential form.
+    # Each pattern matches a complete ;-delimited token containing the credential.
+    # The surrounding semicolons are NOT consumed so the string structure is preserved.
+    patterns = [
+        re.compile(r"(?i)(?:^|;)PWD=[^;]*", re.IGNORECASE),
+        re.compile(r"(?i)(?:^|;)Password=[^;]*", re.IGNORECASE),
+        re.compile(r"(?i)(?:^|;)Jet OLEDB:Database Password=[^;]*", re.IGNORECASE),
+    ]
+
+    result = connect_string
+    for pattern in patterns:
+        result = pattern.sub("", result)
+
     # Clean up leading/trailing semicolons
-    return stripped.strip(";")
+    return result.strip(";")

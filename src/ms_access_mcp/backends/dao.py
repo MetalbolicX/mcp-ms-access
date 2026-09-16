@@ -722,7 +722,7 @@ class DaoAdapter:
                 for i in range(db.TableDefs.Count):
                     tdef = db.TableDefs(i)
                     if tdef.Attributes & 0x80000000:
-                        connect_str = tdef.Connect or ""
+                        connect_str = _strip_password(tdef.Connect or "")
                         if connect_str.startswith("ODBC"):
                             table_type = "ODBC"
                         elif connect_str.startswith("Access"):
@@ -741,7 +741,8 @@ class DaoAdapter:
                             }
                         )
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                err = _strip_password(str(e))
+                return {"success": False, "error": err}
             return {"success": True, "linked_tables": linked_tables}
 
         return self._dispatcher.call(_do)
@@ -764,7 +765,11 @@ class DaoAdapter:
                 tdef.Connect = _strip_password(connect_string)
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                err = str(e)
+                if connect_string in err:
+                    err = err.replace(connect_string, "[sanitized]")
+                err = _strip_password(err)
+                return {"success": False, "error": err}
 
         return self._dispatcher.call(_do)
 
@@ -782,7 +787,11 @@ class DaoAdapter:
                 tdef.Connect = _strip_password(tdef.Connect or "")
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                err = str(e)
+                if connect_string and connect_string in err:
+                    err = err.replace(connect_string, "[sanitized]")
+                err = _strip_password(err)
+                return {"success": False, "error": err}
 
         return self._dispatcher.call(_do)
 
@@ -807,7 +816,11 @@ class DaoAdapter:
                 new_tdef.Connect = _strip_password(connect_string)
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                err = str(e)
+                if connect_string in err:
+                    err = err.replace(connect_string, "[sanitized]")
+                err = _strip_password(err)
+                return {"success": False, "error": err}
 
         return self._dispatcher.call(_do)
 
