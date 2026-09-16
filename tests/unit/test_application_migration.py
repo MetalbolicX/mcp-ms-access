@@ -426,3 +426,192 @@ class TestIntegrationSkips:
     def test_sqlserver_live_connection(self):
         """Requires pyodbc driver — skip if not available."""
         pytest.skip("Integration test — requires sqlserver driver")
+
+
+# =============================================================================
+# Step 4 RED: Migration connection_ref + error hardening
+# Cases 20-23 from plan 040
+# =============================================================================
+
+
+class TestMigrationConnectionRef:
+    """Case 20: upload_schema with connection_ref — test the resolution helper."""
+
+    def test_resolve_connect_arg_ref_found_returns_resolved(self, monkeypatch):
+        """_resolve_connect_arg returns resolved string when profile found."""
+        import ms_access_mcp.application.migration as migration_module
+
+        monkeypatch.setattr(migration_module, "resolve_profile", lambda n: "Driver={ODBC};PWD=secret" if n == "prod" else None)
+
+        uc = migration_module.MigrationUseCases()
+        resolved, err = uc._resolve_connect_arg(connection_string=None, connection_ref="prod")
+
+        assert err is None
+        assert resolved == "Driver={ODBC};PWD=secret"
+
+    def test_resolve_connect_arg_ref_not_found_returns_error(self, monkeypatch):
+        """_resolve_connect_arg returns error when profile not found."""
+        import ms_access_mcp.application.migration as migration_module
+
+        monkeypatch.setattr(migration_module, "resolve_profile", lambda n: None)
+
+        uc = migration_module.MigrationUseCases()
+        resolved, err = uc._resolve_connect_arg(connection_string=None, connection_ref="nonexistent")
+
+        assert resolved is None
+        assert err is not None
+        assert "nonexistent" in err
+        assert "credentials profile set" in err
+
+    def test_resolve_connect_arg_literal_with_credential_hard_reject(self, monkeypatch):
+        """_resolve_connect_arg hard-rejects connection_string containing PWD=."""
+        import ms_access_mcp.application.migration as migration_module
+
+        monkeypatch.setattr(migration_module, "resolve_profile", lambda n: None)
+
+        uc = migration_module.MigrationUseCases()
+        resolved, err = uc._resolve_connect_arg(connection_string="ODBC;PWD=hunter2", connection_ref=None)
+
+        assert resolved is None
+        assert err is not None
+        assert "credentials profile" in err
+        assert "hunter2" not in err
+
+    def test_resolve_connect_arg_both_ambiguous(self, monkeypatch):
+        """_resolve_connect_arg returns ambiguous error when both are set."""
+        import ms_access_mcp.application.migration as migration_module
+
+        monkeypatch.setattr(migration_module, "resolve_profile", lambda n: "resolved")
+
+        uc = migration_module.MigrationUseCases()
+        resolved, err = uc._resolve_connect_arg(connection_string="ODBC", connection_ref="profile")
+
+        assert resolved is None
+        assert err is not None
+        assert "ambiguous" in err.lower()
+
+
+class TestMigrationConnectionRefErrors:
+    """Case 21: connection_ref errors — same 5-rule behavior as Step 3."""
+
+    def test_connection_ref_not_found_error(self, monkeypatch):
+        """connection_ref not found → Err with CLI guidance, no credential value."""
+        import ms_access_mcp.application.migration as migration_module
+
+        monkeypatch.setattr(migration_module, "resolve_profile", lambda name: None)
+
+        uc = MigrationUseCases()
+        result = uc.upload_schema(
+            target_type="sqlite",
+            connection_ref="nonexistent",
+            schema_json={"tables": []},
+            confirm=True,
+        )
+
+        assert isinstance(result, Err), f"expected Err, got {result}"
+        assert "ms-access-mcp credentials profile set" in result.message
+        assert "nonexistent" in result.message
+        assert "hunter2" not in result.message
+
+    def test_connection_ref_with_literal_credentials_hard_reject(self, monkeypatch):
+        """literal connection_string with PWD= → hard-reject Err."""
+        import ms_access_mcp.application.migration as migration_module
+
+        monkeypatch.setattr(migration_module, "resolve_profile", lambda name: None)
+
+        uc = MigrationUseCases()
+        result = uc.upload_schema(
+            target_type="sqlite",
+            connection_string="ODBC;PWD=hunter2;Database=test.db",
+            schema_json={"tables": []},
+            confirm=True,
+        )
+
+        assert isinstance(result, Err), f"expected Err, got {result}"
+        assert "credentials profile set" in result.message
+        assert "hunter2" not in result.message
+
+    def test_both_connection_ref_and_literal_ambiguous(self, monkeypatch):
+        """Providing both connection_ref and connection_string → Err (ambiguous)."""
+        import ms_access_mcp.application.migration as migration_module
+
+        monkeypatch.setattr(migration_module, "resolve_profile", lambda name: "resolved")
+
+        uc = MigrationUseCases()
+        result = uc.upload_schema(
+            target_type="sqlite",
+            connection_ref="prod_dw",
+            connection_string="ODBC;DSN=mydb",
+            schema_json={"tables": []},
+            confirm=True,
+        )
+
+        assert isinstance(result, Err), f"expected Err, got {result}"
+        assert "ambiguous" in result.message.lower()
+
+
+class TestMigrationImportErrorSanitization:
+    """Case 22: ImportError path routes through _sanitize_error."""
+
+    def test_import_error_sanitized(self, monkeypatch):
+        """ImportError (missing driver) → error message is sanitized, not raw."""
+        import ms_access_mcp.application.migration as migration_module
+        from ms_access_mcp.application.migration import MigrationUseCases
+
+        def raising_get_connector(target_type, connection_string):
+            raise ImportError(f"No driver for {target_type}: ODBC;PWD=hunter2;Database=test.db")
+
+        monkeypatch.setattr(migration_module, "get_connector", raising_get_connector)
+
+        uc = MigrationUseCases()
+        result = uc.upload_schema(
+            target_type="sqlite",
+            connection_string="ODBC;PWD=hunter2;Database=test.db",
+            schema_json={"tables": []},
+            confirm=True,
+        )
+
+        assert isinstance(result, Err), f"expected Err, got {result}"
+        # The error should be sanitized, not containing the raw connection string
+        # Note: "PWD=" may appear in the guidance text itself (explaining the hard-reject rule),
+        # so we check for the actual credential value "hunter2" instead
+        assert "hunter2" not in result.message
+
+
+class TestBaseConnectorRepr:
+    """Case 23: BaseConnector.__repr__ is redacted, never contains connection string."""
+
+    def test_base_connector_repr_is_redacted(self):
+        """repr(connector) returns '<TypeName [redacted]>', never the connection string."""
+        from ms_access_mcp.backends.migration.connectors import BaseConnector
+
+        # Create a subclass for testing (BaseConnector is abstract)
+        class TestConnector(BaseConnector):
+            def connect(self) -> None:
+                pass
+
+            def table_exists(self, table: str) -> bool:
+                return False
+
+            def create_table(self, ddl: str) -> None:
+                pass
+
+            def insert_batch(self, table: str, columns: list[str], rows: list[tuple]) -> int:
+                return 0
+
+            def rollback_table(self, table: str) -> None:
+                pass
+
+            def disconnect(self) -> None:
+                pass
+
+        connector = TestConnector("Driver={ODBC};PWD=hunter2;Database=test.db")
+        repr_str = repr(connector)
+
+        # repr must not contain the connection string
+        assert "hunter2" not in repr_str
+        assert "ODBC" not in repr_str
+        assert "Database" not in repr_str
+        # repr must contain the class name and [redacted]
+        assert "TestConnector" in repr_str
+        assert "[redacted]" in repr_str

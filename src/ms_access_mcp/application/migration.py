@@ -24,6 +24,7 @@ from ..backends.schema_inspector import (
     TableSchema,
     UnknownMetadata,
 )
+from ..credentials import contains_credential, resolve_profile
 from ..errors import Err, Result
 from ..errors import err as _err
 from ..errors import ok as _ok
@@ -102,6 +103,51 @@ class MigrationUseCases:
             db_path: Optional Access database path for direct source access.
         """
         self._db_path = db_path
+
+    def _resolve_connect_arg(
+        self,
+        connection_string: str | None,
+        connection_ref: str | None,
+    ) -> tuple[str | None, str | None]:
+        """Resolve connection_string / connection_ref into a resolved string or an error.
+
+        Resolution rules (5-rule):
+          1. Both provided → Err("ambiguous")
+          2. ref provided, resolved None → Err("profile not found")
+          3. ref provided, resolved OK → resolved string
+          4. literal with credential → Err("hard-reject")
+          5. clean literal or neither → Ok(literal or None)
+
+        Returns:
+            (resolved_string, None) on success, or (None, error_message) on error.
+
+        """
+        if connection_ref is not None and connection_string is not None:
+            return None, (
+                "Ambiguous: both connection_ref and connection_string are set. "
+                "Use either connection_ref (named profile) or connection_string, not both."
+            )
+        if connection_ref is not None:
+            resolved = resolve_profile(connection_ref)
+            if resolved is None:
+                return None, (
+                    f"Profile '{connection_ref}' not found. "
+                    "Run: ms-access-mcp credentials profile set --name {connection_ref} "
+                    "--connection-string '<connection_string>'. "
+                    "Never supply the connection string directly."
+                )
+            return resolved, None
+        if connection_string is not None:
+            if contains_credential(connection_string):
+                return None, (
+                    "connection_string contains a credential token (PWD=, Password=, or "
+                    "Jet OLEDB:Database Password=). Use connection_ref instead: "
+                    "ms-access-mcp credentials profile set --name <name> "
+                    "--connection-string '<connection_string>'. "
+                    "Never supply the connection string directly."
+                )
+            return connection_string, None
+        return None, None
 
     # -------------------------------------------------------------------------
     # extract_schema
@@ -284,8 +330,10 @@ class MigrationUseCases:
     def upload_schema(
         self,
         target_type: str,
-        connection_string: str,
-        schema_json: dict[str, Any],
+        connection_string: str | None = None,
+        schema_json: dict[str, Any] | None = None,
+        *,
+        connection_ref: str | None = None,
         confirm: bool = False,
     ) -> Result:
         """Upload schema to target database.
@@ -295,23 +343,30 @@ class MigrationUseCases:
         Args:
             target_type: Target dialect.
             connection_string: Target connection string.
+                Required unless connection_ref is provided.
             schema_json: ExtractedSchema as dict.
+            connection_ref: Named credential profile to resolve the connection string.
             confirm: Must be True to execute DDL.
 
         Returns:
             Ok with {tables_created, tables_failed} on success, Err on failure.
+
         """
         if not confirm:
             return _err("confirm=True is required to upload schema")
 
+        resolved, err_msg = self._resolve_connect_arg(connection_string, connection_ref)
+        if err_msg is not None:
+            return _err(err_msg)
+
         # Parse schema
         try:
-            schema = ExtractedSchema.model_validate(schema_json)
+            schema = ExtractedSchema.model_validate(schema_json or {})
         except Exception as e:
-            return _err(f"Invalid schema: {e}")
+            return _err(_sanitize_error(str(e), "schema"))
 
         # Get connector
-        connector_result = self._get_connector(target_type, connection_string)
+        connector_result = self._get_connector(target_type, resolved or "")
         if isinstance(connector_result, Err):
             return connector_result
 
@@ -343,9 +398,11 @@ class MigrationUseCases:
     def transfer_data(
         self,
         target_type: str,
-        connection_string: str,
-        database_path: str,
+        connection_string: str | None = None,
+        database_path: str = "",
         schema_json: dict[str, Any] | None = None,
+        *,
+        connection_ref: str | None = None,
         transfer_mode: str = "auto",
         verification_mode: str = "full",
         table_overrides: dict[str, dict[str, Any]] | None = None,
@@ -356,8 +413,10 @@ class MigrationUseCases:
         Args:
             target_type: Target dialect.
             connection_string: Target connection string.
+                Required unless connection_ref is provided.
             database_path: Access database path.
             schema_json: Optional schema (extracted if None).
+            connection_ref: Named credential profile to resolve the connection string.
             transfer_mode: 'auto' -> 'batch'; 'linked'/'passthrough' -> rejected.
             verification_mode: 'full' (sampling) or 'count-only'.
             table_overrides: Optional per-table {columns, where, order_by}.
@@ -365,9 +424,14 @@ class MigrationUseCases:
 
         Returns:
             Ok with {success, job_id} on completion, Err on failure.
+
         """
         if not confirm:
             return _err("confirm=True is required to transfer data")
+
+        resolved, err_msg = self._resolve_connect_arg(connection_string, connection_ref)
+        if err_msg is not None:
+            return _err(err_msg)
 
         # Validate transfer_mode
         if transfer_mode in ("linked", "passthrough"):
@@ -393,7 +457,7 @@ class MigrationUseCases:
             try:
                 schema = ExtractedSchema.model_validate(schema_json)
             except Exception as e:
-                return _err(f"Invalid schema: {e}")
+                return _err(_sanitize_error(str(e), "schema"))
 
         # Register job
         job_id = _generate_job_id()
@@ -407,7 +471,7 @@ class MigrationUseCases:
         register_job(job)
 
         # Get connector
-        connector_result = self._get_connector(target_type, connection_string)
+        connector_result = self._get_connector(target_type, resolved or "")
         if isinstance(connector_result, Err):
             job.status = "failed"
             job.errors.append(connector_result.message)

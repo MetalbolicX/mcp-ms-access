@@ -98,3 +98,7 @@ class BaseConnector(ABC):
     @abstractmethod
     def disconnect(self) -> None:
         """Close the connection to the target database."""
+
+    def __repr__(self) -> str:
+        """Redacted repr — never echoes the connection string."""
+        return f"<{type(self).__name__} [redacted]>"
