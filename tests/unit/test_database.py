@@ -1,6 +1,7 @@
 """Tests for database.py — DatabaseUseCases with fakes for TDD."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -13,6 +14,7 @@ from ms_access_mcp.application.database import (
 )
 from ms_access_mcp.backends.access import AccessAdapter
 from ms_access_mcp.models import FieldInfo, IndexInfo, ObjectMetadata, RelationshipInfo, TableInfo
+from ms_access_mcp.safety import WritePolicy
 
 
 class FakeAdapter:
@@ -714,3 +716,231 @@ class TestGetObjectMetadataBugA:
         result = db.get_object_metadata("Users")
         assert isinstance(result, Ok)
         assert result.data["name"] == "Users"
+
+
+# =============================================================================
+# Step 3 RED: Linked-table connect_ref + hard-reject
+# Cases 13-19 from plan 040
+# =============================================================================
+
+
+class TestCreateLinkedTableConnectRef:
+    """Case 13: create_linked_table with connect_ref resolves to full string."""
+
+    def test_connect_ref_resolves_to_full_string(self, monkeypatch, tmp_path):
+        """connect_ref='prod_dw' causes adapter to receive the resolved connection string."""
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        captured: dict = {}
+
+        class FakeLinkedAdapter:
+            def create_linked_table(self, name, source_table, connect_string):
+                captured["connect_string"] = connect_string
+                return {"success": True}
+
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **kw: FakeLinkedAdapter())
+
+        # Mock credentials to return the full string when resolve_profile is called
+        # Must patch at the usage site (database module) because of how Python import binding works
+        import ms_access_mcp.application.database as db_module
+
+        monkeypatch.setattr(
+            db_module,
+            "resolve_profile",
+            lambda name: "Driver={ODBC};PWD=hunter2;Server=srv" if name == "prod_dw" else None,
+        )
+
+        db = DatabaseUseCases()
+        db._policy = WritePolicy(readonly=False)
+        db._connections["default"] = FakeLinkedAdapter()
+        result = db.create_linked_table(
+            name="Orders",
+            source_table="Orders",
+            connect_ref="prod_dw",
+            confirm=True,
+        )
+
+        assert isinstance(result, Ok), f"expected Ok, got {result}"
+        assert captured["connect_string"] == "Driver={ODBC};PWD=hunter2;Server=srv"
+
+
+class TestCreateLinkedTableRefNotFound:
+    """Case 14: connect_ref not found → Err with CLI guidance, no credential value."""
+
+    def test_ref_not_found_error_has_guidance(self, monkeypatch):
+        """Err message mentions the CLI command to set the profile."""
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **kw: MagicMock())
+
+        # Mock resolve_profile to return None (profile not found)
+        monkeypatch.setattr(
+            "ms_access_mcp.credentials.resolve_profile",
+            lambda name: None,
+        )
+
+        db = DatabaseUseCases()
+        db._policy = WritePolicy(readonly=False)
+        result = db.create_linked_table(
+            name="Orders",
+            source_table="Orders",
+            connect_ref="nonexistent_profile",
+            confirm=True,
+        )
+
+        assert isinstance(result, Err), f"expected Err, got {result}"
+        assert "ms-access-mcp credentials profile set" in result.message
+        assert "nonexistent_profile" in result.message
+        # Must NOT contain any hardcoded credential value
+        assert "hunter2" not in result.message
+        assert "PWD=" not in result.message
+
+
+class TestCreateLinkedTableHardReject:
+    """Case 15: literal connect_string with PWD= → hard-reject Err."""
+
+    def test_literal_connect_string_with_password_hard_rejected(self, monkeypatch):
+        """A literal connect_string containing PWD= is rejected with profile guidance."""
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **kw: MagicMock())
+
+        db = DatabaseUseCases()
+        db._policy = WritePolicy(readonly=False)
+        result = db.create_linked_table(
+            name="Orders",
+            source_table="Orders",
+            connect_string="ODBC;PWD=hunter2;Database=Northwind",
+            confirm=True,
+        )
+
+        assert isinstance(result, Err), f"expected Err, got {result}"
+        assert "ms-access-mcp credentials profile set" in result.message
+        assert "hunter2" not in result.message
+
+
+class TestCreateLinkedTableCleanLiteral:
+    """Case 16: clean literal connect_string (no creds) is allowed."""
+
+    def test_clean_literal_connect_string_allowed(self, monkeypatch):
+        """A literal connect_string with Trusted_Connection (no PWD) is allowed."""
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        captured = {}
+
+        class FakeLinkedAdapter:
+            def create_linked_table(self, name, source_table, connect_string):
+                captured["connect_string"] = connect_string
+                return {"success": True}
+
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **kw: FakeLinkedAdapter())
+
+        db = DatabaseUseCases()
+        db._policy = WritePolicy(readonly=False)
+        db._connections["default"] = FakeLinkedAdapter()
+        result = db.create_linked_table(
+            name="Orders",
+            source_table="Orders",
+            connect_string="ODBC;DSN=mydsn;Trusted_Connection=yes",
+            confirm=True,
+        )
+
+        assert isinstance(result, Ok), f"expected Ok, got {result}"
+        assert captured["connect_string"] == "ODBC;DSN=mydsn;Trusted_Connection=yes"
+
+
+class TestCreateLinkedTableAmbiguous:
+    """Case 17: both connect_ref and connect_string → Err (ambiguous)."""
+
+    def test_both_ref_and_literal_ambiguous(self, monkeypatch):
+        """Providing both connect_ref and connect_string returns an ambiguous error."""
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **kw: MagicMock())
+
+        db = DatabaseUseCases()
+        db._policy = WritePolicy(readonly=False)
+        result = db.create_linked_table(
+            name="Orders",
+            source_table="Orders",
+            connect_ref="prod_dw",
+            connect_string="ODBC;DSN=mydsn;",
+            confirm=True,
+        )
+
+        assert isinstance(result, Err), f"expected Err, got {result}"
+        assert "ambiguous" in result.message.lower()
+
+
+class TestRefreshLinkedTableNeither:
+    """Case 18: refresh_linked_table with neither connect_ref nor connect_string."""
+
+    def test_refresh_with_no_connect_args_preserves_existing(self, monkeypatch):
+        """refresh_linked_table called with no new connect args calls adapter with None."""
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        captured = {}
+
+        class FakeLinkedAdapter:
+            def refresh_linked_table(self, name, connect_string):
+                captured["connect_string"] = connect_string
+                return {"success": True}
+
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **kw: FakeLinkedAdapter())
+
+        db = DatabaseUseCases()
+        db._policy = WritePolicy(readonly=False)
+        db._connections["default"] = FakeLinkedAdapter()
+        result = db.refresh_linked_table(
+            name="Orders",
+            confirm=True,
+        )
+
+        assert isinstance(result, Ok), f"expected Ok, got {result}"
+        assert captured["connect_string"] is None
+
+
+class TestCreateLinkedTableErrorScrub:
+    """Case 19: adapter error with password in message is scrubbed at use-case seam."""
+
+    def test_adapter_error_scrubs_password(self, monkeypatch):
+        """Error from adapter containing PWD= must not leak the password value."""
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **kw: MagicMock())
+        monkeypatch.setattr(
+            "ms_access_mcp.credentials.resolve_profile",
+            lambda name: "ODBC;PWD=hunter2;Server=srv" if name == "prod_dw" else None,
+        )
+
+        class LeakingAdapter:
+            def create_linked_table(self, name, source_table, connect_string):
+                raise Exception(f"ODBC connect failed: {connect_string}")
+
+        # Patch get_adapter to return leaking adapter
+        monkeypatch.setattr(
+            BackendSelector,
+            "get_adapter",
+            lambda **kw: LeakingAdapter(),
+        )
+
+        db = DatabaseUseCases()
+        db._policy = WritePolicy(readonly=False)
+        db._connections["default"] = LeakingAdapter()
+        result = db.create_linked_table(
+            name="Orders",
+            source_table="Orders",
+            connect_ref="prod_dw",
+            confirm=True,
+        )
+
+        assert isinstance(result, Err), f"expected Err, got {result}"
+        assert "hunter2" not in result.message
+        assert "***" in result.message or "[sanitized]" in result.message

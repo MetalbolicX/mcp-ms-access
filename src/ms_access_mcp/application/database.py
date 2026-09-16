@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from ..backends import DATA_READ_CAPS, BackendSelector
+from ..credentials import contains_credential, resolve_profile
 from ..errors import Err, Ok, Result, err, ok  # noqa: F401 — re-exported for backward compatibility
 from ..models import QueryResult
 from ..safety import WritePolicy, is_path_allowed
@@ -866,73 +867,155 @@ class DatabaseUseCases:
     # Linked Table Operations (thin wrappers — DAO backend at backends/dao.py)
     # -------------------------------------------------------------------------
 
+    def _resolve_connect_arg(
+        self,
+        connect_string: str | None,
+        connect_ref: str | None,
+        allow_both: bool = False,
+    ) -> tuple[str | None, str | None]:
+        """Resolve connect_string / connect_ref into a resolved string or an error.
+
+        Resolution rules (5-rule):
+          1. Both provided → Err("ambiguous")
+          2. ref provided, resolved None → Err("profile not found")
+          3. ref provided, resolved OK → resolved string
+          4. literal with credential → Err("hard-reject")
+          5. clean literal or neither → Ok(literal or None)
+
+        Args:
+            connect_string: Direct connection string from caller.
+            connect_ref: Named profile reference from caller.
+            allow_both: If True, rule 1 is skipped (for refresh that allows neither).
+
+        Returns:
+            (resolved_string, None) on success, or (None, error_message) on error.
+
+        """
+        if connect_ref is not None and connect_string is not None:
+            if not allow_both:
+                return None, (
+                    "Ambiguous: both connect_ref and connect_string are set. "
+                    "Use either connect_ref (named profile) or connect_string, not both."
+                )
+        if connect_ref is not None:
+            resolved = resolve_profile(connect_ref)
+            if resolved is None:
+                return None, (
+                    f"Profile '{connect_ref}' not found. "
+                    "Run: ms-access-mcp credentials profile set --name {connect_ref} "
+                    "--connection-string '<connection_string>'. "
+                    "Never supply the connection string directly."
+                )
+            return resolved, None
+        if connect_string is not None:
+            if contains_credential(connect_string):
+                return None, (
+                    "connect_string contains a credential token (PWD=, Password=, or "
+                    "Jet OLEDB:Database Password=). Use connect_ref instead: "
+                    "ms-access-mcp credentials profile set --name <name> "
+                    "--connection-string '<connection_string>'. "
+                    "Never supply the connection string directly."
+                )
+            return connect_string, None
+        return None, None
+
     def create_linked_table(
         self,
         name: str,
         source_table: str,
-        connect_string: str,
+        connect_string: str | None = None,
+        *,
+        connect_ref: str | None = None,
         connection_name: str = "default",
         confirm: bool = False,
     ) -> Result:
         """Create a linked (attached) table.
 
         Args:
-            name: Name for the new linked table in this database
-            source_table: Name of the source table on the remote database
-            connect_string: ODBC or DAO connection string to the remote database
-            connection_name: Connection to use
-            confirm: Must be True to execute
+            name: Name for the new linked table in this database.
+            source_table: Name of the source table on the remote database.
+            connect_string: ODBC or DAO connection string to the remote database.
+                Required unless connect_ref is provided.
+            connect_ref: Named credential profile to resolve the connection string.
+                Either connect_string or connect_ref must be provided, not both.
+            connection_name: Connection to use.
+            confirm: Must be True to execute.
 
         Returns:
-            Ok on success, or Err
+            Ok on success, or Err with a sanitized error message.
+
         """
         if ack := self._policy.require_acknowledgment("create_linked_table", confirm):
             return _err(ack)
         if not self._policy.allow_write():
             return _err("Write operations are disabled (readonly mode)")
+        resolved, err_msg = self._resolve_connect_arg(connect_string, connect_ref)
+        if err_msg is not None:
+            return _err(err_msg)
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.create_linked_table(name, source_table, connect_string)
+            result = adapter.create_linked_table(name, source_table, resolved)
             if isinstance(result, dict) and not result.get("success", False):
-                return _err(result.get("error", "create_linked_table failed"))
+                raw_error = result.get("error", "create_linked_table failed")
+                # Scrub the resolved connect string from adapter errors
+                if resolved and resolved in raw_error:
+                    raw_error = raw_error.replace(resolved, "***")
+                return _err(raw_error)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            raw = str(e)
+            if resolved and resolved in raw:
+                raw = raw.replace(resolved, "***")
+            return _err(raw)
 
     def refresh_linked_table(
         self,
         name: str,
         connect_string: str | None = None,
+        *,
+        connect_ref: str | None = None,
         connection_name: str = "default",
         confirm: bool = False,
     ) -> Result:
         """Re-authenticate a linked table.
 
         Args:
-            name: Name of the linked table to refresh
-            connect_string: Updated connection string (optional)
-            connection_name: Connection to use
-            confirm: Must be True to execute
+            name: Name of the linked table to refresh.
+            connect_string: Updated connection string (optional).
+            connect_ref: Named credential profile for the connection (optional).
+            connection_name: Connection to use.
+            confirm: Must be True to execute.
 
         Returns:
-            Ok on success, or Err
+            Ok on success, or Err with a sanitized error message.
+
         """
         if ack := self._policy.require_acknowledgment("refresh_linked_table", confirm):
             return _err(ack)
         if not self._policy.allow_write():
             return _err("Write operations are disabled (readonly mode)")
+        # allow_both=False: if both are None, passes through (reuse existing link)
+        resolved, err_msg = self._resolve_connect_arg(connect_string, connect_ref, allow_both=False)
+        if err_msg is not None:
+            return _err(err_msg)
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.refresh_linked_table(name, connect_string)
+            result = adapter.refresh_linked_table(name, resolved)
             if isinstance(result, dict) and not result.get("success", False):
-                return _err(result.get("error", "refresh_linked_table failed"))
+                raw_error = result.get("error", "refresh_linked_table failed")
+                if resolved and resolved in raw_error:
+                    raw_error = raw_error.replace(resolved, "***")
+                return _err(raw_error)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            raw = str(e)
+            if resolved and resolved in raw:
+                raw = raw.replace(resolved, "***")
+            return _err(raw)
 
     def unlink_table(
         self,
@@ -969,36 +1052,50 @@ class DatabaseUseCases:
         self,
         name: str,
         source_table: str,
-        connect_string: str,
+        connect_string: str | None = None,
+        *,
+        connect_ref: str | None = None,
         connection_name: str = "default",
         confirm: bool = False,
     ) -> Result:
         """Recreate a linked table (preserves hidden attributes).
 
         Args:
-            name: Name of the linked table to upsert
-            source_table: Name of the source table on the remote database
-            connect_string: ODBC or DAO connection string to the remote database
-            connection_name: Connection to use
-            confirm: Must be True to execute
+            name: Name of the linked table to upsert.
+            source_table: Name of the source table on the remote database.
+            connect_string: ODBC or DAO connection string to the remote database.
+                Required unless connect_ref is provided.
+            connect_ref: Named credential profile to resolve the connection string.
+            connection_name: Connection to use.
+            confirm: Must be True to execute.
 
         Returns:
-            Ok on success, or Err
+            Ok on success, or Err with a sanitized error message.
+
         """
         if ack := self._policy.require_acknowledgment("upsert_linked_table", confirm):
             return _err(ack)
         if not self._policy.allow_write():
             return _err("Write operations are disabled (readonly mode)")
+        resolved, err_msg = self._resolve_connect_arg(connect_string, connect_ref)
+        if err_msg is not None:
+            return _err(err_msg)
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.recreate_linked_table(name, source_table, connect_string)
+            result = adapter.recreate_linked_table(name, source_table, resolved)
             if isinstance(result, dict) and not result.get("success", False):
-                return _err(result.get("error", "upsert_linked_table failed"))
+                raw_error = result.get("error", "upsert_linked_table failed")
+                if resolved and resolved in raw_error:
+                    raw_error = raw_error.replace(resolved, "***")
+                return _err(raw_error)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            raw = str(e)
+            if resolved and resolved in raw:
+                raw = raw.replace(resolved, "***")
+            return _err(raw)
 
     # -------------------------------------------------------------------------
     # Database Creation
