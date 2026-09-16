@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ from .application.maintenance import MaintenanceUseCases
 from .application.protocols import AutomationUseCasesProtocol, MaintenanceUseCasesProtocol, VersioningUseCasesProtocol
 from .application.versioning import VersioningUseCases
 from .cli_format import cli_allowed_dirs, format_result
+from .credentials import list_entries, remove_entry, write_entry
 from .doctor import doctor_main
 from .opencode_config import Ok as OpenCodeOk
 from .opencode_config import entry_from, register, remove
@@ -973,6 +975,104 @@ def _cmd_configure_opencode(args: argparse.Namespace) -> int:
 
 
 # =============================================================================
+# Credentials Subcommands
+# =============================================================================
+
+
+def _FORBIDDEN_IN_PASSWORD() -> frozenset[str]:
+    """Characters forbidden in passwords (ODBC connection-string safety)."""
+    return frozenset({";", "{", "}"})
+
+
+def _cmd_credentials_set(args: argparse.Namespace) -> int:
+    """Handle: credentials set --db <path> [--local] [--yes].
+
+    Exit codes:
+        0: success
+        2: user error (empty, mismatch, forbidden chars, unconfirmed overwrite)
+    """
+    db_path = args.db_path
+
+    # Prompt twice for confirmation
+    try:
+        pw1 = getpass.getpass(f"Enter password for {db_path}: ")
+    except EOFError:
+        print("Error: cannot read password (EOF)", file=sys.stderr)
+        return 2
+
+    if not pw1:
+        print("Error: password may not be empty", file=sys.stderr)
+        return 2
+
+    forbidden = _FORBIDDEN_IN_PASSWORD()
+    if any(c in pw1 for c in forbidden):
+        print(
+            f"Error: password may not contain any of: {' '.join(sorted(forbidden))} "
+            "(ODBC connection-string safety; edit the file manually if needed)",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        pw2 = getpass.getpass("Confirm password: ")
+    except EOFError:
+        print("Error: cannot read confirmation (EOF)", file=sys.stderr)
+        return 2
+
+    if pw1 != pw2:
+        print("Error: passwords do not match", file=sys.stderr)
+        return 2
+
+    # Check for existing entry (require --yes or confirmation)
+    existing = [p for p, _ in list_entries() if str(Path(db_path).resolve()) == str(p.resolve())]
+    if existing and not getattr(args, "yes", False):
+        confirm = input(f"Overwrite existing entry for {db_path}? [y/N] ").strip().lower()
+        if confirm not in ("y", "yes"):
+            print("Aborted.", file=sys.stderr)
+            return 2
+
+    try:
+        write_entry(db_path, pw1, local=getattr(args, "local", False))
+    except OSError as e:
+        print(f"Error: cannot write credentials file: {e}", file=sys.stderr)
+        return 2
+
+    target = Path(db_path).resolve().parent / ".ms-access-mcp.json" if getattr(args, "local", False) else Path.home() / ".ms-access-mcp" / "credentials.json"
+    print(f"Saved credentials for {db_path}", file=sys.stderr)
+    return 0
+
+
+def _cmd_credentials_list(_args: argparse.Namespace) -> int:
+    """Handle: credentials list.
+
+    Exit codes:
+        0: always (malformed files reported as invalid)
+    """
+    entries = list_entries()
+    if not entries:
+        print("No credentials entries found.", file=sys.stderr)
+        return 0
+
+    for path, source in entries:
+        print(f"[{source}] {path}", file=sys.stderr)
+    return 0
+
+
+def _cmd_credentials_remove(args: argparse.Namespace) -> int:
+    """Handle: credentials remove --db <path> [--local].
+
+    Exit codes:
+        0: always (missing entry is a no-op)
+    """
+    removed = remove_entry(args.db_path, local=getattr(args, "local", False))
+    if removed:
+        print(f"Removed credentials for {args.db_path}", file=sys.stderr)
+    else:
+        print(f"No entry found for {args.db_path} (no-op)", file=sys.stderr)
+    return 0
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
@@ -1008,6 +1108,24 @@ def build_parser() -> argparse.ArgumentParser:
     exe_path_group.add_argument("--exe-path", type=str, default=None, help="Absolute path to ms-access-mcp executable")
     exe_path_group.add_argument("--python-mode", action="store_true", help="Use sys.executable with -m ms_access_mcp (portable distribution)")
     opencode_parser.set_defaults(func=_cmd_configure_opencode)
+
+    # credentials subcommands
+    credentials_parser = subparsers.add_parser("credentials", help="Manage server-side database credentials")
+    cred_subparsers = credentials_parser.add_subparsers(dest="credentials_action")
+
+    cred_set = cred_subparsers.add_parser("set", help="Store credentials for a database")
+    cred_set.add_argument("--db", type=str, required=True, dest="db_path", help="Path to the Access database")
+    cred_set.add_argument("--local", action="store_true", help="Store in <db_dir>/.ms-access-mcp.json instead of global file")
+    cred_set.add_argument("--yes", action="store_true", help="Skip overwrite confirmation")
+    cred_set.set_defaults(func=_cmd_credentials_set)
+
+    cred_list = cred_subparsers.add_parser("list", help="List stored credentials")
+    cred_list.set_defaults(func=_cmd_credentials_list)
+
+    cred_remove = cred_subparsers.add_parser("remove", help="Remove credentials for a database")
+    cred_remove.add_argument("--db", type=str, required=True, dest="db_path", help="Path to the Access database")
+    cred_remove.add_argument("--local", action="store_true", help="Remove from <db_dir>/.ms-access-mcp.json instead of global file")
+    cred_remove.set_defaults(func=_cmd_credentials_remove)
 
     # db subcommands
     db_parser = subparsers.add_parser("db", help="Database connection commands")
