@@ -71,6 +71,28 @@ class TestParamValidation:
         assert result.isError is True
         assert "job_id is required" in result.content[0].text
 
+    def test_upload_schema_rejects_missing_connection_ref_and_string(self):
+        """upload_schema with neither connection_string nor connection_ref returns error."""
+        fn, _desc = migration._TOOLS["upload_schema"]
+        result = fn(
+            path="dummy.mdb",
+            params={"target_type": "sqlite"},
+            confirm=True,
+        )
+        assert result.isError is True
+        assert "connection_string is required" in result.content[0].text
+
+    def test_transfer_data_rejects_missing_connection_ref_and_string(self):
+        """transfer_data with neither connection_string nor connection_ref returns error."""
+        fn, _desc = migration._TOOLS["transfer_data"]
+        result = fn(
+            path="dummy.mdb",
+            params={"target_type": "sqlite"},
+            confirm=True,
+        )
+        assert result.isError is True
+        assert "connection_string is required" in result.content[0].text
+
 
 class TestConfirmGates:
     """confirm gate fires before any connector work — safe, no COM dependency."""
@@ -115,6 +137,64 @@ class TestGetMigrationStatus:
         result = fn(path="dummy.mdb", params={"job_id": "deadbeef"}, confirm=False)
         assert result.isError is True
         assert "not found" in result.content[0].text
+
+
+class TestConnectionRefPassthrough:
+    """connection_ref is forwarded to the use case (step 5)."""
+
+    def test_upload_schema_passes_connection_ref(self, monkeypatch):
+        """upload_schema with connection_ref forwards it to uc.upload_schema."""
+        captured_args = {}
+
+        class FakeUC:
+            def upload_schema(self, **kwargs):
+                captured_args.update(kwargs)
+                from ms_access_mcp.errors import Err
+
+                return Err("profile not found")
+
+        monkeypatch.setattr(migration, "_new_migration", lambda: FakeUC())
+        fn, _desc = migration._TOOLS["upload_schema"]
+        fn(path="dummy.mdb", params={"target_type": "sqlite", "connection_ref": "prod_dw"}, confirm=True)
+        assert captured_args.get("connection_ref") == "prod_dw", \
+            f"connection_ref not forwarded: {captured_args}"
+
+    def test_transfer_data_passes_connection_ref(self, monkeypatch):
+        """transfer_data with connection_ref forwards it to uc.transfer_data."""
+        captured_args = {}
+
+        class FakeUC:
+            def transfer_data(self, **kwargs):
+                captured_args.update(kwargs)
+                from ms_access_mcp.errors import Err
+
+                return Err("profile not found")
+
+        monkeypatch.setattr(migration, "_new_migration", lambda: FakeUC())
+        fn, _desc = migration._TOOLS["transfer_data"]
+        fn(path="dummy.mdb", params={"target_type": "sqlite", "connection_ref": "prod_dw"}, confirm=True)
+        assert captured_args.get("connection_ref") == "prod_dw", \
+            f"connection_ref not forwarded: {captured_args}"
+
+    def test_upload_schema_literal_still_works(self, monkeypatch):
+        """upload_schema with literal connection_string still forwards it."""
+        captured_args = {}
+
+        class FakeUC:
+            def upload_schema(self, **kwargs):
+                captured_args.update(kwargs)
+                from ms_access_mcp.errors import Err
+
+                return Err("confirm required")
+
+        monkeypatch.setattr(migration, "_new_migration", lambda: FakeUC())
+        fn, _desc = migration._TOOLS["upload_schema"]
+        fn(path="dummy.mdb", params={
+            "target_type": "sqlite",
+            "connection_string": "Driver={ODBC};PWD=hunter2;",
+        }, confirm=True)
+        assert captured_args.get("connection_string") == "Driver={ODBC};PWD=hunter2;", \
+            f"connection_string not forwarded: {captured_args}"
 
 
 class TestProfileWiring:

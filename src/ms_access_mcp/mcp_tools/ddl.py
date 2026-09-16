@@ -113,17 +113,26 @@ def delete_relationship(path: str, params: dict[str, Any] | None = None, confirm
 
 
 def create_linked_table(path: str, params: dict[str, Any] | None = None, confirm: bool = False) -> CallToolResult:
-    """Create a linked (attached) table (DAO backend required)."""
+    """Create a linked (attached) table (DAO backend required).
+
+    Note:
+        Credentials resolve server-side from named profiles. If the connection
+        fails with an auth error, ask the user to run
+        ``ms-access-mcp credentials profile set --name <name>`` — never
+        request or transmit the connection string.
+    """
     p = params or {}
     name = p.get("name", "")
     source_table = p.get("source_table", "")
     connect_string = p.get("connect_string", "")
+    connect_ref = p.get("connect_ref", "")
     connection_name = p.get("connection_name", "default")
     uc = _new_db(readonly=False)
     result = uc.create_linked_table(
         name=name,
         source_table=source_table,
         connect_string=connect_string,
+        connect_ref=connect_ref,
         connection_name=connection_name,
         confirm=confirm,
     )
@@ -131,15 +140,24 @@ def create_linked_table(path: str, params: dict[str, Any] | None = None, confirm
 
 
 def refresh_linked_table(path: str, params: dict[str, Any] | None = None, confirm: bool = False) -> CallToolResult:
-    """Re-authenticate a linked table with an optional new connection string."""
+    """Re-authenticate a linked table with an optional new connection string.
+
+    Note:
+        Credentials resolve server-side from named profiles. If the connection
+        fails with an auth error, ask the user to run
+        ``ms-access-mcp credentials profile set --name <name>`` — never
+        request or transmit the connection string.
+    """
     p = params or {}
     name = p.get("name", "")
     connect_string = p.get("connect_string")
+    connect_ref = p.get("connect_ref", "")
     connection_name = p.get("connection_name", "default")
     uc = _new_db(readonly=False)
     result = uc.refresh_linked_table(
         name=name,
         connect_string=connect_string,
+        connect_ref=connect_ref,
         connection_name=connection_name,
         confirm=confirm,
     )
@@ -157,17 +175,26 @@ def unlink_table(path: str, params: dict[str, Any] | None = None, confirm: bool 
 
 
 def upsert_linked_table(path: str, params: dict[str, Any] | None = None, confirm: bool = False) -> CallToolResult:
-    """Recreate a linked table preserving hidden attributes (DAO backend required)."""
+    """Recreate a linked table preserving hidden attributes (DAO backend required).
+
+    Note:
+        Credentials resolve server-side from named profiles. If the connection
+        fails with an auth error, ask the user to run
+        ``ms-access-mcp credentials profile set --name <name>`` — never
+        request or transmit the connection string.
+    """
     p = params or {}
     name = p.get("name", "")
     source_table = p.get("source_table", "")
     connect_string = p.get("connect_string", "")
+    connect_ref = p.get("connect_ref", "")
     connection_name = p.get("connection_name", "default")
     uc = _new_db(readonly=False)
     result = uc.upsert_linked_table(
         name=name,
         source_table=source_table,
         connect_string=connect_string,
+        connect_ref=connect_ref,
         connection_name=connection_name,
         confirm=confirm,
     )

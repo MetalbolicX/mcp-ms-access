@@ -70,32 +70,37 @@ def upload_schema(
     Args:
         path: Path to the Access .accdb file (unused for upload, but required
               for MCP tool signature consistency).
-        params: Dict with target_type, connection_string, schema_json.
+        params: Dict with target_type, connection_string or connection_ref,
+                and schema_json.
         confirm: Must be True to execute DDL.
 
     Returns:
         CallToolResult with {tables_created, tables_failed} on success.
 
-    WARNING:
-        connection_string may contain credentials. This tool logs parameters
-        to shell history — use with caution in scripted environments.
+    Note:
+        Credentials resolve server-side from named profiles. If the connection
+        fails with an auth error, ask the user to run
+        ``ms-access-mcp credentials profile set --name <name>`` — never
+        request or transmit the connection string.
     """
     uc = _new_migration()
     p = params or {}
     target_type = p.get("target_type", "")
     connection_string = p.get("connection_string", "")
+    connection_ref = p.get("connection_ref", "")
     schema_json = p.get("schema_json", {})
 
     if not target_type:
         dict_result = {"success": False, "error": "target_type is required"}
         return to_mcp_result(dict_result)
-    if not connection_string:
+    if not connection_string and not connection_ref:
         dict_result = {"success": False, "error": "connection_string is required"}
         return to_mcp_result(dict_result)
 
     result = uc.upload_schema(
         target_type=target_type,
         connection_string=connection_string,
+        connection_ref=connection_ref,
         schema_json=schema_json,
         confirm=confirm,
     )
@@ -112,21 +117,24 @@ def transfer_data(
 
     Args:
         path: Path to the Access .accdb file.
-        params: Dict with target_type, connection_string, schema_json,
-                transfer_mode, verification_mode, table_overrides.
+        params: Dict with target_type, connection_string or connection_ref,
+                schema_json, transfer_mode, verification_mode, table_overrides.
         confirm: Must be True to execute transfer.
 
     Returns:
         CallToolResult with {success, job_id} on completion.
 
-    WARNING:
-        connection_string may contain credentials. This tool logs parameters
-        to shell history — use with caution in scripted environments.
+    Note:
+        Credentials resolve server-side from named profiles. If the connection
+        fails with an auth error, ask the user to run
+        ``ms-access-mcp credentials profile set --name <name>`` — never
+        request or transmit the connection string.
     """
     uc = _new_migration()
     p = params or {}
     target_type = p.get("target_type", "")
     connection_string = p.get("connection_string", "")
+    connection_ref = p.get("connection_ref", "")
     schema_json = p.get("schema_json")
     transfer_mode = p.get("transfer_mode", "auto")
     verification_mode = p.get("verification_mode", "full")
@@ -135,13 +143,14 @@ def transfer_data(
     if not target_type:
         dict_result = {"success": False, "error": "target_type is required"}
         return to_mcp_result(dict_result)
-    if not connection_string:
+    if not connection_string and not connection_ref:
         dict_result = {"success": False, "error": "connection_string is required"}
         return to_mcp_result(dict_result)
 
     result = uc.transfer_data(
         target_type=target_type,
         connection_string=connection_string,
+        connection_ref=connection_ref,
         database_path=path,
         schema_json=schema_json,
         transfer_mode=transfer_mode,
