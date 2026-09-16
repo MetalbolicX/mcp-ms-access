@@ -17,7 +17,14 @@ from .application.maintenance import MaintenanceUseCases
 from .application.protocols import AutomationUseCasesProtocol, MaintenanceUseCasesProtocol, VersioningUseCasesProtocol
 from .application.versioning import VersioningUseCases
 from .cli_format import cli_allowed_dirs, format_result
-from .credentials import list_entries, remove_entry, write_entry
+from .credentials import (
+    list_entries,
+    list_profiles,
+    remove_entry,
+    remove_profile,
+    write_entry,
+    write_profile,
+)
 from .doctor import doctor_main
 from .opencode_config import Ok as OpenCodeOk
 from .opencode_config import entry_from, register, remove
@@ -1072,6 +1079,103 @@ def _cmd_credentials_remove(args: argparse.Namespace) -> int:
 
 
 # =============================================================================
+# credentials profile subcommands (step 6)
+# =============================================================================
+
+
+def _cmd_credentials_profile_set(args: argparse.Namespace) -> int:
+    """Handle: credentials profile set --name <name>.
+
+    Exit codes:
+        0: success
+        2: user error (empty, mismatch, invalid name, unconfirmed overwrite)
+    """
+    name = args.name
+
+    # Validate name charset: [A-Za-z0-9_.-]
+    invalid_chars = frozenset(name) - frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-")
+    if invalid_chars:
+        print(
+            f"Error: profile name may only contain A-Za-z0-9_.-; "
+            f"found disallowed characters: {sorted(invalid_chars)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Prompt twice for the connection string
+    try:
+        conn1 = getpass.getpass(f"Enter connection string for '{name}': ")
+    except EOFError:
+        print("Error: cannot read connection string (EOF)", file=sys.stderr)
+        return 2
+
+    if not conn1:
+        print("Error: connection string may not be empty", file=sys.stderr)
+        return 2
+
+    try:
+        conn2 = getpass.getpass("Confirm connection string: ")
+    except EOFError:
+        print("Error: cannot read confirmation (EOF)", file=sys.stderr)
+        return 2
+
+    if conn1 != conn2:
+        print("Error: connection strings do not match", file=sys.stderr)
+        return 2
+
+    # Check for existing profile (require --yes or confirmation)
+    existing = list_profiles()
+    if name in existing and not getattr(args, "yes", False):
+        confirm = input(f"Overwrite existing profile '{name}'? [y/N] ").strip().lower()
+        if confirm not in ("y", "yes"):
+            print("Aborted.", file=sys.stderr)
+            return 2
+
+    try:
+        write_profile(name, conn1)
+    except OSError as e:
+        print(f"Error: cannot write credentials file: {e}", file=sys.stderr)
+        return 2
+
+    from .credentials import _global_credentials_path
+
+    cred_path = _global_credentials_path()
+    print(f"Saved profile '{name}' to {cred_path}", file=sys.stderr)
+    return 0
+
+
+def _cmd_credentials_profile_list(_args: argparse.Namespace) -> int:
+    """Handle: credentials profile list.
+
+    Exit codes:
+        0: always
+    """
+    profiles = list_profiles()
+    if not profiles:
+        print("No credential profiles found.", file=sys.stderr)
+        return 0
+
+    for name in profiles:
+        print(name, file=sys.stderr)
+    return 0
+
+
+def _cmd_credentials_profile_remove(args: argparse.Namespace) -> int:
+    """Handle: credentials profile remove --name <name>.
+
+    Exit codes:
+        0: always (missing profile is a no-op)
+    """
+    name = args.name
+    removed = remove_profile(name)
+    if removed:
+        print(f"Removed profile '{name}'", file=sys.stderr)
+    else:
+        print(f"No profile named '{name}' (no-op)", file=sys.stderr)
+    return 0
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
@@ -1125,6 +1229,22 @@ def build_parser() -> argparse.ArgumentParser:
     cred_remove.add_argument("--db", type=str, required=True, dest="db_path", help="Path to the Access database")
     cred_remove.add_argument("--local", action="store_true", help="Remove from <db_dir>/.ms-access-mcp.json instead of global file")
     cred_remove.set_defaults(func=_cmd_credentials_remove)
+
+    # credentials profile subcommands
+    cred_profile = cred_subparsers.add_parser("profile", help="Manage named credential profiles for external databases")
+    cred_profile_subparsers = cred_profile.add_subparsers(dest="credentials_profile_action")
+
+    cred_profile_set = cred_profile_subparsers.add_parser("set", help="Store a named credential profile")
+    cred_profile_set.add_argument("--name", type=str, required=True, help="Profile name (A-Za-z0-9_.-)")
+    cred_profile_set.add_argument("--yes", action="store_true", help="Skip overwrite confirmation")
+    cred_profile_set.set_defaults(func=_cmd_credentials_profile_set)
+
+    cred_profile_list = cred_profile_subparsers.add_parser("list", help="List stored credential profile names")
+    cred_profile_list.set_defaults(func=_cmd_credentials_profile_list)
+
+    cred_profile_remove = cred_profile_subparsers.add_parser("remove", help="Remove a credential profile")
+    cred_profile_remove.add_argument("--name", type=str, required=True, help="Profile name to remove")
+    cred_profile_remove.set_defaults(func=_cmd_credentials_profile_remove)
 
     # db subcommands
     db_parser = subparsers.add_parser("db", help="Database connection commands")

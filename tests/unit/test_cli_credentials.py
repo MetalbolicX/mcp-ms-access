@@ -339,3 +339,295 @@ class TestCredentialsRemove:
                 exit_code = cli.main()
 
         assert exit_code == 0, f"expected exit 0 for no-op remove, got {exit_code}"
+
+
+# =============================================================================
+# Cases 24-29: credentials profile set|list|remove (Step 6)
+# =============================================================================
+
+
+class TestCredentialsProfileSet:
+    """credentials profile set --name NAME (cases 24-27)."""
+
+    def test_set_creates_profile_in_global_file(self, monkeypatch, tmp_path):
+        """profile set with matching getpass twice creates profile in global file."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+        global_file = fake_userprofile / ".ms-access-mcp" / "credentials.json"
+        global_file.parent.mkdir(parents=True, exist_ok=True)
+        global_file.write_text(json.dumps({"version": 2, "credentials": {}, "profiles": {}}), encoding="utf-8")
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["Driver={ODBC};PWD=hunter2;", "Driver={ODBC};PWD=hunter2;"]):
+                with patch.object(sys, "argv", [
+                    "ms-access-mcp", "credentials", "profile", "set",
+                    "--name", "prod_dw",
+                ]):
+                    exit_code = cli.main()
+
+        assert exit_code == 0, f"expected exit 0, got {exit_code}"
+        data = json.loads(global_file.read_text(encoding="utf-8"))
+        assert "prod_dw" in data.get("profiles", {}), f"profile not created: {data}"
+        assert data["profiles"]["prod_dw"] == "Driver={ODBC};PWD=hunter2;"
+
+    def test_set_invalid_name_contains_slash_exits_2(self, monkeypatch, tmp_path):
+        """Name containing / exits 2."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["conn_str", "conn_str"]):
+                with patch.object(sys, "argv", [
+                    "ms-access-mcp", "credentials", "profile", "set",
+                    "--name", "prod/dw",
+                ]):
+                    exit_code = cli.main()
+
+        assert exit_code == 2, f"expected exit 2, got {exit_code}"
+
+    def test_set_invalid_name_contains_backslash_exits_2(self, monkeypatch, tmp_path):
+        """Name containing \\ exits 2."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["conn_str", "conn_str"]):
+                with patch.object(sys, "argv", [
+                    "ms-access-mcp", "credentials", "profile", "set",
+                    "--name", "prod\\dw",
+                ]):
+                    exit_code = cli.main()
+
+        assert exit_code == 2, f"expected exit 2, got {exit_code}"
+
+    def test_set_invalid_name_contains_colon_exits_2(self, monkeypatch, tmp_path):
+        """Name containing : exits 2."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["conn_str", "conn_str"]):
+                with patch.object(sys, "argv", [
+                    "ms-access-mcp", "credentials", "profile", "set",
+                    "--name", "prod:dw",
+                ]):
+                    exit_code = cli.main()
+
+        assert exit_code == 2, f"expected exit 2, got {exit_code}"
+
+    def test_set_invalid_name_contains_space_exits_2(self, monkeypatch, tmp_path):
+        """Name containing space exits 2."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["conn_str", "conn_str"]):
+                with patch.object(sys, "argv", [
+                    "ms-access-mcp", "credentials", "profile", "set",
+                    "--name", "prod dw",
+                ]):
+                    exit_code = cli.main()
+
+        assert exit_code == 2, f"expected exit 2, got {exit_code}"
+
+    def test_set_empty_string_exits_2(self, monkeypatch, tmp_path):
+        """Empty connection string exits 2."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["", ""]):
+                with patch.object(sys, "argv", [
+                    "ms-access-mcp", "credentials", "profile", "set",
+                    "--name", "prod_dw",
+                ]):
+                    exit_code = cli.main()
+
+        assert exit_code == 2, f"expected exit 2, got {exit_code}"
+
+    def test_set_mismatch_exits_2(self, monkeypatch, tmp_path):
+        """Mismatched getpass entries exits 2, no file written."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+        global_file = fake_userprofile / ".ms-access-mcp" / "credentials.json"
+        global_file.parent.mkdir(parents=True, exist_ok=True)
+        global_file.write_text(json.dumps({"version": 2, "credentials": {}, "profiles": {}}), encoding="utf-8")
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["conn_one", "conn_two"]):
+                with patch.object(sys, "argv", [
+                    "ms-access-mcp", "credentials", "profile", "set",
+                    "--name", "prod_dw",
+                ]):
+                    exit_code = cli.main()
+
+        assert exit_code == 2, f"expected exit 2, got {exit_code}"
+
+    def test_set_overwrite_requires_confirm(self, monkeypatch, tmp_path):
+        """Existing profile requires confirm to overwrite."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+        global_file = fake_userprofile / ".ms-access-mcp" / "credentials.json"
+        global_file.parent.mkdir(parents=True, exist_ok=True)
+        global_file.write_text(json.dumps({
+            "version": 2,
+            "credentials": {},
+            "profiles": {"prod_dw": "old_conn"},
+        }), encoding="utf-8")
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["", ""]):
+                with patch("sys.stdin", StringIO("\n")):
+                    with patch.object(sys, "argv", [
+                        "ms-access-mcp", "credentials", "profile", "set",
+                        "--name", "prod_dw",
+                    ]):
+                        exit_code = cli.main()
+
+        assert exit_code == 2, f"expected exit 2 on unconfirmed overwrite, got {exit_code}"
+
+    def test_set_yes_skips_overwrite_confirm(self, monkeypatch, tmp_path):
+        """--yes flag skips overwrite confirmation."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+        global_file = fake_userprofile / ".ms-access-mcp" / "credentials.json"
+        global_file.parent.mkdir(parents=True, exist_ok=True)
+        global_file.write_text(json.dumps({
+            "version": 2,
+            "credentials": {},
+            "profiles": {"prod_dw": "old_conn"},
+        }), encoding="utf-8")
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["new_conn", "new_conn"]):
+                with patch.object(sys, "argv", [
+                    "ms-access-mcp", "credentials", "profile", "set",
+                    "--name", "prod_dw", "--yes",
+                ]):
+                    exit_code = cli.main()
+
+        assert exit_code == 0, f"expected exit 0, got {exit_code}"
+        data = json.loads(global_file.read_text(encoding="utf-8"))
+        assert data["profiles"]["prod_dw"] == "new_conn"
+
+    def test_set_success_output_contains_path_not_value(self, monkeypatch, tmp_path, capsys):
+        """Success output names the file path, never the connection string value."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch("getpass.getpass", side_effect=["Driver={ODBC};PWD=hunter2;", "Driver={ODBC};PWD=hunter2;"]):
+                with patch.object(sys, "argv", [
+                    "ms-access-mcp", "credentials", "profile", "set",
+                    "--name", "prod_dw",
+                ]):
+                    exit_code = cli.main()
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "PWD=hunter2" not in combined, "connection string must not appear in output"
+        assert ".ms-access-mcp" in combined, "file path must appear in output"
+
+
+class TestCredentialsProfileList:
+    """credentials profile list (case 28)."""
+
+    def test_list_prints_names_never_values(self, monkeypatch, tmp_path, capsys):
+        """profile list prints names only, never connection string values."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+        global_file = fake_userprofile / ".ms-access-mcp" / "credentials.json"
+        global_file.parent.mkdir(parents=True, exist_ok=True)
+        global_file.write_text(json.dumps({
+            "version": 2,
+            "credentials": {},
+            "profiles": {
+                "prod_dw": "Driver={ODBC};PWD=hunter2;",
+                "staging": "Driver={ODBC};PWD=staging_secret;",
+            },
+        }), encoding="utf-8")
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch.object(sys, "argv", [
+                "ms-access-mcp", "credentials", "profile", "list",
+            ]):
+                exit_code = cli.main()
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "prod_dw" in combined
+        assert "staging" in combined
+        assert "PWD=hunter2" not in combined
+        assert "staging_secret" not in combined
+
+    def test_list_empty_profiles(self, monkeypatch, tmp_path, capsys):
+        """profile list on empty profiles prints nothing extra."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+        global_file = fake_userprofile / ".ms-access-mcp" / "credentials.json"
+        global_file.parent.mkdir(parents=True, exist_ok=True)
+        global_file.write_text(json.dumps({
+            "version": 2,
+            "credentials": {},
+            "profiles": {},
+        }), encoding="utf-8")
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch.object(sys, "argv", [
+                "ms-access-mcp", "credentials", "profile", "list",
+            ]):
+                exit_code = cli.main()
+
+        assert exit_code == 0
+
+
+class TestCredentialsProfileRemove:
+    """credentials profile remove --name NAME (case 29)."""
+
+    def test_remove_deletes_profile(self, monkeypatch, tmp_path):
+        """profile remove --name NAME deletes the profile."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+        global_file = fake_userprofile / ".ms-access-mcp" / "credentials.json"
+        global_file.parent.mkdir(parents=True, exist_ok=True)
+        global_file.write_text(json.dumps({
+            "version": 2,
+            "credentials": {},
+            "profiles": {
+                "prod_dw": "Driver={ODBC};PWD=hunter2;",
+            },
+        }), encoding="utf-8")
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch.object(sys, "argv", [
+                "ms-access-mcp", "credentials", "profile", "remove",
+                "--name", "prod_dw",
+            ]):
+                exit_code = cli.main()
+
+        assert exit_code == 0
+        data = json.loads(global_file.read_text(encoding="utf-8"))
+        assert "prod_dw" not in data.get("profiles", {})
+
+    def test_remove_missing_is_noop_exit_0(self, monkeypatch, tmp_path):
+        """remove on missing profile name is a no-op with exit 0."""
+        fake_userprofile = tmp_path / "home"
+        fake_userprofile.mkdir()
+        global_file = fake_userprofile / ".ms-access-mcp" / "credentials.json"
+        global_file.parent.mkdir(parents=True, exist_ok=True)
+        global_file.write_text(json.dumps({
+            "version": 2,
+            "credentials": {},
+            "profiles": {},
+        }), encoding="utf-8")
+
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_userprofile)}):
+            with patch.object(sys, "argv", [
+                "ms-access-mcp", "credentials", "profile", "remove",
+                "--name", "nonexistent",
+            ]):
+                exit_code = cli.main()
+
+        assert exit_code == 0, f"expected exit 0 for no-op remove, got {exit_code}"
