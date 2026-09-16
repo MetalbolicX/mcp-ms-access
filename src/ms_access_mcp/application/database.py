@@ -92,13 +92,21 @@ class DatabaseUseCases:
         if not is_path_allowed(db_path, self._allowed_dirs):
             return _err(f"Path not allowed: {db_path}")
 
+        # Resolve server-side credentials (never from MCP tool params)
+        from ..credentials import resolve_password
+
+        password = resolve_password(db_path)
+
         try:
             self._adapter = BackendSelector.get_adapter(
                 db_path=db_path,
                 backend=cast(Literal["odbc", "com", "dao", "auto"] | None, self._backend_name),
                 capabilities=DATA_READ_CAPS,
             )
-            self._adapter.connect(db_path)
+            if password:
+                self._adapter.connect(db_path, password=password)
+            else:
+                self._adapter.connect(db_path)
             self._db_path = db_path
             self._connections[self._active_connection] = self._adapter
             return _ok(data={"path": db_path, "connection": self._active_connection})
@@ -106,7 +114,10 @@ class DatabaseUseCases:
             import traceback
 
             traceback.print_exc()
-            return _err(f"connect failed: {e!r}")
+            message = f"connect failed: {e!r}"
+            if password:
+                message = message.replace(password, "***")
+            return _err(message)
 
     def close_database(self, connection_name: str = "default") -> Result:
         """Close a database connection.

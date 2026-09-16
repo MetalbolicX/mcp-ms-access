@@ -22,6 +22,7 @@ import pytest
 
 # The module under test
 from ms_access_mcp import credentials
+from ms_access_mcp.errors import Err, Ok
 
 
 # =============================================================================
@@ -261,3 +262,183 @@ class TestMissingEntry:
 
         result = credentials.resolve_password(db_path)
         assert result == ""
+
+
+# =============================================================================
+# Case 8: wire-through — password passed to adapter.connect
+# Case 9: no entry → adapter.connect called with empty password
+# =============================================================================
+
+
+class TestWireThrough:
+    """Test that open_database wires the resolved password to adapter.connect."""
+
+    def test_wire_password_to_connect(self, monkeypatch, tmp_path):
+        """When a credentials entry exists, connect is called with password=."""
+        from ms_access_mcp.application import database
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        db_path = str(tmp_path / "db.accdb")
+        global_file = tmp_path / "global.json"
+
+        # Write the credentials entry
+        _write_global_file(global_file, {
+            "version": 1,
+            "credentials": {_norm(db_path): "wire_pw"},
+        })
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        # Bypass is_path_allowed for the non-existent .accdb
+        monkeypatch.setattr(database, "is_path_allowed", lambda path, dirs: True)
+
+        captured_connect_calls: list[tuple] = []
+
+        class FakeAdapter:
+            def connect(self, db_path: str, password: str = "") -> None:
+                captured_connect_calls.append((db_path, password))
+
+        # Patch BackendSelector.get_adapter to return our fake adapter
+        monkeypatch.setattr(
+            BackendSelector,
+            "get_adapter",
+            lambda **kwargs: FakeAdapter(),
+        )
+
+        db = DatabaseUseCases(allowed_dirs=[Path(tmp_path)])
+        result = db.open_database(db_path)
+
+        assert isinstance(result, Ok), f"expected Ok, got {result}"
+        assert len(captured_connect_calls) == 1
+        call_db_path, call_password = captured_connect_calls[0]
+        assert call_db_path == db_path
+        assert call_password == "wire_pw"
+
+    def test_no_entry_pass_empty_password(self, monkeypatch, tmp_path):
+        """When no credentials entry exists, connect is called with password=""."""
+        from ms_access_mcp.application import database
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        db_path = str(tmp_path / "db.accdb")
+
+        # Ensure no credentials file
+        monkeypatch.delenv("ACCESS_MCP_CREDENTIALS_FILE", raising=False)
+
+        # Bypass is_path_allowed for the non-existent .accdb
+        monkeypatch.setattr(database, "is_path_allowed", lambda path, dirs: True)
+
+        captured_connect_calls: list[tuple] = []
+
+        class FakeAdapter:
+            def connect(self, db_path: str, password: str = "") -> None:
+                captured_connect_calls.append((db_path, password))
+
+        monkeypatch.setattr(
+            BackendSelector,
+            "get_adapter",
+            lambda **kwargs: FakeAdapter(),
+        )
+
+        db = DatabaseUseCases(allowed_dirs=[Path(tmp_path)])
+        result = db.open_database(db_path)
+
+        assert isinstance(result, Ok), f"expected Ok, got {result}"
+        assert len(captured_connect_calls) == 1
+        call_db_path, call_password = captured_connect_calls[0]
+        assert call_db_path == db_path
+        assert call_password == ""
+
+
+# =============================================================================
+# Case 10: error-leak guard — password scrubbed from error messages
+# =============================================================================
+
+
+class TestErrorLeakGuard:
+    def test_password_not_in_error_message(self, monkeypatch, tmp_path):
+        """Resolved password must not appear in the error message returned to LLM."""
+        from ms_access_mcp.application import database
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        db_path = str(tmp_path / "db.accdb")
+        global_file = tmp_path / "global.json"
+
+        _write_global_file(global_file, {
+            "version": 1,
+            "credentials": {_norm(db_path): "hunter2"},
+        })
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        # Bypass is_path_allowed for the non-existent .accdb
+        monkeypatch.setattr(database, "is_path_allowed", lambda path, dirs: True)
+
+        class LeakingAdapter:
+            """Adapter that raises an exception containing the password."""
+
+            def connect(self, db_path: str, password: str = "") -> None:
+                raise Exception(f"foo;PWD={password};bar")
+
+        monkeypatch.setattr(
+            BackendSelector,
+            "get_adapter",
+            lambda **kwargs: LeakingAdapter(),
+        )
+
+        db = DatabaseUseCases(allowed_dirs=[Path(tmp_path)])
+        result = db.open_database(db_path)
+
+        assert isinstance(result, Err), f"expected Err, got {result}"
+        msg = result.message
+        assert "hunter2" not in msg, f"password leaked into error: {msg}"
+        assert "***" in msg, f"password should be scrubbed to ***: {msg}"
+
+
+# =============================================================================
+# Case 11: params guard — password not passed via MCP tool params
+# =============================================================================
+
+
+class TestParamsGuard:
+    def test_password_not_leaked_via_tool_params(self, monkeypatch, tmp_path):
+        """Password in MCP params must not appear in connection result."""
+        from ms_access_mcp.application import database
+        from ms_access_mcp.application.database import DatabaseUseCases
+        from ms_access_mcp.backends import BackendSelector
+
+        db_path = str(tmp_path / "db.accdb")
+        global_file = tmp_path / "global.json"
+
+        _write_global_file(global_file, {
+            "version": 1,
+            "credentials": {_norm(db_path): "hunter2"},
+        })
+        monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
+
+        # Bypass is_path_allowed for the non-existent .accdb
+        monkeypatch.setattr(database, "is_path_allowed", lambda path, dirs: True)
+
+        # Use a stub that raises so we can inspect the call args
+        connect_called_with: dict = {}
+
+        class FakeAdapter:
+            def connect(self, db_path: str, password: str = "") -> None:
+                connect_called_with["db_path"] = db_path
+                connect_called_with["password"] = password
+                raise Exception("injected")
+
+        monkeypatch.setattr(
+            BackendSelector,
+            "get_adapter",
+            lambda **kwargs: FakeAdapter(),
+        )
+
+        db = DatabaseUseCases(allowed_dirs=[Path(tmp_path)])
+        result = db.open_database(db_path)
+
+        # The connect was called with the resolved password from credentials file,
+        # NOT from params. The params dict in MCP tools is for other settings,
+        # not for the password (which would be a security leak).
+        assert connect_called_with.get("password") == "hunter2"
+        assert "hunter2" not in str(result)
