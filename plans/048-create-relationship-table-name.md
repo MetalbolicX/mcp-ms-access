@@ -78,11 +78,15 @@ in scope — update them").
   ```
   The `SpyAdapter.create_relationship` at :90-92 records
   `(table_name, relationship_name, columns, foreign_table, foreign_columns)`.
-- **Out-of-scope asymmetry, do not "fix" it**: the facade
+-   **Out-of-scope asymmetry, do not "fix" it**: the facade
   `delete_relationship` (database.py:881+) sends `""` as `table_name` too,
   but the backend ignores it — `schema_inspector.py:592` deletes by
   `db.Relations.Delete(relationship_name)` alone (relation names are unique
   per database). Harmless; leave as is.
+- **RED step convention (locked by reviewer)**: modify the existing test
+  in place — do not snapshot the old pin to a separate file. The git
+  history itself is the baseline (one commit for RED, one for GREEN, one
+  for the `# noqa` cleanup); no `xfail` artifact needed.
 - Repo conventions: Result envelope (`_ok`/`_err`), strict TDD RED→GREEN,
   conventional commits, branch `plan/048-create-relationship-table-name`.
 
@@ -120,8 +124,14 @@ in scope — update them").
 
 - Branch: `plan/048-create-relationship-table-name` (from plan-047 tip
   `655f712` or `main` post-merge).
-- Two commits: `test(database): pin source_table passthrough in create_relationship`
-  then `fix(database): pass source_table to adapter in create_relationship`.
+- Three commits (one per step):
+  1. `test(database): pin source_table passthrough in create_relationship`
+     (RED: refresh the existing pin; target test FAILS)
+  2. `fix(database): pass source_table to adapter in create_relationship`
+     (GREEN: facade + remove stale noqa; target test PASSES)
+  3. `test(integration): probe-gated DAO relationship roundtrip`
+     (Step 3: probe-gated integration test that auto-activates where DAO
+     COM is available and skips cleanly elsewhere)
 - Do NOT push unless instructed.
 
 ## Steps
@@ -161,21 +171,102 @@ In `src/ms_access_mcp/application/database.py`:
 - `uv run pytest tests/unit/test_facade_adapter_contract.py -q` → all pass
 - `uv run ruff check .` → exit 0
 
-### Step 3: Integration probe (optional but recommended — requires Windows + ACE)
+### Step 3: Integration probe (probe-gated — pattern from plan 027/028)
 
-Create `tests/integration/test_relationship_roundtrip.py` marked
-`com_integration`, using the `temp_db_copy` fixture pattern
-(`tests/integration/conftest.py:59-85`): open the copy with
-`DatabaseUseCases(readonly=False, allowed_dirs=[tmpdir])`, call
-`create_relationship("FK_Probe", <real_table_A>, <col_A>, <real_table_B>,
-<col_B>, confirm=True)`, then assert via `get_relationships()` that a
-relation exists whose source table equals `<real_table_A>` and NOT `""`.
-Discover real table/column names at runtime via `get_tables` +
-`get_table_schema` (fixture has zero pre-existing relationships — plan 026
-evidence). Clean up by deleting the relation or letting the temp copy die.
+Create `tests/integration/test_relationship_roundtrip.py` using the same
+probe-gated pattern as `tests/integration/test_export_xlsx.py` (see
+plan-027/028 precedent): the test auto-activates on machines where the DAO
+COM provider + Access are available, and skips cleanly elsewhere.
 
-**Verify**: `uv run pytest tests/integration/test_relationship_roundtrip.py -q`
-→ passes on Windows+ACE, skips cleanly elsewhere.
+Structure:
+
+```python
+"""DAO relationship roundtrip — proves source_table reaches the DAO layer.
+
+PROBE: DAO COM provider reachable (pywin32 + Access OR direct ACE).
+When unavailable, the test skips cleanly. When available, it asserts the
+relation created via DatabaseUseCases reports the real source table, not "".
+"""
+from __future__ import annotations
+
+import os
+import pytest
+
+pytestmark = [
+    pytest.mark.skipif(os.name != "nt", reason="Windows-only test"),
+    pytest.mark.com_integration,
+]
+
+
+def _dao_relation_available() -> bool:
+    """Return True if DAO relationship creation is reachable on this host."""
+    if os.name != "nt":
+        return False
+    try:
+        pytest.importorskip("win32com")
+    except pytest.skip.Exception:
+        return False
+    try:
+        import win32com.client  # type: ignore[import-not-found]
+
+        db = win32com.client.Dispatch("DAO.DBEngine.36").CreateDatabase(
+            "", "", ";LANGID=0x0409;CP=1252;COUNTRY=0"
+        )
+        rel = db.CreateRelation("FK_Probe", "TableA", "TableB")
+        rel.Fields.Append(rel.CreateField("a_id"))
+        rel.Fields[0].ForeignName = "b_id"
+        db.Relations.Append(rel)
+        created = db.Relations["FK_Probe"].Table
+        db.Close()
+        return created == "TableA"
+    except Exception:
+        return False
+
+
+class TestRelationshipRoundtrip:
+    @pytest.mark.skipif(
+        not _dao_relation_available(),
+        reason="DAO relationship COM roundtrip not reachable on this host",
+    )
+    def test_relation_source_table_roundtrip(self, temp_db_copy: str) -> None:
+        from ms_access_mcp.application.database import DatabaseUseCases
+
+        # Discover real table/column names via get_tables + get_table_schema.
+        # (Fixture has zero pre-existing relationships — plan 026 evidence.)
+        with DatabaseUseCases(
+            readonly=False, allowed_dirs=[str(Path(temp_db_copy).parent)]
+        ) as db:
+            tables = db.get_tables()
+            assert len(tables) >= 2, "fixture needs >=2 tables for FK probe"
+            src_table, src_col = tables[0]["name"], tables[0]["columns"][0]["name"]
+            dst_table, dst_col = tables[1]["name"], tables[1]["columns"][0]["name"]
+
+            rel_name = "FK_Probe_RT"
+            result = db.create_relationship(
+                rel_name, src_table, src_col, dst_table, dst_col, confirm=True
+            )
+            assert result.success, f"create_relationship failed: {result.error}"
+
+            rels = db.get_relationships()
+            hit = next((r for r in rels if r["name"] == rel_name), None)
+            assert hit is not None, f"relation {rel_name} not visible"
+            assert hit["table"] == src_table, (
+                f"BUG REGRESSED: relation.Table == {hit['table']!r}, "
+                f"expected {src_table!r}"
+            )
+            assert hit["table"] != "", "BUG REGRESSED: relation.Table is empty"
+```
+
+**Verify**:
+- `uv run pytest tests/integration/test_relationship_roundtrip.py -q` →
+  passes on Windows+ACE (DAO COM probe succeeds), skips cleanly elsewhere
+  (probe returns False). On hosts where the probe fails the test MUST
+  still `pytest.exit(0)` via skip, not error.
+- Cross-check: with the Step 2 fix reverted (facade passes `""` again), the
+  roundtrip's final assertion `hit["table"] == src_table` MUST fail — that
+  is the integration-level proof the bug was real. (Optional; do not run
+  on this Windows host by default. Note in the DONE summary whether you
+  cross-checked or skipped it.)
 
 ## Test plan
 
@@ -192,6 +283,9 @@ evidence). Clean up by deleting the relation or letting the temp copy die.
 - [ ] `uv run pytest tests/unit/test_facade_adapter_contract.py -q` all pass
       with the refreshed `("Users", ...)` pin
 - [ ] `uv run pytest tests/unit/ -q` all pass
+- [ ] `uv run pytest tests/integration/test_relationship_roundtrip.py -q`
+      passes on hosts where DAO COM is reachable, skips cleanly elsewhere
+      (probe returns False → skip, no error)
 - [ ] `uv run ruff check .` exit 0 (no stale noqa)
 - [ ] `uv run pyright src/ms_access_mcp/` 0 errors
 - [ ] `uv run python scripts/tool_budget.py` PASS
