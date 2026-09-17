@@ -404,8 +404,9 @@ class TestDAOErrorScrub:
 
     def test_create_query_error_scrubs_password(self):
         """create_query error must not leak password from exception message."""
-        from ms_access_mcp.backends.dao import DaoAdapter
         from unittest.mock import MagicMock
+
+        from ms_access_mcp.backends.dao import DaoAdapter
 
         fake_db = MagicMock()
         fake_db.CreateQueryDef.side_effect = Exception(
@@ -445,8 +446,9 @@ class TestDAOErrorScrub:
 
         This site (dao.py line 261) is NOT yet routed through _strip_password.
         """
-        from ms_access_mcp.backends.dao import DaoAdapter
         from unittest.mock import MagicMock
+
+        from ms_access_mcp.backends.dao import DaoAdapter
 
         fake_db = MagicMock()
         fake_db.QueryDefs.side_effect = Exception(
