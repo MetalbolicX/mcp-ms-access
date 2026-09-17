@@ -842,7 +842,7 @@ class DatabaseUseCases:
     def create_relationship(
         self,
         relationship_name: str,
-        source_table: str,  # noqa: ARG002 - facade parity; adapter resolves via column list
+        source_table: str,
         source_column: str,
         dest_table: str,
         dest_column: str,
@@ -871,7 +871,7 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.create_relationship("", relationship_name, [source_column], dest_table, [dest_column])
+            result = adapter.create_relationship(source_table, relationship_name, [source_column], dest_table, [dest_column])
             if failed := _write_failed(result):
                 return _err(failed)
             return _ok(rowcount=1)
