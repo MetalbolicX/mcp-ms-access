@@ -90,7 +90,7 @@ def generate_sql(
     """
     from ..safety import is_path_allowed
 
-    if not is_path_allowed(output_path, allowed_dirs):
+    if not is_path_allowed(output_path, allowed_dirs, must_exist=False):
         return _err(f"Output path not allowed: {output_path}")
 
     try:
