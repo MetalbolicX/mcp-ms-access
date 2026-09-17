@@ -117,13 +117,13 @@ def _alter_table_add_column(
     nullable = params.get("nullable", True)
 
     type_sql = _access_sql_type(col_type, size)
-    col_def = f"[{name}] {type_sql}"
+    col_def = f"{quote_ident(name)} {type_sql}"
     if not nullable:
         col_def += " NOT NULL"
     else:
         col_def += " NULL"
 
-    sql = f"ALTER TABLE [{table_name}] ADD COLUMN {col_def}"
+    sql = f"ALTER TABLE {quote_ident(table_name)} ADD COLUMN {col_def}"
     db.Execute(sql, 128)  # DAO_DB_FAIL_ON_ERROR
     return {"success": True}
 
@@ -165,3 +165,13 @@ def _strip_password(connect_string: str) -> str:
 
     # Clean up leading/trailing semicolons
     return result.strip(";")
+
+
+def quote_ident(name: str) -> str:
+    """Bracket-quote a Jet identifier, escaping embedded close-brackets.
+
+    Jet SQL treats ``]`` as the close-bracket delimiter. To include a literal
+    ``]`` in an identifier it must be escaped by doubling: ``]]``.
+    This function performs that escaping and wraps the result in brackets.
+    """
+    return "[" + name.replace("]", "]]") + "]"

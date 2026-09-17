@@ -12,6 +12,7 @@ from ..models import (
     RelationshipInfo,
     TableInfo,
 )
+from .dao_sql import quote_ident
 
 # Jet SQL type mapping — verbatim from oracle sql_generator.py:7-24
 JET_TYPE_MAP: dict[str, str] = {
@@ -70,7 +71,7 @@ class JetSqlGenerator:
 
     def _generate_column_ddl(self, field: FieldInfo) -> str:
         """Generate DDL for a single column."""
-        col_parts = [f"[{field.name}]", self._map_type(field)]
+        col_parts = [quote_ident(field.name), self._map_type(field)]
 
         if field.is_autoincrement:
             col_parts.append("AUTOINCREMENT")
@@ -93,7 +94,7 @@ class JetSqlGenerator:
         """Generate PRIMARY KEY constraint if table has PK columns."""
         if not table.primary_key:
             return None
-        pk_cols = ", ".join(f"[{col}]" for col in table.primary_key)
+        pk_cols = ", ".join(quote_ident(col) for col in table.primary_key)
         return f"PRIMARY KEY ({pk_cols})"
 
     def _generate_fk_constraints(self, table: TableInfo) -> list[str]:
@@ -111,12 +112,12 @@ class JetSqlGenerator:
                 continue
 
             local_cols = [col for col in fk.columns if col in table_field_names]
-            local_cols_str = ", ".join(f"[{col}]" for col in local_cols)
-            ref_cols_str = ", ".join(f"[{col}]" for col in fk.foreign_columns)
+            local_cols_str = ", ".join(quote_ident(col) for col in local_cols)
+            ref_cols_str = ", ".join(quote_ident(col) for col in fk.foreign_columns)
 
             constraint = (
-                f"CONSTRAINT [{fk.name}] FOREIGN KEY ({local_cols_str}) "
-                f"REFERENCES [{ref_table}]({ref_cols_str})"
+                f"CONSTRAINT {quote_ident(fk.name)} FOREIGN KEY ({local_cols_str}) "
+                f"REFERENCES {quote_ident(ref_table)}({ref_cols_str})"
             )
             constraints.append(constraint)
 
@@ -169,4 +170,4 @@ class JetSqlGenerator:
         column_defs.extend(fk_constraints)
 
         columns_sql = ",\n  ".join(column_defs)
-        return f"CREATE TABLE [{table.name}] (\n  {columns_sql}\n);"
+        return f"CREATE TABLE {quote_ident(table.name)} (\n  {columns_sql}\n);"
