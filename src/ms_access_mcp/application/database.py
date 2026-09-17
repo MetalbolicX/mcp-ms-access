@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import os
 from functools import cache
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -24,6 +25,7 @@ from .db_admin import set_database_property as _set_db_prop
 from .db_analysis import generate_sql as _gen_sql
 from .db_analysis import get_er_diagram as _get_er
 from .db_export import export_data as _export_data
+from . import session_backup as _session_backup
 
 # =============================================================================
 # Result Envelopes — re-exported from the shared kernel (errors module)
@@ -112,6 +114,11 @@ class DatabaseUseCases:
 
         password = resolve_password(db_path)
 
+        # Detect orphaned session backup (crash from a previous session)
+        orphan_data: dict | None = None
+        if not self._policy.readonly:
+            orphan_data = _session_backup.detect_orphaned_backup(db_path)
+
         try:
             self._adapter = BackendSelector.get_adapter(
                 db_path=db_path,
@@ -124,7 +131,22 @@ class DatabaseUseCases:
                 self._adapter.connect(db_path)
             self._db_path = db_path
             self._connections[self._active_connection] = self._adapter
-            return _ok(data={"path": db_path, "connection": self._active_connection})
+
+            # Create automatic session backup for write-enabled sessions
+            extra_data: dict = {"path": db_path, "connection": self._active_connection}
+            if orphan_data is not None:
+                extra_data["crash_detected"] = True
+                extra_data["backup_path"] = orphan_data.get("backup_path")
+                extra_data["backup_manifest"] = orphan_data
+
+            if not self._policy.readonly:
+                backup_result = _session_backup.create_session_backup(db_path)
+                if isinstance(backup_result, Err):
+                    # Non-fatal: log but continue without backup
+                    import sys
+                    print(f"Session backup failed (non-fatal): {backup_result.message}", file=sys.stderr)
+
+            return _ok(data=extra_data)
         except Exception as e:
             import traceback
 
@@ -151,9 +173,15 @@ class DatabaseUseCases:
             adapter.disconnect()
             if self._active_connection == connection_name:
                 self._active_connection = "default"
-            return _ok()
+            result: Result = _ok()
         except Exception as e:
-            return _err(str(e))
+            result = _err(str(e))
+        finally:
+            # Always cleanup session backup in finally — even on partial failures.
+            # Belt-and-suspenders: the server.py lifespan also cleans up open connections.
+            if self._db_path and not self._policy.readonly:
+                _session_backup.cleanup_session_backup(self._db_path, os.getpid())
+        return result
 
     def list_connections(self) -> Result:
         """List all open connections.
