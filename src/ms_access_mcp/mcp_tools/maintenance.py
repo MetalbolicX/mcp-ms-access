@@ -110,6 +110,39 @@ def maintenance_diagnose_environment(
     return to_mcp_result(_result_to_dict(result))
 
 
+def maintenance_repair_with_access_cli(
+    path: str,
+    params: dict[str, Any] | None = None,
+    confirm: bool = False,
+) -> CallToolResult:
+    """Repair via msaccess.exe /compact CLI (Rung 3 recovery).
+
+    Runs ``msaccess.exe "<path>" /compact`` to repair a corrupt database.
+    Requires Windows and Microsoft Access installed.
+    Confirm gate required.
+    """
+    uc = _new_maintenance(readonly=False)
+    result = uc.repair_with_access_cli(path, confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
+
+
+def maintenance_salvage_database(
+    path: str,
+    params: dict[str, Any] | None = None,
+    confirm: bool = False,
+) -> CallToolResult:
+    """Salvage data from a corrupt .accdb (Rung 4 recovery).
+
+    Renames the corrupt file to ``<name>.corrupt-<timestamp>.accdb``, creates
+    a fresh .accdb, then copies tables row-by-row from the corrupt file.
+    Per-table errors are recorded; the operation is not aborted on table loss.
+    Confirm gate required.
+    """
+    uc = _new_maintenance(readonly=False)
+    result = uc.salvage_database(path, confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
+
+
 _TOOLS: ToolRegistry = {
     "maintenance_backup": (
         maintenance_backup,
@@ -138,6 +171,14 @@ _TOOLS: ToolRegistry = {
     "maintenance_diagnose_environment": (
         maintenance_diagnose_environment,
         "Run environment diagnostics and return check results.",
+    ),
+    "maintenance_repair_with_access_cli": (
+        maintenance_repair_with_access_cli,
+        "Repair database via msaccess.exe /compact CLI (Rung 3, confirm required).",
+    ),
+    "maintenance_salvage_database": (
+        maintenance_salvage_database,
+        "Salvage data from a corrupt .accdb by copying tables to a fresh DB (Rung 4, confirm required).",
     ),
 }
 
