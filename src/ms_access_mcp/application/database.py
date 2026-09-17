@@ -33,6 +33,20 @@ _ok = ok  # backward-compat aliases; remove in a later cleanup
 _err = err
 
 
+def _write_failed(result: Any) -> str | None:
+    """Return error message string if a write result reports failure, else None."""
+    if dataclasses.is_dataclass(result):
+        d = dataclasses.asdict(result)  # type: ignore[arg-type]
+        if d.get("success") is False:
+            return str(d.get("error", "write failed"))
+        return None
+    if isinstance(result, dict):
+        if result.get("success") is False:
+            return str(result.get("error", "write failed"))
+        return None
+    return None
+
+
 @cache
 def _method_signature(method: Any) -> inspect.Signature:
     """Cached inspect.signature lookup for adapter query methods."""
@@ -382,11 +396,15 @@ class DatabaseUseCases:
         """
         if ack := self._policy.require_acknowledgment("create_query", confirm):
             return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.create_query(query_name, sql)
+            result = adapter.create_query(query_name, sql)
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -405,11 +423,15 @@ class DatabaseUseCases:
         """
         if ack := self._policy.require_acknowledgment("set_query_sql", confirm):
             return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.set_query_sql(query_name, sql)
+            result = adapter.set_query_sql(query_name, sql)
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -427,11 +449,15 @@ class DatabaseUseCases:
         """
         if ack := self._policy.require_acknowledgment("delete_query", confirm):
             return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
         adapter = self._get_adapter(connection_name)
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.delete_query(query_name)
+            result = adapter.delete_query(query_name)
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -511,6 +537,8 @@ class DatabaseUseCases:
             return _err("Not connected")
         try:
             result = adapter.insert_data(table_name, data)
+            if failed := _write_failed(result):
+                return _err(failed)
             rowcount = dataclasses.asdict(result)["affected"]
             return _ok(rowcount=rowcount)
         except Exception as e:
@@ -544,7 +572,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.update_data(table_name, data, where=where)
+            result = adapter.update_data(table_name, data, where_dict=where)
+            if failed := _write_failed(result):
+                return _err(failed)
             rowcount = dataclasses.asdict(result)["affected"]
             return _ok(rowcount=rowcount)
         except Exception as e:
@@ -576,7 +606,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.delete_data(table_name, where=where)
+            result = adapter.delete_data(table_name, where_dict=where)
+            if failed := _write_failed(result):
+                return _err(failed)
             rowcount = dataclasses.asdict(result)["affected"]
             return _ok(rowcount=rowcount)
         except Exception as e:
@@ -612,7 +644,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.create_table(table_name, columns)
+            result = adapter.create_table(table_name, columns)
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -647,7 +681,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.alter_table(table_name, action, column_name=column_name, sql_type=sql_type)
+            result = adapter.alter_table(table_name, action, column_name=column_name, sql_type=sql_type)
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -671,7 +707,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.delete_table(table_name)
+            result = adapter.delete_table(table_name)
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -706,7 +744,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.create_index(table_name, index_name, columns, unique=unique)
+            result = adapter.create_index(table_name, index_name, columns, unique=unique)
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -731,7 +771,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            adapter.drop_index(table_name, index_name)
+            result = adapter.drop_index(table_name, index_name)
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -768,10 +810,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.create_relationship(relationship_name, source_table, source_column, dest_table, dest_column)
-            result_dict = dataclasses.asdict(result)
-            if not result_dict.get("success", False):
-                return _err(result_dict.get("error", "create_relationship failed"))
+            result = adapter.create_relationship("", relationship_name, [source_column], dest_table, [dest_column])
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))
@@ -795,10 +836,9 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.delete_relationship(relationship_name)
-            result_dict = dataclasses.asdict(result)
-            if not result_dict.get("success", False):
-                return _err(result_dict.get("error", "delete_relationship failed"))
+            result = adapter.delete_relationship("", relationship_name=relationship_name)
+            if failed := _write_failed(result):
+                return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
             return _err(str(e))

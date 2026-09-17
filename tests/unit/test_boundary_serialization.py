@@ -16,7 +16,7 @@ import sys
 import pytest
 
 from ms_access_mcp.application.database import DatabaseUseCases
-from ms_access_mcp.errors import Ok
+from ms_access_mcp.errors import Ok, Err
 from ms_access_mcp.models import ObjectMetadata, WriteResult
 
 # ---------------------------------------------------------------------------
@@ -43,10 +43,10 @@ class FakeWriteAdapter:
     def insert_data(self, table_name: str, data: dict | list[dict]) -> WriteResult:
         return self._result
 
-    def update_data(self, table_name: str, set_dict: dict, where: str | dict | None = None) -> WriteResult:
+    def update_data(self, table_name: str, set_dict: dict, where_dict: str | dict | None = None) -> WriteResult:
         return self._result
 
-    def delete_data(self, table_name: str, where: str | dict | None = None) -> WriteResult:
+    def delete_data(self, table_name: str, where_dict: str | dict | None = None) -> WriteResult:
         return self._result
 
 
@@ -160,8 +160,8 @@ class TestWriteOpsBoundary:
 
         result = uc.insert_data("Users", {"name": "Bob"}, confirm=True)
 
-        assert isinstance(result, Ok)  # insert_data returns Ok with rowcount=0
-        assert hasattr(result, "rowcount")
+        assert isinstance(result, Err)
+        assert hasattr(result, "message")
 
     def test_update_success(self) -> None:
         adapter = FakeWriteAdapter({"success": True, "affected": 3})
@@ -182,8 +182,8 @@ class TestWriteOpsBoundary:
 
         result = uc.update_data("Users", {"name": "Dave"}, where="id=1", confirm=True)
 
-        assert isinstance(result, Ok)
-        assert hasattr(result, "rowcount")
+        assert isinstance(result, Err)
+        assert hasattr(result, "message")
 
     def test_delete_success(self) -> None:
         adapter = FakeWriteAdapter({"success": True, "affected": 2})
@@ -204,8 +204,8 @@ class TestWriteOpsBoundary:
 
         result = uc.delete_data("Users", where="id=1", confirm=True)
 
-        assert isinstance(result, Ok)
-        assert hasattr(result, "rowcount")
+        assert isinstance(result, Err)
+        assert hasattr(result, "message")
 
 
 # ---------------------------------------------------------------------------
