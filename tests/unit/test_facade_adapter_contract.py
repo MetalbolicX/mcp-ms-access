@@ -177,13 +177,13 @@ class TestSignatureConformance:
         assert kwargs["where_dict"] == "id=1"
 
     def test_create_relationship_five_args(self):
-        """Facade calls adapter.create_relationship(table_name, rel_name, [col], ft, [fcol])."""
+        """Facade calls adapter.create_relationship(source_table, rel_name, [col], ft, [fcol])."""
         spy = SpyAdapter()
         db = DatabaseUseCases(readonly=False)
         db._connections["default"] = spy
         db.create_relationship("FK_Users", "Users", "id", "Orders", "user_id", confirm=True)
         _, args, kwargs = spy._calls[-1]
-        assert args == ("", "FK_Users", ["id"], "Orders", ["user_id"])
+        assert args == ("Users", "FK_Users", ["id"], "Orders", ["user_id"])
 
     def test_delete_relationship_table_name_kwarg(self):
         """Facade calls adapter.delete_relationship('', relationship_name=name) — not positional."""
