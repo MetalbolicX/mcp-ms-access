@@ -180,6 +180,37 @@ class TestStripPassword:
     def test_no_password(self):
         assert _strip_password("ODBC;DBQ=x.accdb") == "ODBC;DBQ=x.accdb"
 
+    # --- Step 2 RED: quoted values and semicolons in passwords ---
+
+    def test_strip_quoted_pwd_with_semicolon(self):
+        """PWD="a;b" inside quotes is fully stripped, leaving Other=1 intact."""
+        result = _strip_password("ODBC;PWD=\"a;b\";Other=1")
+        assert "PWD" not in result
+        assert "a" not in result
+        assert "b" not in result
+        assert "Other=1" in result
+
+    def test_strip_quoted_pwd_single_quotes(self):
+        """PWD='a;b' inside single quotes is fully stripped."""
+        result = _strip_password("ODBC;PWD='a;b';Other=1")
+        assert "PWD" not in result
+        assert "a" not in result
+        assert "b" not in result
+        assert "Other=1" in result
+
+    def test_strip_unquoted_pwd_with_semicolon_at_end(self):
+        """PWD=a;b at end of string is fully removed."""
+        result = _strip_password("ODBC;PWD=a;b")
+        assert "PWD" not in result
+        assert "a;b" not in result
+
+    def test_strip_password_with_semicolon_in_value(self):
+        """PWD=secret;extra is stripped (semicolon is not part of the password)."""
+        result = _strip_password("ODBC;PWD=secret;extra")
+        assert "PWD" not in result
+        assert "secret" not in result
+        assert "extra" in result
+
 
 class TestAlterTableAddColumn:
     """Tests for _alter_table_add_column DAO DDL helper."""
