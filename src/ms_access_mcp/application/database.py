@@ -35,6 +35,18 @@ _ok = ok  # backward-compat aliases; remove in a later cleanup
 _err = err
 
 
+def _get_lock_file(db_path: str) -> str | None:
+    """Return the lock file path for a database, or None if no lock file exists."""
+    p = Path(db_path)
+    ldb = p.with_suffix(".ldb")
+    if ldb.exists():
+        return str(ldb)
+    laccdb = p.with_suffix(".laccdb")
+    if laccdb.exists():
+        return str(laccdb)
+    return None
+
+
 def _write_failed(result: Any) -> str | None:
     """Return error message string if a write result reports failure, else None."""
     if dataclasses.is_dataclass(result):
@@ -125,10 +137,30 @@ class DatabaseUseCases:
                 backend=cast(Literal["odbc", "com", "dao", "auto"] | None, self._backend_name),
                 capabilities=DATA_READ_CAPS,
             )
-            if password:
-                self._adapter.connect(db_path, password=password)
-            else:
-                self._adapter.connect(db_path)
+
+            # Rung 1 retry: if lock signature + stale .ldb exists, retry up to 3x
+            lock_file = _get_lock_file(db_path)
+            for attempt in range(4):  # 1 initial + 3 retries
+                try:
+                    if password:
+                        self._adapter.connect(db_path, password=password)
+                    else:
+                        self._adapter.connect(db_path)
+                    break  # connected successfully
+                except Exception as conn_err:  # noqa: PERF203 — retry loop is intentional
+                    error_msg = str(conn_err).lower()
+                    lock_patterns = ["could not use", "file already in use", "locked", "cannot open"]
+                    is_lock_error = any(p in error_msg for p in lock_patterns)
+                    is_last_attempt = attempt >= 3
+
+                    if is_last_attempt or not (is_lock_error and lock_file and os.path.exists(lock_file)):  # type: ignore[arg-type]
+                        # Non-lock error, or lock but exhausted retries
+                        raise
+
+                    import time as _time
+
+                    _time.sleep(0.25)
+
             self._db_path = db_path
             self._connections[self._active_connection] = self._adapter
 
@@ -144,6 +176,7 @@ class DatabaseUseCases:
                 if isinstance(backup_result, Err):
                     # Non-fatal: log but continue without backup
                     import sys
+
                     print(f"Session backup failed (non-fatal): {backup_result.message}", file=sys.stderr)
 
             return _ok(data=extra_data)

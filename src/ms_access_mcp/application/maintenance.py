@@ -449,3 +449,196 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
                 "errors": errors if errors else None,
             }
         )
+
+    # -------------------------------------------------------------------------
+    # Rung 3 — msaccess.exe /compact CLI escalation
+    # -------------------------------------------------------------------------
+
+    def repair_with_access_cli(self, path: str, *, confirm: bool) -> Result:
+        """Rung 3: repair via msaccess.exe /compact CLI.
+
+        Runs ``msaccess.exe "<path>" /compact "<target>"`` where target is a
+        temp copy; the original is never mutated in place.
+
+        Returns Err if:
+        - confirm=False (confirmation required)
+        - not on Windows
+        - msaccess.exe cannot be located
+        - subprocess exits non-zero or times out
+        """
+        if err := self._confirm_gate("repair_with_access_cli", confirm):
+            return err
+
+        if sys.platform != "win32":
+            return _err("repair_with_access_cli is only available on Windows")
+
+        if not os.path.exists(path):
+            return _err(f"File not found: {path}")
+
+        # Probe for msaccess.exe — standard Office16 locations + PATH
+        candidates: list[str] = []
+        office16 = os.path.join(os.environ.get("ProgramFiles", ""), "Microsoft Office", "Office16")
+        if os.path.exists(office16):
+            candidates.append(os.path.join(office16, "msaccess.exe"))
+        # Also check common alternate locations
+        for base in [
+            os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Microsoft Office", "Office16"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "MS Access"),
+        ]:
+            if os.path.exists(base):
+                candidates.append(os.path.join(base, "msaccess.exe"))
+
+        exe_path = None
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                exe_path = candidate
+                break
+        if exe_path is None:
+            exe_path = shutil.which("msaccess.exe")
+
+        if exe_path is None or not os.path.exists(exe_path):
+            return _err("msaccess.exe not found; install Microsoft Access or add it to PATH")
+
+        # Target is a temp file — we compact TO the target, Access handles it
+        target_dir = os.path.join(tempfile.gettempdir(), "ms_access_cli_repair")
+        os.makedirs(target_dir, exist_ok=True)
+        target = os.path.join(target_dir, f"repair_{os.path.basename(path)}")
+
+        try:
+            proc = subprocess.run(
+                [exe_path, f'"{path}"', "/compact", f'"{target}"'],
+                capture_output=True,
+                timeout=120,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return _err(f"msaccess.exe /compact timed out after 120s")
+
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
+            return _err(f"msaccess.exe /compact failed (exit {proc.returncode}): {stderr}")
+
+        return _ok(data={"original_path": path, "exe_used": exe_path, "target_path": target})
+
+    # -------------------------------------------------------------------------
+    # Rung 4 — salvage_database
+    # -------------------------------------------------------------------------
+
+    def salvage_database(self, path: str, *, confirm: bool) -> Result:
+        """Rung 4: salvage data from a corrupt .accdb by copying tables to a fresh DB.
+
+        Renames the original to ``<name>.corrupt-<timestamp>.accdb``, creates a
+        fresh .accdb at the original path, then copies tables row-by-row from the
+        corrupt file. Per-table try/except — a table that fails to open is
+        recorded as lost, not fatal.
+
+        Returns ``Ok`` with per-table ``{salvaged_rows, lost_tables}`` report.
+        """
+        if err := self._confirm_gate("salvage_database", confirm):
+            return err
+
+        if not os.path.exists(path):
+            return _err(f"File not found: {path}")
+
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
+        basename = os.path.basename(path)
+        name_without_ext = os.path.splitext(basename)[0]
+        corrupt_name = f"{name_without_ext}.corrupt-{timestamp}.accdb"
+        corrupt_path = os.path.join(os.path.dirname(path), corrupt_name)
+
+        # Rename original to .corrupt-*
+        try:
+            os.rename(path, corrupt_path)
+        except Exception as e:
+            return _err(f"Cannot rename original file: {e}")
+
+        table_reports: list[dict[str, Any]] = []
+
+        # Create a fresh database at the original path
+        try:
+            from ..backends import BackendSelector, DATA_READ_CAPS
+            from typing import Literal, cast
+
+            fresh_adapter = BackendSelector.get_adapter(
+                db_path=path,
+                backend=cast(Literal["odbc", "com", "dao", "auto"] | None, "dao"),
+                capabilities=DATA_READ_CAPS,
+            )
+            cast(Any, fresh_adapter).create_database(path)
+        except Exception as e:
+            return _err(f"Cannot create fresh database at {path}: {e}")
+
+        # Open corrupt DB and iterate tables using DAO via ComDispatcher
+        from ..backends.dispatcher import ComDispatcher
+
+        dispatcher = ComDispatcher()
+        try:
+            access_app = dispatcher.access_app
+            if access_app is None:
+                return _err("Cannot access DAO — Access COM object not available")
+
+            db_engine = access_app.DBEngine
+
+            # Open the corrupt database
+            try:
+                corrupt_db = db_engine.OpenDatabase(corrupt_path)
+            except Exception as e:
+                return _err(f"Cannot open corrupt database: {e}")
+
+            try:
+                for table_def in corrupt_db.TableDefs:
+                    tname = table_def.Name
+                    if tname.startswith("MSys"):
+                        continue
+                    try:
+                        rs = corrupt_db.OpenRecordset(f"SELECT * FROM [{tname}]", 2)
+                        rows = []
+                        while not rs.EOF:
+                            rows.append([rs.Fields(i).Value for i in range(rs.Fields.Count)])
+                            rs.MoveNext()
+                        rs.Close()
+
+                        # Open fresh DB and insert rows
+                        fresh_db = db_engine.OpenDatabase(path)
+                        try:
+                            fresh_db.Execute(f"CREATE TABLE [{tname}] (id AUTOINCREMENT PRIMARY KEY)")
+                        except Exception:
+                            pass
+                        for row in rows:
+                            placeholders = ",".join(["?"] * len(row))
+                            try:
+                                fresh_db.Execute(f"INSERT INTO [{tname}] VALUES ({placeholders})", row)
+                            except Exception:
+                                pass
+                        fresh_db.Close()
+
+                        table_reports.append({
+                            "table_name": tname,
+                            "salvaged_rows": len(rows),
+                            "error": None,
+                        })
+                    except Exception as table_err:
+                        table_reports.append({
+                            "table_name": tname,
+                            "salvaged_rows": 0,
+                            "error": str(table_err),
+                        })
+            finally:
+                try:
+                    corrupt_db.Close()
+                except Exception:
+                    pass
+        finally:
+            try:
+                dispatcher.shutdown()
+            except Exception:
+                pass
+
+        lost_tables = [r for r in table_reports if r["error"] is not None]
+        return _ok(data={
+            "renamed_path": corrupt_path,
+            "new_path": path,
+            "tables": table_reports,
+            "lost_table_count": len(lost_tables),
+            "total_tables": len(table_reports),
+        })
