@@ -5,19 +5,13 @@ Pattern: model after test_credentials.py (tmp_path + fake adapters).
 
 from __future__ import annotations
 
-import json
-import os
 import subprocess
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from ms_access_mcp.application.database import DatabaseUseCases, _get_lock_file
 from ms_access_mcp.application.maintenance import MaintenanceUseCases
 from ms_access_mcp.errors import Err, Ok
-
 
 # ---------------------------------------------------------------------------
 # Rung 1 — .ldb-aware retry

@@ -4,15 +4,9 @@ Plan 042 — facade↔adapter contract alignment.
 """
 
 import dataclasses
-import inspect
-from unittest.mock import MagicMock
 
-import pytest
-
-from ms_access_mcp.application.database import DatabaseUseCases, _ok
+from ms_access_mcp.application.database import DatabaseUseCases
 from ms_access_mcp.errors import Err
-from ms_access_mcp.backends.dao import DaoAdapter
-from ms_access_mcp.safety import WritePolicy
 
 
 class SpyAdapter:

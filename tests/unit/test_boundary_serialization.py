@@ -16,7 +16,7 @@ import sys
 import pytest
 
 from ms_access_mcp.application.database import DatabaseUseCases
-from ms_access_mcp.errors import Ok, Err
+from ms_access_mcp.errors import Err, Ok
 from ms_access_mcp.models import ObjectMetadata, WriteResult
 
 # ---------------------------------------------------------------------------

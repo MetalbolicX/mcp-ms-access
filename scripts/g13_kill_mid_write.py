@@ -289,8 +289,8 @@ def _mcp_handshake(proc: subprocess.Popen, tmpdir: Path) -> tuple:
     """Perform MCP initialize handshake. Returns (stdin, stdout, reader, watchdog)."""
     stdin = proc.stdin
     stdout = proc.stdout
-    assert stdin is not None
-    assert stdout is not None
+    assert stdin is not None  # noqa: S101 - Popen PIPE setup establishes the stream invariant
+    assert stdout is not None  # noqa: S101 - Popen PIPE setup establishes the stream invariant
 
     reader = _LineReader(stdout)
     watchdog = _Watchdog(proc, timeout_s=60.0)
@@ -413,7 +413,7 @@ def _run_kill_round(
             for i in range(3):
                 _insert_data(stdin, reader, watchdog, "tasks", [{"title": f"commit_{i}"}])
             # Small insert that commits
-            resp = _insert_data(stdin, reader, watchdog, "tasks", [{"title": "post_commit_target"}])
+            _insert_data(stdin, reader, watchdog, "tasks", [{"title": "post_commit_target"}])
             # Kill within 50ms — just kill immediately after the response was received
             proc.kill()
             proc.wait(timeout=5)

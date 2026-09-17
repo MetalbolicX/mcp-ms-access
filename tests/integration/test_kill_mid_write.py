@@ -9,12 +9,11 @@ Falls back to skip if any requirement is unmet.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-import subprocess
 
 # ---------------------------------------------------------------------------
 # Skip helpers (defined before pytestmark so the decorators can reference them)

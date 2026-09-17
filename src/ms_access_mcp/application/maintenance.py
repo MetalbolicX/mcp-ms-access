@@ -512,7 +512,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return _err(f"msaccess.exe /compact timed out after 120s")
+            return _err("msaccess.exe /compact timed out after 120s")
 
         if proc.returncode != 0:
             stderr = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
@@ -556,8 +556,9 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
 
         # Create a fresh database at the original path
         try:
-            from ..backends import BackendSelector, DATA_READ_CAPS
             from typing import Literal, cast
+
+            from ..backends import DATA_READ_CAPS, BackendSelector
 
             fresh_adapter = BackendSelector.get_adapter(
                 db_path=path,

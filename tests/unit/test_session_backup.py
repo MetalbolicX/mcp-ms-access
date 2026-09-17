@@ -12,11 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import tempfile
 from pathlib import Path
-
-import pytest
 
 from ms_access_mcp.application.session_backup import (
     _AUTO_SESSION_DIR,

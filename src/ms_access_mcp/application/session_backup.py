@@ -16,7 +16,6 @@ import os
 import shutil
 import tempfile
 from datetime import UTC, datetime
-from pathlib import Path
 
 from ..errors import Err, Ok, Result
 

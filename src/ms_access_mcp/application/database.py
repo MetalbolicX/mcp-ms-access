@@ -18,6 +18,7 @@ from ..credentials import contains_credential, resolve_profile
 from ..errors import Err, Ok, Result, err, ok  # noqa: F401 — re-exported for backward compatibility
 from ..models import QueryResult
 from ..safety import WritePolicy, is_path_allowed
+from . import session_backup as _session_backup
 from .db_admin import create_access_database as _create_db
 from .db_admin import get_database_properties as _get_db_props
 from .db_admin import get_database_statistics as _get_db_stats
@@ -25,7 +26,6 @@ from .db_admin import set_database_property as _set_db_prop
 from .db_analysis import generate_sql as _gen_sql
 from .db_analysis import get_er_diagram as _get_er
 from .db_export import export_data as _export_data
-from . import session_backup as _session_backup
 
 # =============================================================================
 # Result Envelopes — re-exported from the shared kernel (errors module)
@@ -842,7 +842,7 @@ class DatabaseUseCases:
     def create_relationship(
         self,
         relationship_name: str,
-        source_table: str,
+        source_table: str,  # noqa: ARG002 - facade parity; adapter resolves via column list
         source_column: str,
         dest_table: str,
         dest_column: str,
