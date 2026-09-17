@@ -338,3 +338,145 @@ class TestDaoAdapterLinkedTableErrorScrub:
         assert "hunter2" not in error_msg
         # Verify error is sanitized (either [sanitized] marker or _strip_password applied)
         assert error_msg != "create failed: ODBC;PWD=hunter2;Database=Northwind"
+
+
+# =============================================================================
+# Step 3 RED: ADO and DAO error string scrubbing at result boundary
+# =============================================================================
+
+
+class TestADOErrorScrub:
+    """Step 3: str(e) at ADO result boundary must be scrubbed of credentials."""
+
+    def test_execute_script_error_scrubs_password_from_error(self):
+        """execute_script result error field must not contain password from exception."""
+        from ms_access_mcp.backends.ado import AdoAdapter
+
+        # Fake connection whose Execute raises an exception with a password in the message
+        class FakeADOConn:
+            def Execute(self, sql, params=None):
+                raise Exception("ODBC;PWD=hunter2;Database=Northwind")
+
+            def close(self):
+                pass
+
+        adapter = AdoAdapter.__new__(AdoAdapter)
+        adapter._db_path = "fake.accdb"
+        adapter._conn = FakeADOConn()
+        adapter._connected = True
+
+        result = adapter.execute_script("SELECT 1")
+
+        assert result["success"] is False
+        # execute_script returns errors in results[0]["error"]
+        error_msg = result["results"][0]["error"]
+        assert "hunter2" not in error_msg
+        assert "PWD=" not in error_msg
+
+    def test_execute_script_error_scrubs_password_from_statement_echo(self):
+        """execute_script result stmt[:60] echo must not contain password."""
+        from ms_access_mcp.backends.ado import AdoAdapter
+
+        class FakeADOConn:
+            def Execute(self, sql, params=None):
+                raise Exception("any error")
+
+            def close(self):
+                pass
+
+        adapter = AdoAdapter.__new__(AdoAdapter)
+        adapter._db_path = "fake.accdb"
+        adapter._conn = FakeADOConn()
+        adapter._connected = True
+
+        # Script starting with a credential-bearing statement
+        result = adapter.execute_script("SELECT * FROM Users;PWD=hunter2;--")
+
+        assert result["success"] is False
+        # The stmt[:60] echo must not contain the password
+        stmt_echo = result.get("statement", "")
+        assert "PWD=" not in stmt_echo
+        assert "hunter2" not in stmt_echo
+
+
+class TestDAOErrorScrub:
+    """Step 3: str(e) at DAO result boundary must be scrubbed of credentials."""
+
+    def test_create_query_error_scrubs_password(self):
+        """create_query error must not leak password from exception message."""
+        from ms_access_mcp.backends.dao import DaoAdapter
+        from unittest.mock import MagicMock
+
+        fake_db = MagicMock()
+        fake_db.CreateQueryDef.side_effect = Exception(
+            "DAO;PWD=hunter2;Database=x.accdb"
+        )
+
+        class FakeDispatcher:
+            def __init__(self, db):
+                self._db = db
+
+            def is_connected(self):
+                return True
+
+            @property
+            def current_db(self):
+                return self._db
+
+            def call(self, fn):
+                return fn()
+
+            def start(self):
+                pass
+
+            def open_dao_database(self, db_path, password="", read_only=False):
+                raise Exception("DAO;PWD=hunter2;Database=x.accdb")
+
+        adapter = DaoAdapter("fake.accdb", dispatcher=FakeDispatcher(fake_db))
+        result = adapter.create_query("TestQ", "SELECT 1")
+
+        assert result["success"] is False
+        error_msg = result["error"]
+        assert "hunter2" not in error_msg
+        assert "PWD=" not in error_msg
+
+    def test_set_query_sql_error_scrubs_password(self):
+        """set_query_sql error must not leak password from exception message.
+
+        This site (dao.py line 261) is NOT yet routed through _strip_password.
+        """
+        from ms_access_mcp.backends.dao import DaoAdapter
+        from unittest.mock import MagicMock
+
+        fake_db = MagicMock()
+        fake_db.QueryDefs.side_effect = Exception(
+            "DAO;PWD=hunter2;Database=x.accdb"
+        )
+
+        class FakeDispatcher:
+            def __init__(self, db):
+                self._db = db
+
+            def is_connected(self):
+                return True
+
+            @property
+            def current_db(self):
+                return self._db
+
+            def call(self, fn):
+                return fn()
+
+            def start(self):
+                pass
+
+            def open_dao_database(self, db_path, password="", read_only=False):
+                raise Exception("DAO;PWD=hunter2;Database=x.accdb")
+
+        adapter = DaoAdapter("fake.accdb", dispatcher=FakeDispatcher(fake_db))
+        result = adapter.set_query_sql("TestQ", "SELECT 1")
+
+        assert result["success"] is False
+        error_msg = result["error"]
+        assert "hunter2" not in error_msg
+        assert "PWD=" not in error_msg
