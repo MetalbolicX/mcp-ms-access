@@ -243,7 +243,7 @@ class DaoAdapter:
                 db.QueryDefs.Append(qdef)
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": _strip_password(str(e))}
 
         return self._dispatcher.call(_do)
 
@@ -258,7 +258,7 @@ class DaoAdapter:
                 qdef.SQL = sql
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": _strip_password(str(e))}
 
         return self._dispatcher.call(_do)
 
@@ -272,7 +272,7 @@ class DaoAdapter:
                 self._dispatcher.current_db.QueryDefs.Delete(name)
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": _strip_password(str(e))}
 
         return self._dispatcher.call(_do)
 
@@ -398,7 +398,7 @@ class DaoAdapter:
                     total_affected += db.RecordsAffected
                 return WriteResult(success=True, affected=total_affected)
             except Exception as e:
-                return WriteResult(success=False, error=str(e), affected=0)
+                return WriteResult(success=False, error=_strip_password(str(e)), affected=0)
 
         return self._dispatcher.call(_do)
 
@@ -438,7 +438,7 @@ class DaoAdapter:
                 db.Execute(sql, DAO_DB_FAIL_ON_ERROR)
                 return WriteResult(success=True, affected=db.RecordsAffected)
             except Exception as e:
-                return WriteResult(success=False, error=str(e), affected=0)
+                return WriteResult(success=False, error=_strip_password(str(e)), affected=0)
 
         return self._dispatcher.call(_do)
 
@@ -474,7 +474,7 @@ class DaoAdapter:
                 db.Execute(sql, DAO_DB_FAIL_ON_ERROR)
                 return WriteResult(success=True, affected=db.RecordsAffected)
             except Exception as e:
-                return WriteResult(success=False, error=str(e), affected=0)
+                return WriteResult(success=False, error=_strip_password(str(e)), affected=0)
 
         return self._dispatcher.call(_do)
 
@@ -513,8 +513,10 @@ class DaoAdapter:
                     db.Execute(stmt, DAO_DB_FAIL_ON_ERROR)
                     results.append({"statement": stmt[:60], "success": True})
                 except Exception as e:
-                    errors.append(str(e))
-                    results.append({"statement": stmt[:60], "success": False, "error": str(e)})
+                    scrubbed_error = _strip_password(str(e))
+                    scrubbed_stmt = _strip_password(stmt)[:60]
+                    errors.append(scrubbed_error)
+                    results.append({"statement": scrubbed_stmt, "success": False, "error": scrubbed_error})
 
             return {
                 "success": len(errors) == 0,
@@ -564,7 +566,7 @@ class DaoAdapter:
                 db.Execute(sql, DAO_DB_FAIL_ON_ERROR)
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": _strip_password(str(e))}
 
         return self._dispatcher.call(_do)
 
@@ -583,7 +585,7 @@ class DaoAdapter:
                 db.Execute(f"DROP TABLE [{table_name}]", DAO_DB_FAIL_ON_ERROR)
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": _strip_password(str(e))}
 
         return self._dispatcher.call(_do)
 
@@ -612,7 +614,7 @@ class DaoAdapter:
                 db.Execute(sql, DAO_DB_FAIL_ON_ERROR)
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": _strip_password(str(e))}
 
         return self._dispatcher.call(_do)
 
@@ -630,7 +632,7 @@ class DaoAdapter:
                 )
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": _strip_password(str(e))}
 
         return self._dispatcher.call(_do)
 
@@ -699,7 +701,7 @@ class DaoAdapter:
                         result = {"success": False, "error": f"Unhandled action: {action}"}
                     results.append({"action": action, **result})
                 except Exception as e:
-                    results.append({"action": action, "success": False, "error": str(e)})
+                    results.append({"action": action, "success": False, "error": _strip_password(str(e))})
 
             overall = all(r["success"] for r in results)
             return {"success": overall, "operations": results}
@@ -834,6 +836,6 @@ class DaoAdapter:
                 self._dispatcher.current_db.TableDefs.Delete(name)
                 return {"success": True}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": _strip_password(str(e))}
 
         return self._dispatcher.call(_do)

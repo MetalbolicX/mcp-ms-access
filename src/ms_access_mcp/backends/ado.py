@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .dao_sql import _strip_password
 from .script import parse_script_lines
 
 logger = logging.getLogger(__name__)
@@ -81,8 +82,10 @@ class AdoAdapter:
                 self._conn.Execute(stmt)
                 results.append({"statement": stmt[:60], "success": True})
             except Exception as e:
-                errors.append(str(e))
-                results.append({"statement": stmt[:60], "success": False, "error": str(e)})
+                scrubbed_error = _strip_password(str(e))
+                scrubbed_stmt = _strip_password(stmt)[:60]
+                errors.append(scrubbed_error)
+                results.append({"statement": scrubbed_stmt, "success": False, "error": scrubbed_error})
 
         return {
             "success": len(errors) == 0,
@@ -112,7 +115,7 @@ class AdoAdapter:
             rs.Close()
             return {"success": True, "rows": rows, "count": len(rows), "columns": columns}
         except Exception as e:
-            return {"success": False, "rows": [], "count": 0, "columns": [], "error": str(e)}
+            return {"success": False, "rows": [], "count": 0, "columns": [], "error": _strip_password(str(e))}
 
     def insert_data(self, table_name: str, data: dict | list[dict]) -> dict:
         """Insert rows via ADO."""
@@ -131,7 +134,7 @@ class AdoAdapter:
                 total += 1
             return {"success": True, "affected": total}
         except Exception as e:
-            return {"success": False, "error": str(e), "affected": 0}
+            return {"success": False, "error": _strip_password(str(e)), "affected": 0}
 
     def update_data(self, table_name: str, set_dict: dict, where_dict: dict | None = None) -> dict:
         """Update rows via ADO."""
@@ -150,7 +153,7 @@ class AdoAdapter:
             self._conn.Execute(sql, vals)
             return {"success": True, "affected": 1}
         except Exception as e:
-            return {"success": False, "error": str(e), "affected": 0}
+            return {"success": False, "error": _strip_password(str(e)), "affected": 0}
 
     def delete_data(self, table_name: str, where_dict: dict | None = None) -> dict:
         """Delete rows via ADO."""
@@ -168,4 +171,4 @@ class AdoAdapter:
             self._conn.Execute(sql, vals)
             return {"success": True, "affected": 1}
         except Exception as e:
-            return {"success": False, "error": str(e), "affected": 0}
+            return {"success": False, "error": _strip_password(str(e)), "affected": 0}
