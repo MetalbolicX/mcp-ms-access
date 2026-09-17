@@ -143,9 +143,8 @@ class TestRepairWithAccessCli:
         db = tmp_path / "db.accdb"
         db.write_bytes(b"FAKE")
         with patch("ms_access_mcp.application.maintenance.shutil.which", return_value=None):
-            with patch("pathlib.Path.exists", return_value=False):
-                mc = MaintenanceUseCases()
-                result = mc.repair_with_access_cli(str(db), confirm=True)
+            mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
+            result = mc.repair_with_access_cli(str(db), confirm=True)
         assert isinstance(result, Err)
         assert "not found" in result.message.lower() or "access" in result.message.lower()
 
@@ -159,7 +158,7 @@ class TestRepairWithAccessCli:
                 with patch("os.path.exists", return_value=True):
                     with patch("subprocess.run") as mock_run:
                         mock_run.return_value = MagicMock(returncode=0)
-                        mc = MaintenanceUseCases()
+                        mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
                         result = mc.repair_with_access_cli(str(db), confirm=True)
 
         assert isinstance(result, Ok), f"Expected Ok, got {result!r}"
@@ -237,7 +236,7 @@ class TestSalvageDatabase:
             def shutdown(self):
                 pass
 
-        mc = MaintenanceUseCases()
+        mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
         with patch("ms_access_mcp.backends.dispatcher.ComDispatcher", return_value=_FakeDispatcher()):
             with patch("ms_access_mcp.backends.BackendSelector.get_adapter") as mock_get:
                 mock_adapter = MagicMock()
@@ -301,7 +300,7 @@ class TestSalvageDatabase:
             def shutdown(self):
                 pass
 
-        mc = MaintenanceUseCases()
+        mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
         with patch("ms_access_mcp.backends.dispatcher.ComDispatcher", return_value=_FakeDispatcher()):
             with patch("ms_access_mcp.backends.BackendSelector.get_adapter") as mock_get:
                 mock_adapter = MagicMock()

@@ -149,7 +149,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         out_dir = str(tmp_path / "out")
         result = uc.export_object("form", "Form1", out_dir)
 
@@ -163,7 +163,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         out_dir = str(tmp_path / "out")
         result = uc.export_object("report", "Report1", out_dir)
 
@@ -175,7 +175,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         out_dir = str(tmp_path / "out")
         result = uc.export_object("module", "Module1", out_dir)
 
@@ -187,7 +187,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         out_dir = str(tmp_path / "out")
         result = uc.export_object("unknown", "Name", out_dir)
 
@@ -201,7 +201,7 @@ class TestVersioningUseCases:
                 raise RuntimeError("adapter error")
 
         adapter = FailingAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         out_dir = str(tmp_path / "out")
         result = uc.export_object("form", "Form1", out_dir)
 
@@ -212,7 +212,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         out_dir = str(tmp_path / "out")
         result = uc.export_all(out_dir)
 
@@ -225,8 +225,9 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         export_dir = str(tmp_path / "export")
+        (tmp_path / "export").mkdir()
         result = uc.compare(export_dir)
 
         assert isinstance(result, Ok)
@@ -241,7 +242,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         out_dir = str(tmp_path / "out")
         result = uc.export_schema_ddl(out_dir)
 
@@ -254,7 +255,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         file_path = str(tmp_path / "form.txt")
         result = uc.import_object("form", "Form1", file_path, confirm=False)
 
@@ -265,7 +266,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         file_path = tmp_path / "form.txt"
         file_path.write_text("form code")
         result = uc.import_object("form", "Form1", str(file_path), confirm=True)
@@ -279,7 +280,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         file_path = str(tmp_path / "form.txt")
         result = uc.import_object("form", "Form1", file_path, confirm=True)
 
@@ -290,7 +291,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         input_dir = str(tmp_path / "in")
         result = uc.import_all(input_dir, confirm=False)
 
@@ -301,8 +302,9 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         input_dir = str(tmp_path / "in")
+        (tmp_path / "in").mkdir()
         result = uc.import_all(input_dir, confirm=True)
 
         assert isinstance(result, Ok)
@@ -313,7 +315,7 @@ class TestVersioningUseCases:
         from ms_access_mcp.application.versioning import VersioningUseCases
 
         adapter = FakeVersioningAdapter()
-        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = VersioningUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
         input_dir = str(tmp_path / "in")
         result = uc.import_all(input_dir, confirm=True)
 

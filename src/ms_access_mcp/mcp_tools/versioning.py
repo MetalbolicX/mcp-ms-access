@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.versioning import VersioningUseCases
+from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
 from .core import _result_to_dict, to_mcp_result
 
@@ -13,7 +14,7 @@ __all__ = ["register", "_TOOLS"]
 
 
 def _new_versioning(readonly: bool = True) -> VersioningUseCases:
-    return VersioningUseCases(readonly=readonly, db_path=None)
+    return VersioningUseCases(readonly=readonly, db_path=None, allowed_dirs=allowed_dirs_from_env())
 
 
 def versioning_export_object(kind: str, name: str, out_dir: str) -> CallToolResult:

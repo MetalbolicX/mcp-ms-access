@@ -12,6 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.migration import MigrationUseCases
+from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
 from .core import _result_to_dict, to_mcp_result
 
@@ -20,7 +21,7 @@ __all__ = ["register", "_TOOLS"]
 
 def _new_migration() -> MigrationUseCases:
     """Construct a MigrationUseCases instance."""
-    return MigrationUseCases()
+    return MigrationUseCases(allowed_dirs=allowed_dirs_from_env())
 
 
 # =============================================================================

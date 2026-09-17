@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from ..backends import BackendSelector
@@ -34,6 +35,7 @@ from ..models.migration import (
     TableResult,
     TableTransferConfig,
 )
+from ..safety import is_path_allowed
 
 __all__ = ["MigrationUseCases"]
 
@@ -96,13 +98,19 @@ class MigrationUseCases:
     get_migration_status: reads job from tracker
     """
 
-    def __init__(self, db_path: str | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | None = None,
+        allowed_dirs: list[Path] | None = None,
+    ) -> None:
         """Initialize migration use cases.
 
         Args:
             db_path: Optional Access database path for direct source access.
+            allowed_dirs: List of allowed directories for file operations.
         """
         self._db_path = db_path
+        self._allowed_dirs = allowed_dirs or []
 
     def _resolve_connect_arg(
         self,
@@ -176,6 +184,8 @@ class MigrationUseCases:
             return _err("database_path is required")
         if not os.path.isfile(database_path):
             return _err(f"Access database not found: {database_path}")
+        if not is_path_allowed(database_path, self._allowed_dirs):
+            return _err(f"Database path not allowed: {database_path}")
 
         # Validate target_type early
         valid_targets = {"postgres", "mysql", "sqlite", "sqlserver"}

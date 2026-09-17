@@ -7,11 +7,12 @@ All destructive ops gated via safety.require_acknowledgment + write policy.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from ..errors import Err, Ok, Result
 from ..errors import err as _err
 from ..errors import ok as _ok
-from ..safety import WritePolicy
+from ..safety import WritePolicy, is_path_allowed
 from ._adapter_lifecycle import AdapterLifecycle
 from .protocols import VersioningAdapterProtocol
 
@@ -41,10 +42,12 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
         adapter: VersioningAdapterProtocol | None = None,
         readonly: bool = True,
         db_path: str | None = None,
+        allowed_dirs: list[Path] | None = None,
     ) -> None:
         self._adapter = adapter
         self._policy = WritePolicy(readonly=readonly)
         self._db_path = db_path
+        self._allowed_dirs = allowed_dirs or []
 
     def _confirm_gate(self, op: str, confirm: bool) -> Err | None:
         if ack := self._policy.require_acknowledgment(op, confirm):
@@ -89,6 +92,9 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
         return entry
 
     def export_object(self, kind: str, name: str, out_dir: str) -> Result:
+        if not is_path_allowed(out_dir, self._allowed_dirs, must_exist=False):
+            return _err(f"Output directory not allowed: {out_dir}")
+
         resolved = self._resolve_kind(kind)
         if isinstance(resolved, Err):
             return resolved
@@ -107,6 +113,9 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             return _err(str(e))
 
     def export_all(self, out_dir: str) -> Result:
+        if not is_path_allowed(out_dir, self._allowed_dirs, must_exist=False):
+            return _err(f"Output directory not allowed: {out_dir}")
+
         if err := self._ensure_adapter():
             return err
         assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
@@ -126,6 +135,9 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
     def import_object(self, kind: str, name: str, file_path: str, confirm: bool) -> Result:
         if err := self._dangerous(f"import_{kind}", confirm):
             return err
+
+        if not is_path_allowed(file_path, self._allowed_dirs):
+            return _err(f"Input file not allowed: {file_path}")
 
         resolved = self._resolve_kind(kind)
         if isinstance(resolved, Err):
@@ -152,6 +164,9 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
         if err := self._dangerous("import_all", confirm):
             return err
 
+        if not is_path_allowed(input_dir, self._allowed_dirs):
+            return _err(f"Input directory not allowed: {input_dir}")
+
         if err := self._ensure_adapter():
             return err
         assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
@@ -169,6 +184,9 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             return _err(str(e))
 
     def compare(self, export_dir: str) -> Result:
+        if not is_path_allowed(export_dir, self._allowed_dirs):
+            return _err(f"Export directory not allowed: {export_dir}")
+
         if err := self._ensure_adapter():
             return err
         assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
@@ -187,6 +205,9 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             return _err(str(e))
 
     def export_schema_ddl(self, out_dir: str) -> Result:
+        if not is_path_allowed(out_dir, self._allowed_dirs, must_exist=False):
+            return _err(f"Output directory not allowed: {out_dir}")
+
         if err := self._ensure_adapter():
             return err
         assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant

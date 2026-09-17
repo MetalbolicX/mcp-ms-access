@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -63,7 +64,7 @@ class TestBackup:
         source.write_bytes(b"fake db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         result = uc.backup(str(source))
 
         assert isinstance(result, Ok)
@@ -80,7 +81,7 @@ class TestBackup:
         source.write_bytes(b"fake db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         result = uc.backup(str(source))
 
         assert isinstance(result, Ok)
@@ -98,7 +99,7 @@ class TestBackup:
         source.write_bytes(b"fake db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         for i in range(7):
             uc.backup(str(source), retention=5)
@@ -113,7 +114,7 @@ class TestBackup:
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         result = uc.backup(str(tmp_path / "nonexistent.accdb"))
 
         assert isinstance(result, Err)
@@ -133,7 +134,7 @@ class TestCreateDevCopy:
         source.write_bytes(b"prod db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         result = uc.create_dev_copy(source=str(source))
 
         assert isinstance(result, Ok)
@@ -149,7 +150,7 @@ class TestCreateDevCopy:
         source.write_bytes(b"prod db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         result = uc.create_dev_copy(source=str(source))
 
         assert isinstance(result, Ok)
@@ -167,7 +168,7 @@ class TestCreateDevCopy:
         source.write_bytes(b"prod db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         result1 = uc.create_dev_copy(source=str(source))
         assert isinstance(result1, Ok)
@@ -180,7 +181,7 @@ class TestCreateDevCopy:
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         result = uc.create_dev_copy(source=None)
 
         assert isinstance(result, Err)
@@ -192,7 +193,7 @@ class TestCreateDevCopy:
         source.write_bytes(b"prod db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         result = uc.create_dev_copy(source=str(source))
 
         assert isinstance(result, Ok)
@@ -215,7 +216,7 @@ class TestDeployDevCopy:
         target.write_bytes(b"original content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         result = uc.deploy_dev_copy(
             dev_path=str(dev_source),
@@ -243,7 +244,8 @@ class TestDeployDevCopy:
         target.write_bytes(b"target content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        # Allow both pytest tmp_path and system temp (where dev copies are created)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path, Path(tempfile.gettempdir())])
 
         create_result = uc.create_dev_copy(source=str(source))
         assert isinstance(create_result, Ok)
@@ -269,7 +271,7 @@ class TestDeployDevCopy:
         target.write_bytes(b"original content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         result = uc.deploy_dev_copy(
             dev_path=str(dev_source),
@@ -288,7 +290,7 @@ class TestDeployDevCopy:
         dev_source.write_bytes(b"dev content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         bad_target = str(tmp_path / "nonexistent" / "target.accdb")
         result = uc.deploy_dev_copy(
@@ -317,7 +319,7 @@ class TestDevCopyStatus:
             shutil.rmtree(dev_dir)
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
         result = uc.dev_copy_status()
 
         assert isinstance(result, Ok)
@@ -336,7 +338,7 @@ class TestDevCopyStatus:
         source.write_bytes(b"prod content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         create_result = uc.create_dev_copy(source=str(source))
         assert isinstance(create_result, Ok)
@@ -361,7 +363,7 @@ class TestCompactRepair:
         target.write_bytes(b"db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         mode: str = "invalid_mode"
         result = uc.compact_repair(
@@ -380,7 +382,7 @@ class TestCompactRepair:
         target.write_bytes(b"db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         result = uc.compact_repair(
             path=str(target),
@@ -398,7 +400,7 @@ class TestCompactRepair:
         target.write_bytes(b"db content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         result = uc.compact_repair(
             path=str(target),
@@ -419,7 +421,7 @@ class TestCompactRepair:
         target.write_bytes(b"db content")
 
         adapter = FakeMaintenanceAdapter(compact_error="DAO engine error")
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         result = uc.compact_repair(
             path=str(target),
@@ -440,7 +442,7 @@ class TestCompactRepair:
 
         try:
             adapter = FakeMaintenanceAdapter()
-            uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+            uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
             result = uc.compact_repair(
                 path=target,
@@ -478,7 +480,7 @@ class TestDiagnoseEnvironment:
         monkeypatch.setattr(doctor, "run_checks", lambda deep: fake_checks)
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
 
         result = uc.diagnose_environment()
 
@@ -509,7 +511,7 @@ class TestDiagnoseEnvironment:
         monkeypatch.setattr(doctor, "run_checks", fake_run_checks)
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=True, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=True, db_path=None, allowed_dirs=[tmp_path])
 
         uc.diagnose_environment()
 
@@ -526,7 +528,7 @@ class TestRecoverAccess:
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         result = uc.recover_access(confirm=False)
 
@@ -537,7 +539,7 @@ class TestRecoverAccess:
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         monkeypatch.setattr(sys, "platform", "linux")
         result = uc.recover_access(confirm=True)
@@ -549,7 +551,7 @@ class TestRecoverAccess:
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         called_commands = []
 
@@ -583,7 +585,7 @@ class TestRecoverAccess:
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[Path(tempfile.gettempdir())])
         called_commands = []
 
         def fake_run(cmd, **kwargs):
@@ -628,7 +630,7 @@ class TestPreflightBackup:
         source.write_bytes(b"test content")
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         result = uc._preflight_backup(str(source))
 
@@ -640,7 +642,7 @@ class TestPreflightBackup:
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
         adapter = FakeMaintenanceAdapter()
-        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None)
+        uc = MaintenanceUseCases(adapter=adapter, readonly=False, db_path=None, allowed_dirs=[tmp_path])
 
         result = uc._preflight_backup(str(tmp_path / "nonexistent.accdb"))
 

@@ -28,6 +28,7 @@ from .credentials import (
 from .doctor import doctor_main
 from .opencode_config import Ok as OpenCodeOk
 from .opencode_config import entry_from, register, remove
+from .safety import allowed_dirs_from_env
 from .server import main as mcp_main
 
 # =============================================================================
@@ -276,13 +277,21 @@ def _automation_use_cases(opts: argparse.Namespace) -> AutomationUseCases:
 def _versioning_use_cases(opts: argparse.Namespace) -> VersioningUseCases:
     """Construct VersioningUseCases honoring --allow-write and --db."""
     readonly = not getattr(opts, "allow_write", False)
-    return VersioningUseCases(readonly=readonly, db_path=getattr(opts, "db", None))
+    return VersioningUseCases(
+        readonly=readonly,
+        db_path=getattr(opts, "db", None),
+        allowed_dirs=allowed_dirs_from_env(),
+    )
 
 
 def _maintenance_use_cases(opts: argparse.Namespace) -> MaintenanceUseCases:
     """Construct MaintenanceUseCases honoring --allow-write and --db."""
     readonly = not getattr(opts, "allow_write", False)
-    return MaintenanceUseCases(readonly=readonly, db_path=getattr(opts, "db", None))
+    return MaintenanceUseCases(
+        readonly=readonly,
+        db_path=getattr(opts, "db", None),
+        allowed_dirs=allowed_dirs_from_env(),
+    )
 
 
 # ---- Forms ----

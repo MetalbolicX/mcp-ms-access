@@ -15,12 +15,13 @@ import subprocess
 import sys
 import tempfile
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from ..errors import Err, Ok, Result
 from ..errors import err as _err
 from ..errors import ok as _ok
-from ..safety import WritePolicy
+from ..safety import WritePolicy, is_path_allowed
 from ._adapter_lifecycle import AdapterLifecycle
 from .protocols import MaintenanceAdapterProtocol
 
@@ -86,10 +87,12 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         adapter: MaintenanceAdapterProtocol | None = None,
         readonly: bool = True,
         db_path: str | None = None,
+        allowed_dirs: list[Path] | None = None,
     ) -> None:
         self._adapter = adapter
         self._policy = WritePolicy(readonly=readonly)
         self._db_path = db_path
+        self._allowed_dirs = allowed_dirs or []
 
     def _confirm_gate(self, op: str, confirm: bool) -> Err | None:
         if ack := self._policy.require_acknowledgment(op, confirm):
@@ -158,6 +161,8 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
     def backup(self, path: str, *, retention: int | None = None) -> Result:
         if not os.path.exists(path):
             return _err(f"Source not found: {path}")
+        if not is_path_allowed(path, self._allowed_dirs):
+            return _err(f"Source path not allowed: {path}")
 
         backup_dir = os.path.join(tempfile.gettempdir(), "ms_access_backups")
         os.makedirs(backup_dir, exist_ok=True)
@@ -233,6 +238,9 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         if not os.path.exists(source):
             return _err(f"Source not found: {source}")
 
+        if not is_path_allowed(source, self._allowed_dirs):
+            return _err(f"Source path not allowed: {source}")
+
         dev_dir = os.path.join(tempfile.gettempdir(), "ms_access_dev")
         os.makedirs(dev_dir, exist_ok=True)
 
@@ -284,10 +292,13 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         if err := self._confirm_gate("deploy_dev_copy", confirm):
             return err
 
-        if not os.path.exists(dev_path):
-            return _err(f"Dev copy not found: {dev_path}")
+        if not is_path_allowed(dev_path, self._allowed_dirs):
+            return _err(f"Dev copy path not allowed: {dev_path}")
 
         bak_path: str | None = None
+
+        if not is_path_allowed(target, self._allowed_dirs, must_exist=False):
+            return _err(f"Target path not allowed: {target}")
 
         if preflight_backup and not self._is_disposable_path(target):
             backup_result = self._preflight_backup(target)
@@ -387,7 +398,10 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         if err := self._confirm_gate("compact_repair", confirm):
             return err
 
+        # Disposable paths bypass allowed_dirs guard (they go to temp dir)
         if not self._is_disposable_path(path):
+            if not is_path_allowed(path, self._allowed_dirs):
+                return _err(f"Database path not allowed: {path}")
             backup_result = self._preflight_backup(path)
             if isinstance(backup_result, Err):
                 return backup_result
@@ -475,6 +489,9 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         if not os.path.exists(path):
             return _err(f"File not found: {path}")
 
+        if not is_path_allowed(path, self._allowed_dirs):
+            return _err(f"Database path not allowed: {path}")
+
         # Probe for msaccess.exe — standard Office16 locations + PATH
         candidates: list[str] = []
         office16 = os.path.join(os.environ.get("ProgramFiles", ""), "Microsoft Office", "Office16")
@@ -539,6 +556,9 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
 
         if not os.path.exists(path):
             return _err(f"File not found: {path}")
+
+        if not is_path_allowed(path, self._allowed_dirs):
+            return _err(f"Database path not allowed: {path}")
 
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
         basename = os.path.basename(path)
