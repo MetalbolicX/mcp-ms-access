@@ -7,13 +7,26 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-def is_path_allowed(path: str | Path, allowed_dirs: list[Path]) -> bool:
+def is_path_allowed(
+    path: str | Path,
+    allowed_dirs: list[Path],
+    *,
+    must_exist: bool = True,
+) -> bool:
     """Return True if *path* is inside one of *allowed_dirs* and safe.
 
     Fixed oracle bug: per-directory try/except with return True inside the
     loop, and return False only after exhausting all allowed dirs.
     The oracle had `return True` inside the for loop while try/except wrapped
     the whole loop — only the first allowed dir was ever checked.
+
+    Args:
+        path: Path to check.
+        allowed_dirs: List of allowed directory paths.
+        must_exist: If True (default), the path must exist to be allowed.
+            If False, only the parent directory must exist and be allowed;
+            this is the correct mode for output-file paths that don't exist yet.
+
     """
     p = Path(path).resolve(strict=False)
 
@@ -21,13 +34,24 @@ def is_path_allowed(path: str | Path, allowed_dirs: list[Path]) -> bool:
     if str(p).startswith("\\\\") or str(p).startswith("//"):
         return False
 
-    # Reject nonexistent paths without raising
-    if not p.exists():
-        return False
+    # When must_exist=True (default), require the path to exist.
+    # When must_exist=False, require the resolved parent directory to exist
+    # and be allowed (allows writing new files inside allowed directories).
+    if must_exist:
+        if not p.exists():
+            return False
+        check_path = p
+    else:
+        # must_exist=False: check parent directory instead
+        parent = p.parent
+        if not parent.exists():
+            return False
+        # For the allowed-dirs check, use the resolved parent
+        check_path = parent
 
     for allowed in allowed_dirs:
         try:
-            p.relative_to(Path(allowed).resolve(strict=False))
+            check_path.relative_to(Path(allowed).resolve(strict=False))
             return True  # per-directory try/except — the oracle bug fix
         except ValueError:
             continue

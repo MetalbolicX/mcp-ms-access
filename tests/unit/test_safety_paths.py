@@ -76,6 +76,72 @@ class TestIsPathAllowed:
         assert is_path_allowed(str(target_lower), allowed_lower) is True
 
 
+class TestIsPathAllowedMustExistFalse:
+    """Tests for is_path_allowed with must_exist=False (output-path semantics)."""
+
+    def test_new_file_inside_allowed_dir(self, tmp_path):
+        """New file inside allowed dir with must_exist=False -> True."""
+        from ms_access_mcp.safety import is_path_allowed
+        allowed_dir = tmp_path / "exports"
+        allowed_dir.mkdir()
+        new_file = allowed_dir / "report.csv"
+        assert not new_file.exists()  # precondition
+        assert is_path_allowed(str(new_file), [allowed_dir], must_exist=False) is True
+
+    def test_new_file_outside_allowed_dirs(self, tmp_path):
+        """New file outside allowed dirs with must_exist=False -> False."""
+        from ms_access_mcp.safety import is_path_allowed
+        allowed_dir = tmp_path / "allowed"
+        allowed_dir.mkdir()
+        outside_file = tmp_path / "outside" / "report.csv"
+        assert is_path_allowed(str(outside_file), [allowed_dir], must_exist=False) is False
+
+    def test_new_file_parent_does_not_exist(self, tmp_path):
+        """New file whose parent dir does not exist -> False even with must_exist=False."""
+        from ms_access_mcp.safety import is_path_allowed
+        allowed_dir = tmp_path / "exports"
+        allowed_dir.mkdir()
+        deep_non_existent = tmp_path / "exports" / "subdir" / "report.csv"
+        assert not deep_non_existent.exists()
+        assert not deep_non_existent.parent.exists()
+        assert is_path_allowed(str(deep_non_existent), [allowed_dir], must_exist=False) is False
+
+    def test_new_file_under_unc_path(self, tmp_path):
+        """New file under UNC path is rejected even with must_exist=False."""
+        from ms_access_mcp.safety import is_path_allowed
+        allowed_dir = tmp_path / "local"
+        allowed_dir.mkdir()
+        unc_path = Path("//server/share/newfile.csv")
+        assert is_path_allowed(str(unc_path), [allowed_dir], must_exist=False) is False
+
+    def test_existing_file_must_exist_true_still_works(self, tmp_path):
+        """Existing file inside allowed dir with default must_exist=True -> True."""
+        from ms_access_mcp.safety import is_path_allowed
+        allowed_dir = tmp_path / "exports"
+        allowed_dir.mkdir()
+        existing = allowed_dir / "existing.accdb"
+        existing.touch()
+        assert is_path_allowed(str(existing), [allowed_dir]) is True
+
+    def test_existing_file_outside_allowed_with_must_exist_true(self, tmp_path):
+        """Existing file outside allowed dirs with must_exist=True -> False."""
+        from ms_access_mcp.safety import is_path_allowed
+        allowed_dir = tmp_path / "allowed"
+        allowed_dir.mkdir()
+        outside_existing = tmp_path / "outside.accdb"
+        outside_existing.touch()
+        assert is_path_allowed(str(outside_existing), [allowed_dir]) is False
+
+    def test_existing_file_not_exist_with_must_exist_true(self, tmp_path):
+        """Nonexistent file with default must_exist=True -> False."""
+        from ms_access_mcp.safety import is_path_allowed
+        allowed_dir = tmp_path / "dbs"
+        allowed_dir.mkdir()
+        nonexistent = allowed_dir / "nonexistent.accdb"
+        assert not nonexistent.exists()
+        assert is_path_allowed(str(nonexistent), [allowed_dir]) is False
+
+
 class TestWritePolicy:
     """Tests for WritePolicy dataclass."""
 
