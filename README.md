@@ -112,3 +112,35 @@ Profiles are stored in the same global credentials file as database passwords (`
   }
 }
 ```
+
+## Crash resilience
+
+MS Access (ACE) uses write-behind caching with no write-ahead log. If the server process dies mid-write, committed pages may never be flushed, leaving stale `.ldb` lock files or a torn `.accdb`. The server installs multiple recovery rungs to bound data loss.
+
+### Automatic session backup
+
+When a **write-enabled** session opens a database, the server takes an automatic rolling snapshot (copy + SHA-256 manifest tagged `kind: "auto_session"`). On **clean close**, the snapshot is deleted automatically — zero user friction, no accumulation. On **crash/kill**, the snapshot survives; the next `open_database` of that file detects it and returns `crash_detected: true` with the backup path. The operator decides whether to restore.
+
+Read-only sessions take no snapshot.
+
+### Recovery ladder
+
+| Rung | Tool / Mechanism | When it fires |
+|------|-----------------|---------------|
+| 1 | `.ldb`-aware open retry (≤3 × 250 ms backoff) | Lock signature + stale `.ldb`/`.laccdb` present |
+| 2 | `compact_repair` (DAO `DBEngine.CompactDatabase`) | Rung 1 exhausted or non-lock open failure |
+| 3 | `repair_with_access_cli` (`msaccess.exe /compact`) | DAO repair fails; Access CLI available |
+| 4 | `salvage_database` (rename → fresh DB → row-by-row copy) | Catalog damaged; salvage readable tables |
+| 5 | Restore from backup | All rungs failed |
+
+**Honest limits**: ACE has no WAL. Recovery is repair/restore, never replay. Documentation must not claim otherwise.
+
+### Chaos testing
+
+The G13 harness (`scripts/g13_kill_mid_write.py`) runs N rounds of: spawn server → drive write workload → hard-kill (`TerminateProcess`) at a random phase → classify result. Run it locally on Windows with ACE:
+
+```bash
+python scripts/g13_kill_mid_write.py --rounds 20 --seed 1
+```
+
+The regression gate (`tests/integration/test_kill_mid_write.py`) runs 5 rounds in CI.```
