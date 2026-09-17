@@ -269,3 +269,94 @@ class TestJetSqlGenerator:
         assert statements[0].startswith("CREATE TABLE [TestTable]")
         assert statements[0].endswith(");")
         assert "(\n" in statements[0]
+
+
+class TestQuoteIdent:
+    """Tests for Jet SQL identifier bracket-quoting with ] escaping."""
+
+    def test_quote_ident_plain_name(self) -> None:
+        """Plain names get wrapped in brackets, no escaping needed."""
+        from ms_access_mcp.backends.dao_sql import quote_ident
+
+        assert quote_ident("Name") == "[Name]"
+        assert quote_ident("CustomerID") == "[CustomerID]"
+
+    def test_quote_ident_single_bracket(self) -> None:
+        """A name with ] is escaped by doubling."""
+        from ms_access_mcp.backends.dao_sql import quote_ident
+
+        assert quote_ident("weird]name") == "[weird]]name]"
+
+    def test_quote_ident_double_bracket(self) -> None:
+        """A name with ]] is escaped to ]]]] (each doubled)."""
+        from ms_access_mcp.backends.dao_sql import quote_ident
+
+        assert quote_ident("weird]]name") == "[weird]]]]name]"
+
+    def test_quote_ident_empty_name(self) -> None:
+        """Empty name produces empty brackets."""
+        from ms_access_mcp.backends.dao_sql import quote_ident
+
+        assert quote_ident("") == "[]"
+
+    def test_quote_ident_used_in_ddl(self) -> None:
+        """A table with ] in column name produces valid Jet SQL DDL."""
+        tables = [
+            TableInfo(
+                name="TestTable",
+                fields=[FieldInfo(name="weird]name", type="Text", size=0, required=False, allow_zero_length=True, default_value=None, is_autoincrement=False)],
+                record_count=0,
+            )
+        ]
+        gen = JetSqlGenerator(tables, [], [])
+        statements = gen.generate()
+        # The column name with ] must be escaped as ]] in brackets
+        assert "[weird]]name]" in statements[0]
+
+    def test_quote_ident_pk_constraint(self) -> None:
+        """PK constraint uses quote_ident for column names."""
+        tables = [
+            TableInfo(
+                name="Orders",
+                fields=[
+                    FieldInfo(name="weird]col", type="Long Integer", size=0, required=False, allow_zero_length=True, default_value=None, is_autoincrement=False),
+                    FieldInfo(name="ID", type="Counter", size=0, required=False, allow_zero_length=True, default_value=None, is_autoincrement=True),
+                ],
+                record_count=0,
+                primary_key=["weird]col"],
+            )
+        ]
+        gen = JetSqlGenerator(tables, [], [])
+        statements = gen.generate()
+        # Primary key column must be escaped
+        assert "[weird]]col]" in statements[0]
+
+    def test_quote_ident_fk_constraint(self) -> None:
+        """FK constraint names and columns use quote_ident."""
+        customers = TableInfo(
+            name="Customers",
+            fields=[FieldInfo(name="ID", type="Long Integer", size=0, required=False, allow_zero_length=True, default_value=None, is_autoincrement=False)],
+            record_count=0,
+            primary_key=["ID"],
+        )
+        orders = TableInfo(
+            name="Orders",
+            fields=[
+                FieldInfo(name="ID", type="Counter", size=0, required=False, allow_zero_length=True, default_value=None, is_autoincrement=True),
+                FieldInfo(name="Customer]FK", type="Long Integer", size=0, required=False, allow_zero_length=True, default_value=None, is_autoincrement=False),
+            ],
+            record_count=0,
+        )
+        fks = [
+            ForeignKeyInfo(
+                name="FK_Orders_Customers",
+                columns=["Customer]FK"],
+                foreign_table="Customers",
+                foreign_columns=["ID"],
+            )
+        ]
+        gen = JetSqlGenerator([customers, orders], [], fks)
+        statements = gen.generate()
+        orders_stmt = next(s for s in statements if "Orders" in s)
+        # FK column name must be escaped
+        assert "[Customer]]FK]" in orders_stmt
