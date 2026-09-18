@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from ms_access_mcp.server import build_server
 
-
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
@@ -121,13 +120,19 @@ def test_no_tool_takes_opaque_params_object():
 
 
 def test_every_core_tool_has_path_property():
-    """Every core tool must accept a 'path' parameter (absolute .accdb/.mdb path)."""
+    """Every core tool that requires a database path must accept a 'path' parameter.
+
+    disconnect_access and list_connections are connection-scoped and have no path.
+    All other tools must accept path: str.
+    """
     tools = _get_core_tools()
+    # Tools that do NOT need a path (connection-scoped operations)
+    no_path = {"disconnect_access", "list_connections"}
     failures: list[str] = []
 
     for name, tool in tools.items():
         props = _schema_properties(tool)
-        if "path" not in props:
+        if name not in no_path and "path" not in props:
             failures.append(f"  {name}: missing 'path' property. Props: {list(props.keys())}")
 
     assert not failures, (

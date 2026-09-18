@@ -1,17 +1,17 @@
-"""MCP core tools — verbatim oracle names wrapping plan-003 use cases.
+"""MCP core tools — verbatim oracle names, typed signatures.
 
-Each tool:
-- Accepts str path, params: dict | None, confirm: bool = False
-- Returns the use-case dict unchanged
-- isError mapping via to_mcp_result()
+Each tool exposes concrete typed parameters rather than an opaque ``params`` dict.
+FastMCP generates JSON Schema from the function signatures automatically.
 
-execute_raw_sql requires confirm=True and write policy check.
+The 21 core tools are split into:
+- Read tools (introspection cohort): no write risk — no confirm param
+- Write tools (query + data cohort): confirm=False default, write-policy gated
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
@@ -21,11 +21,6 @@ from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
 
 __all__ = ["register", "to_mcp_result"]
-
-
-def _new_db(readonly: bool = True) -> DatabaseUseCases:
-    """Construct a DatabaseUseCases honoring ACCESS_MCP_ALLOWED_DIRS."""
-    return DatabaseUseCases(readonly=readonly, allowed_dirs=allowed_dirs_from_env())
 
 
 # =============================================================================
@@ -63,84 +58,35 @@ def _result_to_dict(result: Ok | Err) -> dict[str, Any]:
 
 
 # =============================================================================
-# Per-Tool Wrappers
+# Shared helpers
 # =============================================================================
 
 
-def _make_tool(name: str, fn, *, write_op: bool = False):
-    """Create an MCP tool wrapper for a use-case method.
+def _new_db(readonly: bool = True) -> DatabaseUseCases:
+    """Construct a DatabaseUseCases honoring ACCESS_MCP_ALLOWED_DIRS."""
+    return DatabaseUseCases(readonly=readonly, allowed_dirs=allowed_dirs_from_env())
+
+
+def _open_or_err(db: DatabaseUseCases, path: str) -> CallToolResult | None:
+    """Open path on db; return an error CallToolResult on failure, else None."""
+    if not path:
+        return None
+    result = db.open_database(path)
+    if isinstance(result, Err):
+        return to_mcp_result({"success": False, "error": result.message})
+    return None
+
+
+# =============================================================================
+# Introspection cohort (read tools — no confirm param)
+# =============================================================================
+
+
+def connect_access(path: str) -> CallToolResult:
+    """Connect to an Access database.
 
     Args:
-        name: Tool name (verbatim oracle name)
-        fn: Use-case method to call
-        write_op: If True, requires confirm=True and write policy check
-    """
-    from functools import wraps
-
-    @wraps(fn)
-    def wrapper(
-        path: str,
-        params: dict[str, Any] | None = None,
-        confirm: bool = False,
-    ) -> CallToolResult:
-        # Create a fresh db instance for each call
-        db = DatabaseUseCases(readonly=not write_op)
-
-        # Connect if path provided
-        if path:
-            result = db.open_database(path)
-            if isinstance(result, Err):
-                dict_result = {"success": False, "error": result.message}
-                return to_mcp_result(dict_result)
-
-        # Execute the operation
-        try:
-            # Build kwargs from params
-            kwargs: dict[str, Any] = {}
-            if params:
-                kwargs.update(params)
-
-            # Add confirm for write ops
-            if write_op:
-                kwargs["confirm"] = confirm
-
-            # Handle execute_raw_sql specially
-            if name == "execute_raw_sql":
-                if not confirm:
-                    dict_result = {
-                        "success": False,
-                        "error": "write policy blocks this; pass confirm=True and enable writes",
-                    }
-                    return to_mcp_result(dict_result)
-                # Check write policy
-                if db.readonly and not confirm:
-                    dict_result = {
-                        "success": False,
-                        "error": "write policy blocks this; pass confirm=True and enable writes",
-                    }
-                    return to_mcp_result(dict_result)
-
-            result = fn(db, **kwargs)
-        except Exception as e:
-            result = Err(message=str(e))
-
-        dict_result = _result_to_dict(result)
-        return to_mcp_result(dict_result)
-
-    return wrapper
-
-
-# =============================================================================
-# Tool Functions (one per verbatim oracle name)
-# =============================================================================
-
-
-def connect_access(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Connect to an Access database.
+        path: Absolute path to the .accdb or .mdb file.
 
     Password-protected databases resolve credentials server-side; if connection
     fails with an auth error, ask the user to run
@@ -148,190 +94,231 @@ def connect_access(
     """
     db = _new_db(readonly=True)
     result = db.open_database(path)
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def disconnect_access(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Disconnect from an Access database."""
+def disconnect_access() -> CallToolResult:
+    """Disconnect from an Access database and close all connections."""
     db = _new_db(readonly=True)
     result = db.close_database()
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def list_connections(
-    path: str = "",
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """List all open connections."""
+def list_connections() -> CallToolResult:
+    """List all open connections and their current state."""
     db = _new_db(readonly=True)
     result = db.list_connections()
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def get_tables(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Get list of user tables."""
+def get_tables(path: str) -> CallToolResult:
+    """Get list of user tables (excludes system and linked tables).
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+    """
     db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
     result = db.get_tables()
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def get_table_schema(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Get schema for a table."""
+def get_table_schema(path: str, table: str) -> CallToolResult:
+    """Get schema for a table (column names, types, nullability).
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        table: Table name (case-insensitive, as stored in the database).
+    """
     db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    table_name = params.get("table") if params else None
-    if not table_name:
-        dict_result = {"success": False, "error": "table name required"}
-        return to_mcp_result(dict_result)
-    result = db.get_table_schema(table_name)
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.get_table_schema(table)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def get_indexes(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Get indexes for a table."""
+def get_indexes(path: str, table: str) -> CallToolResult:
+    """Get indexes defined on a table.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        table: Table name (case-insensitive, as stored in the database).
+    """
     db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    table_name = params.get("table") if params else None
-    if not table_name:
-        dict_result = {"success": False, "error": "table name required"}
-        return to_mcp_result(dict_result)
-    result = db.get_indexes(table_name)
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.get_indexes(table)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def get_relationships(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Get all relationships."""
+def get_relationships(path: str) -> CallToolResult:
+    """Get all relationships defined in the database.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+    """
     db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
     result = db.get_relationships()
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def get_queries(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Get list of saved queries."""
+def get_queries(path: str) -> CallToolResult:
+    """Get list of saved queries (SELECT, action, pass-through).
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+    """
     db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
     result = db.get_queries()
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def create_query(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Create a saved query."""
+def get_database_statistics(path: str) -> CallToolResult:
+    """Get database statistics (record counts, file size, last modified).
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+    """
+    db = _new_db(readonly=True)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.get_database_statistics()
+    return to_mcp_result(_result_to_dict(result))
+
+
+def get_system_tables(path: str) -> CallToolResult:
+    """Get list of system tables (MSys* tables in Access).
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+    """
+    db = _new_db(readonly=True)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.get_system_tables()
+    return to_mcp_result(_result_to_dict(result))
+
+
+def get_linked_tables(path: str) -> CallToolResult:
+    """Get list of tables linked from external data sources.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+    """
+    db = _new_db(readonly=True)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.get_linked_tables()
+    return to_mcp_result(_result_to_dict(result))
+
+
+# =============================================================================
+# Query + data-write cohort (confirm=False default on all write tools)
+# =============================================================================
+
+
+def query_data(path: str, sql: str, params: list[Any] | None = None, limit: int | None = None) -> CallToolResult:
+    """Execute a SELECT query and return rows.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        sql: SQL query string (SELECT statement).
+        params: Optional list of parameter values for parameterized queries.
+        limit: Optional maximum number of rows to return.
+    """
+    db = _new_db(readonly=True)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.query_data(sql, params=params, limit=limit)
+    return to_mcp_result(_result_to_dict(result))
+
+
+def execute_raw_sql(path: str, sql: str, confirm: bool = False) -> CallToolResult:
+    """Execute raw SQL (write policy blocks by default — requires confirm=True).
+
+    This tool bypasses the query parser and passes SQL directly to the engine.
+    Requires confirm=True and a writable connection.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        sql: Raw SQL statement to execute.
+        confirm: Must be True to execute. Defaults to False (write-policy gated).
+    """
+    if not confirm:
+        return to_mcp_result({
+            "success": False,
+            "error": "write policy blocks this; pass confirm=True and enable writes",
+        })
     db = _new_db(readonly=False)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "name" not in params or "sql" not in params:
-        dict_result = {"success": False, "error": "name and sql required"}
-        return to_mcp_result(dict_result)
-    result = db.create_query(params["name"], params["sql"], confirm=confirm)
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    # Ported write-policy pre-check (dead factory logic, preserved verbatim)
+    if db.readonly and not confirm:
+        return to_mcp_result({
+            "success": False,
+            "error": "write policy blocks this; pass confirm=True and enable writes",
+        })
+    result = db.query_data(sql)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def set_query_sql(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Update SQL for a saved query."""
+def create_query(path: str, name: str, sql: str, confirm: bool = False) -> CallToolResult:
+    """Create a saved query with the given name and SQL.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        name: Name for the saved query (must be unique within the database).
+        sql: SQL statement for the query.
+        confirm: Must be True to create. Defaults to False.
+    """
     db = _new_db(readonly=False)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "name" not in params or "sql" not in params:
-        dict_result = {"success": False, "error": "name and sql required"}
-        return to_mcp_result(dict_result)
-    result = db.set_query_sql(params["name"], params["sql"], confirm=confirm)
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.create_query(name, sql, confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def delete_query(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Delete a saved query."""
+def set_query_sql(path: str, name: str, sql: str, confirm: bool = False) -> CallToolResult:
+    """Update the SQL definition of an existing saved query.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        name: Name of the existing saved query.
+        sql: New SQL statement to assign.
+        confirm: Must be True to modify. Defaults to False.
+    """
     db = _new_db(readonly=False)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "name" not in params:
-        dict_result = {"success": False, "error": "name required"}
-        return to_mcp_result(dict_result)
-    result = db.delete_query(params["name"], confirm=confirm)
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.set_query_sql(name, sql, confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
+
+
+def delete_query(path: str, name: str, confirm: bool = False) -> CallToolResult:
+    """Delete a saved query from the database.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        name: Name of the saved query to delete.
+        confirm: Must be True to delete. Defaults to False.
+    """
+    db = _new_db(readonly=False)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.delete_query(name, confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
 
 
 def save_query(
     path: str,
-    params: dict[str, Any] | None = None,
+    name: str,
+    sql: str,
+    overwrite: bool = False,
     confirm: bool = False,
 ) -> CallToolResult:
     """Save or update a saved query definition in the Access database.
@@ -339,244 +326,124 @@ def save_query(
     If overwrite=True and the query exists, updates the SQL.
     If overwrite=False and the query exists, returns an error.
     If the query does not exist, creates it.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        name: Name for the saved query.
+        sql: SQL statement for the query.
+        overwrite: If True, replace an existing query with the same name.
+        confirm: Must be True to save. Defaults to False.
     """
     db = _new_db(readonly=False)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "name" not in params or "sql" not in params:
-        dict_result = {"success": False, "error": "name and sql required"}
-        return to_mcp_result(dict_result)
-
-    query_name = params["name"]
-    sql = params["sql"]
-    overwrite = params.get("overwrite", False)
-
-    # Check if query exists
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    # Check if query already exists
     existing = db.get_queries()
     if isinstance(existing, Err):
-        dict_result = {"success": False, "error": existing.message}
-        return to_mcp_result(dict_result)
-
+        return to_mcp_result(_result_to_dict(existing))
     query_names = []
     queries_data = existing.data
     if isinstance(queries_data, list):
         for q in queries_data:
             if isinstance(q, dict):
-                name = q.get("name")
-                if name:
-                    query_names.append(name)
-
-    if query_name in query_names:
+                n = q.get("name")
+                if n:
+                    query_names.append(n)
+    if name in query_names:
         if not overwrite:
-            dict_result = {
+            return to_mcp_result({
                 "success": False,
-                "error": f"Query '{query_name}' already exists. Use overwrite=True to update.",
-            }
-            return to_mcp_result(dict_result)
-        result = db.set_query_sql(query_name, sql, confirm=confirm)
+                "error": f"Query '{name}' already exists. Use overwrite=True to update.",
+            })
+        result = db.set_query_sql(name, sql, confirm=confirm)
         dict_result = _result_to_dict(result)
         dict_result["action"] = "updated"
         return to_mcp_result(dict_result)
     else:
-        result = db.create_query(query_name, sql, confirm=confirm)
+        result = db.create_query(name, sql, confirm=confirm)
         dict_result = _result_to_dict(result)
         dict_result["action"] = "created"
         return to_mcp_result(dict_result)
 
 
-def query_data(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Execute a SELECT query."""
-    db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "sql" not in params:
-        dict_result = {"success": False, "error": "sql required"}
-        return to_mcp_result(dict_result)
-    result = db.query_data(
-        params["sql"],
-        params=params.get("params"),
-        limit=params.get("limit"),
-    )
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+def insert_data(path: str, table: str, data: dict[str, Any], confirm: bool = False) -> CallToolResult:
+    """Insert a row into a table.
 
-
-def insert_data(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Insert a row into a table."""
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        table: Target table name.
+        data: Dictionary mapping column names to values.
+        confirm: Must be True to insert. Defaults to False.
+    """
     db = _new_db(readonly=False)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "table" not in params or "data" not in params:
-        dict_result = {"success": False, "error": "table and data required"}
-        return to_mcp_result(dict_result)
-    result = db.insert_data(params["table"], params["data"], confirm=confirm)
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.insert_data(table, data, confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
 
 
 def update_data(
     path: str,
-    params: dict[str, Any] | None = None,
+    table: str,
+    data: dict[str, Any],
+    where: str | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Update rows in a table."""
+    """Update rows in a table.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        table: Target table name.
+        data: Dictionary mapping column names to new values.
+        where: WHERE clause WITHOUT the WHERE keyword (e.g. "id = 5").
+               If None, updates all rows.
+        confirm: Must be True to update. Defaults to False.
+    """
     db = _new_db(readonly=False)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "table" not in params or "data" not in params:
-        dict_result = {"success": False, "error": "table and data required"}
-        return to_mcp_result(dict_result)
-    result = db.update_data(
-        params["table"],
-        params["data"],
-        where=params.get("where"),
-        confirm=confirm,
-    )
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.update_data(table, data, where=where, confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
 
 
-def delete_data(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Delete rows from a table."""
+def delete_data(path: str, table: str, where: str | None = None, confirm: bool = False) -> CallToolResult:
+    """Delete rows from a table.
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        table: Target table name.
+        where: WHERE clause WITHOUT the WHERE keyword (e.g. "id = 5").
+               If None, deletes all rows.
+        confirm: Must be True to delete. Defaults to False.
+    """
     db = _new_db(readonly=False)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "table" not in params:
-        dict_result = {"success": False, "error": "table required"}
-        return to_mcp_result(dict_result)
-    result = db.delete_data(params["table"], where=params.get("where"), confirm=confirm)
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
-
-
-def execute_raw_sql(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Execute raw SQL (write policy blocks by default)."""
-    if not confirm:
-        dict_result = {
-            "success": False,
-            "error": "write policy blocks this; pass confirm=True and enable writes",
-        }
-        return to_mcp_result(dict_result)
-
-    db = _new_db(readonly=False)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "sql" not in params:
-        dict_result = {"success": False, "error": "sql required"}
-        return to_mcp_result(dict_result)
-    result = db.query_data(params["sql"])
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.delete_data(table, where=where, confirm=confirm)
+    return to_mcp_result(_result_to_dict(result))
 
 
 def export_data(
     path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
+    source: str,
+    out: str,
+    format: Literal["csv", "json", "xlsx"] = "csv",
+    sheet_name: str = "Sheet1",
 ) -> CallToolResult:
-    """Export table or query data to a file (supports csv, json, xlsx)."""
+    """Export table or query data to a file (supports csv, json, xlsx).
+
+    Args:
+        path: Absolute path to the .accdb or .mdb file.
+        source: Name of the table or saved query to export.
+        out: Output file path (must be within ACCESS_MCP_ALLOWED_DIRS).
+        format: Export format — one of 'csv', 'json', 'xlsx'. Defaults to 'csv'.
+        sheet_name: Sheet name for xlsx format. Defaults to 'Sheet1'.
+    """
     db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    if not params or "out" not in params or "source" not in params:
-        dict_result = {"success": False, "error": "out and source (table or query) required"}
-        return to_mcp_result(dict_result)
-    result = db.export_data(
-        params["source"],
-        params["out"],
-        format=params.get("format", "csv"),
-        sheet_name=params.get("sheet_name", "Sheet1"),
-    )
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
-
-
-def get_database_statistics(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Get database statistics."""
-    db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    result = db.get_database_statistics()
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
-
-
-def get_system_tables(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Get list of system tables."""
-    db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    result = db.get_system_tables()
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
-
-
-def get_linked_tables(
-    path: str,
-    params: dict[str, Any] | None = None,
-    confirm: bool = False,
-) -> CallToolResult:
-    """Get list of linked tables."""
-    db = _new_db(readonly=True)
-    if path:
-        result = db.open_database(path)
-        if isinstance(result, Err):
-            dict_result = {"success": False, "error": result.message}
-            return to_mcp_result(dict_result)
-    result = db.get_linked_tables()
-    dict_result = _result_to_dict(result)
-    return to_mcp_result(dict_result)
+    if (err := _open_or_err(db, path)) is not None:
+        return err
+    result = db.export_data(source, out, format=format, sheet_name=sheet_name)
+    return to_mcp_result(_result_to_dict(result))
 
 
 # =============================================================================

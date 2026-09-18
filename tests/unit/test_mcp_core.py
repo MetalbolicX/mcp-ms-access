@@ -106,7 +106,7 @@ class TestExecuteRawSqlGate:
         """execute_raw_sql without confirm returns CallToolResult(isError=True)."""
         from ms_access_mcp.mcp_tools.core import execute_raw_sql
 
-        result = execute_raw_sql("", params={"sql": "SELECT 1"}, confirm=False)
+        result = execute_raw_sql("", sql="SELECT 1", confirm=False)
         assert result.isError is True
         content = json.loads(_text(result))
         assert content["success"] is False
@@ -116,6 +116,6 @@ class TestExecuteRawSqlGate:
         """execute_raw_sql error message mentions write policy."""
         from ms_access_mcp.mcp_tools.core import execute_raw_sql
 
-        result = execute_raw_sql("", params={"sql": "SELECT 1"}, confirm=False)
+        result = execute_raw_sql("", sql="SELECT 1", confirm=False)
         content = json.loads(_text(result))
         assert "write policy" in content["error"].lower()

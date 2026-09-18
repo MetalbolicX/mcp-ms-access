@@ -113,6 +113,10 @@ Profiles are stored in the same global credentials file as database passwords (`
 }
 ```
 
+## Core tool parameter types
+
+The `core` profile MCP tools expose **typed parameters** instead of an opaque `params` dict. Client code that calls core tools should pass individual named arguments (e.g. `sql="SELECT 1"`, `table="MyTable"`) rather than a `params={"sql": "..."}` dictionary. Write tools (`insert_data`, `update_data`, `delete_data`, `execute_raw_sql`, `create_query`, `set_query_sql`, `delete_query`, `save_query`) require `confirm=True` to execute — pass `confirm=False` explicitly for read-only operations. The wire request schema has changed; response payloads are byte-compatible with the previous implementation.
+
 ## Crash resilience
 
 MS Access (ACE) uses write-behind caching with no write-ahead log. If the server process dies mid-write, committed pages may never be flushed, leaving stale `.ldb` lock files or a torn `.accdb`. The server installs multiple recovery rungs to bound data loss.
