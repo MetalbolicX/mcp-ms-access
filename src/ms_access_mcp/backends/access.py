@@ -451,6 +451,7 @@ class AccessAdapter:
                     except Exception:
                         skipped_objs += 1
             except Exception:
+                logger.debug("list_objects %s collection access failed", kind)
                 pass
             if skipped_props or skipped_objs:
                 logger.debug("list_objects %s: %d objects, %d property failures skipped", kind, skipped_objs, skipped_props)
@@ -458,7 +459,8 @@ class AccessAdapter:
 
         try:
             return self._dispatcher.call(_do)
-        except Exception:
+        except Exception as exc:
+            logger.debug("list_objects %s dispatcher failed: %s", kind, exc)
             return []
 
     def get_forms(self):
@@ -481,7 +483,8 @@ class AccessAdapter:
                 for i in range(all_objects.Count):
                     if all_objects(i).Name == name:
                         return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("object_exists %s/%s collection access failed: %s", kind, name, exc)
                 pass
             return False
 
@@ -772,7 +775,8 @@ class AccessAdapter:
                     ctrl = obj.Controls(i)
                     if ctrl.Name == control_name:
                         return _props_to_dict(ctrl.Properties)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("get_object_control_properties %s/%s control lookup failed: %s", kind, object_name, exc)
                     pass
             return {}
 
