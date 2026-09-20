@@ -1514,3 +1514,203 @@ class TestWithDesignView:
         debug_msgs = [r.message for r in caplog.records if r.levelname == "DEBUG"]
         assert any("Broken" in msg for msg in debug_msgs), f"Expected DEBUG about 'Broken', got: {debug_msgs}"
 
+
+# -------------------------------------------------------------------------- #
+# Step N: swallow DEBUG logging — plan 056
+# -------------------------------------------------------------------------- #
+
+
+class TestSwallowLogging:
+    """Plan 056: every bare except Exception swallow must emit a DEBUG log."""
+
+    # 1. _get_vb_project — lines 301-303: except Exception: pass / return None
+    def test_get_vb_project_swallow_logs_debug(self, caplog):
+        """COM failure in _get_vb_project logs DEBUG with 'vb project'."""
+
+        class _FakeVBE:
+            @property
+            def VBProjects(self):
+                raise RuntimeError("VBProjects not available")
+
+        class _FakeAccessApp:
+            VBE = _FakeVBE()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter._get_vb_project()
+
+        assert result is None
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("vb project" in msg.lower() for msg in debug_msgs), (
+            f"Expected DEBUG about 'vb project', got: {debug_msgs}"
+        )
+
+    # 2. vba_list_procedures whole-_do — lines 1761-1762: except Exception: return []
+    def test_vba_list_procedures_swallow_logs_debug(self, caplog):
+        """Failure in vba_list_procedures._do logs DEBUG with 'list procedures'."""
+
+        class _FakeVBE:
+            @property
+            def VBProjects(self):
+                raise RuntimeError("VBProjects enumeration failed")
+
+        class _FakeAccessApp:
+            VBE = _FakeVBE()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.vba_list_procedures("TestModule")
+
+        assert result == []
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("list procedures" in msg.lower() for msg in debug_msgs), (
+            f"Expected DEBUG about 'list procedures', got: {debug_msgs}"
+        )
+
+    # 3. DoCmd.Save per-module — lines 1680-1681: except Exception: pass
+    def test_save_module_swallow_logs_debug_with_module_name(self, caplog):
+        """DoCmd.Save failure logs DEBUG containing the failing module name."""
+
+        class _FakeVBComponent:
+            Type = 1  # vbext_ct_StdModule
+            Name = "TestModule"
+
+        class _FakeVBComponents:
+            def __iter__(self):
+                return iter([_FakeVBComponent()])
+
+        class _FakeVBProject:
+            def __init__(self):
+                self.VBComponents = _FakeVBComponents()
+
+        class _FakeDoCmd:
+            def Save(self, obj_type, name):
+                raise RuntimeError("Save blocked")
+
+            def RunCommand(self, cmd_id):
+                raise RuntimeError("No compile")
+
+        class _FakeAccessApp:
+            DoCmd = _FakeDoCmd()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        # Patch _get_vb_project so we reach the DoCmd.Save swallow
+        original_get = adapter._get_vb_project
+        adapter._get_vb_project = lambda: _FakeVBProject()
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.compile_vba()
+
+        adapter._get_vb_project = original_get
+
+        # compile_vba returns success=False when all RunCommand attempts fail
+        # but the module-save swallow still emits DEBUG
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("TestModule" in msg for msg in debug_msgs), (
+            f"Expected DEBUG with module name 'TestModule', got: {debug_msgs}"
+        )
+
+    # 4. ProcOfLine per-line — lines 1758-1759: except Exception: pass
+    def test_proc_of_line_swallow_logs_debug(self, caplog):
+        """ProcOfLine failure logs DEBUG with 'ProcOfLine' in message."""
+
+        class _FakeCodeModule:
+            CountOfLines = 5
+
+            def ProcOfLine(self, line, kind):
+                if line == 3:
+                    raise RuntimeError("ProcOfLine not available")
+                return f"Proc_{line}"
+
+            def ProcKind(self, line, kind):
+                return 0
+
+            def ProcStartLine(self, name, kind):
+                return 1
+
+            def ProcCountLines(self, name, kind):
+                return 2
+
+        class _FakeVBComponent:
+            Name = "TestModule"
+            CodeModule = _FakeCodeModule()
+
+        class _FakeVBComponents:
+            def __iter__(self):
+                return iter([_FakeVBComponent()])
+
+        class _FakeVBProject:
+            VBComponents = _FakeVBComponents()
+
+        class _FakeAccessApp:
+            VBE = property(lambda self: _FakeVBProject())
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.vba_list_procedures("TestModule")
+
+        assert isinstance(result, list)
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("ProcOfLine" in msg for msg in debug_msgs), (
+            f"Expected DEBUG about 'ProcOfLine', got: {debug_msgs}"
+        )
+
+    # 5. design-view finally-close — lines 287-288: except Exception: pass
+    def test_design_view_close_swallow_logs_debug(self, caplog):
+        """Close failure in _with_design_view finally block logs DEBUG with 'close'."""
+
+        class _FakeDoCmd:
+            def Close(self, ac_type, name, save):
+                raise RuntimeError("Close failed")
+
+        class _FakeAccessApp:
+            DoCmd = _FakeDoCmd()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            # work fn raises so we hit the except → on_error path, then finally runs
+            result = adapter._with_design_view(
+                "form", "TestForm",
+                save_flag=2,
+                work=lambda obj: {"worked": True},
+                on_error=lambda exc: {"error": True},
+                default={"default": True},
+            )
+
+        # on_error is called because work raises; close then fails silently
+        assert result == {"error": True}
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("close" in msg.lower() for msg in debug_msgs), (
+            f"Expected DEBUG about 'close', got: {debug_msgs}"
+        )
+
