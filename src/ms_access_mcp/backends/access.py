@@ -1419,11 +1419,14 @@ class AccessAdapter:
                     macro_obj = all_macros(i)
                     if macro_obj.Name == macro_name:
                         props: dict[str, str] = {}
+                        skipped_props = 0
                         for prop in macro_obj.Properties:
                             try:
                                 props[prop.Name] = str(prop.Value)
                             except Exception:
-                                pass
+                                skipped_props += 1
+                        if skipped_props:
+                            logger.debug("get_macro_properties %s: %d property failures skipped", macro_name, skipped_props)
                         return props
             except Exception as exc:
                 logger.debug("get_macro_properties %s failed: %s", macro_name, exc)
