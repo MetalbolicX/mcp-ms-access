@@ -1697,6 +1697,71 @@ class TestSwallowLogging:
             f"Expected DEBUG about 'ProcOfLine', got: {debug_msgs}"
         )
 
+    # 4. get_macro_properties inner loop — lines 1422-1426: per-prop Value swallow
+    def test_get_macro_properties_swallow_logs_debug(self, caplog):
+        """get_macro_properties skips unreadable prop.Values and logs aggregate DEBUG."""
+
+        class _FakeProperty:
+            def __init__(self, name, raise_on_value=False):
+                self.Name = name
+                self._raise_on_value = raise_on_value
+
+            @property
+            def Value(self):
+                if self._raise_on_value:
+                    raise RuntimeError("Property Value unreadable")
+                return "ok"
+
+        class _FakeProperties:
+            def __init__(self):
+                self._props = [
+                    _FakeProperty("PropOK"),
+                    _FakeProperty("PropBad", raise_on_value=True),
+                    _FakeProperty("PropAlsoOK"),
+                ]
+
+            def __iter__(self):
+                return iter(self._props)
+
+        class _FakeMacro:
+            Name = "TestMacro"
+            Properties = _FakeProperties()
+
+        class _FakeMacros:
+            def __init__(self):
+                self._items = [_FakeMacro()]
+
+            @property
+            def Count(self):
+                return len(self._items)
+
+            def __call__(self, i):
+                return self._items[i]
+
+        class _FakeCurrentProject:
+            @property
+            def AllMacros(self):
+                return _FakeMacros()
+
+        class _FakeAccessApp:
+            CurrentProject = _FakeCurrentProject()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.get_macro_properties("TestMacro")
+
+        assert result == {"PropOK": "ok", "PropAlsoOK": "ok"}
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("property failures skipped" in msg or "TestMacro" in msg for msg in debug_msgs), (
+            f"Expected DEBUG about skipped props for TestMacro, got: {debug_msgs}"
+        )
+
     # 5. design-view finally-close — lines 287-288: except Exception: pass
     def test_design_view_close_swallow_logs_debug(self, caplog):
         """Close failure in _with_design_view finally block logs DEBUG with 'close'."""
