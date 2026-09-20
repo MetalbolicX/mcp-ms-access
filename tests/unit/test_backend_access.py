@@ -1551,27 +1551,42 @@ class TestSwallowLogging:
             f"Expected DEBUG about 'vb project', got: {debug_msgs}"
         )
 
-    # 2. vba_list_procedures whole-_do — lines 1761-1762: except Exception: return []
+    # 2. vba_list_procedures whole-_do — lines 1764-1765: except Exception: return []
     def test_vba_list_procedures_swallow_logs_debug(self, caplog):
         """Failure in vba_list_procedures._do logs DEBUG with 'list procedures'."""
 
-        class _FakeVBE:
+        class _BrokenCodeModule:
+            """Fake that raises on CountOfLines (in outer try, caught by outer handler)."""
             @property
-            def VBProjects(self):
-                raise RuntimeError("VBProjects enumeration failed")
+            def CountOfLines(self):
+                raise RuntimeError("CountOfLines not available")
 
-        class _FakeAccessApp:
-            VBE = _FakeVBE()
+        class _FakeVBComponent:
+            Name = "TestModule"
+            CodeModule = _BrokenCodeModule()
+
+        class _FakeVBComponents:
+            def __iter__(self):
+                return iter([_FakeVBComponent()])
+
+        class _FakeVBProject:
+            def __init__(self):
+                self.VBComponents = _FakeVBComponents()
 
         adapter = AccessAdapter("test.accdb")
         adapter._connected = True
         fake_disp = FakeDispatcher()
         fake_disp._started = True
-        fake_disp._access_app = _FakeAccessApp()
         adapter._dispatcher = fake_disp
+
+        # Patch _get_vb_project so we reach the outer _do exception handler
+        original_get = adapter._get_vb_project
+        adapter._get_vb_project = lambda: _FakeVBProject()
 
         with caplog.at_level(logging.DEBUG):
             result = adapter.vba_list_procedures("TestModule")
+
+        adapter._get_vb_project = original_get
 
         assert result == []
         debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
@@ -1628,7 +1643,7 @@ class TestSwallowLogging:
             f"Expected DEBUG with module name 'TestModule', got: {debug_msgs}"
         )
 
-    # 4. ProcOfLine per-line — lines 1758-1759: except Exception: pass
+    # 4. ProcOfLine per-line — lines 1761-1762: except Exception: pass
     def test_proc_of_line_swallow_logs_debug(self, caplog):
         """ProcOfLine failure logs DEBUG with 'ProcOfLine' in message."""
 
@@ -1658,20 +1673,23 @@ class TestSwallowLogging:
                 return iter([_FakeVBComponent()])
 
         class _FakeVBProject:
-            VBComponents = _FakeVBComponents()
-
-        class _FakeAccessApp:
-            VBE = property(lambda self: _FakeVBProject())
+            def __init__(self):
+                self.VBComponents = _FakeVBComponents()
 
         adapter = AccessAdapter("test.accdb")
         adapter._connected = True
         fake_disp = FakeDispatcher()
         fake_disp._started = True
-        fake_disp._access_app = _FakeAccessApp()
         adapter._dispatcher = fake_disp
+
+        # Patch _get_vb_project to succeed so ProcOfLine loop is reached
+        original_get = adapter._get_vb_project
+        adapter._get_vb_project = lambda: _FakeVBProject()
 
         with caplog.at_level(logging.DEBUG):
             result = adapter.vba_list_procedures("TestModule")
+
+        adapter._get_vb_project = original_get
 
         assert isinstance(result, list)
         debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]

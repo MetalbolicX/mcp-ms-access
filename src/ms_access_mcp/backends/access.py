@@ -284,7 +284,8 @@ class AccessAdapter:
                 try:
                     close_ac = self._OBJECT_KINDS[kind]["close_ac"]
                     self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, save_flag)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("design-view close %s/%s failed: %s", kind, object_name, exc)
                     pass
 
         return self._dispatcher.call(_do)
@@ -298,7 +299,8 @@ class AccessAdapter:
             vbe = self._dispatcher.access_app.VBE
             for i in range(1, vbe.VBProjects.Count + 1):
                 return vbe.VBProjects(i)
-        except Exception:
+        except Exception as exc:
+            logger.debug("vb project unavailable: %s", exc)
             pass
         return None
 
@@ -1677,7 +1679,8 @@ class AccessAdapter:
                 if comp.Type == 1:  # vbext_ct_StdModule
                     try:
                         app.DoCmd.Save(5, comp.Name)
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("DoCmd.Save module %s failed: %s", comp.Name, exc)
                         pass
 
             # Start dialog killer as safety net
@@ -1755,10 +1758,12 @@ class AccessAdapter:
                                 "start_line": start_line,
                                 "line_count": line_count,
                             })
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("ProcOfLine failed for line %s in %s: %s", line, module_name, exc)
                         pass
                 return procedures
-            except Exception:
+            except Exception as exc:
+                logger.debug("list procedures %s failed: %s", module_name, exc)
                 return []
 
         return self._dispatcher.call(_do)
