@@ -803,7 +803,8 @@ class AccessAdapter:
                     if ctrl.Name == control_name:
                         ctrl.Properties(property_name).Value = value
                         return True
-                except Exception:
+                except Exception as exc:
+                    logger.debug("set_control_property %s[%s] %s failed: %s", object_name, control_name, property_name, exc)
                     pass
             return False
 
@@ -955,7 +956,8 @@ class AccessAdapter:
                                 "line_count": line_count,
                                 "code": code,
                             })
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("vba_list_procedures ProcOfLine line %s failed: %s", line, exc)
                         pass
 
                 if control_name:
@@ -1009,7 +1011,8 @@ class AccessAdapter:
                     if ctrl.Name == control_name:
                         target_ctrl = ctrl
                         break
-                except Exception:
+                except Exception as exc:
+                    logger.debug("set_control_event_procedure %s[%s] control lookup failed: %s", form_name, control_name, exc)
                     pass
 
             if target_ctrl is None:
@@ -1046,7 +1049,8 @@ class AccessAdapter:
                         "visible": bool(section.Visible),
                         "height": int(section.Height),
                     })
-                except Exception:
+                except Exception as exc:
+                    logger.debug("get_%s_sections %s section %s failed: %s", kind, object_name, i, exc)
                     pass
             return sections
 
@@ -1293,12 +1297,14 @@ class AccessAdapter:
                         try:
                             if macro_obj.Properties.Exists("DateCreated"):
                                 date_created = str(macro_obj.Properties("DateCreated"))
-                        except Exception:
+                        except Exception as exc:
+                            logger.debug("get_macros %s DateCreated failed: %s", macro_obj.Name, exc)
                             pass
                         try:
                             if macro_obj.Properties.Exists("DateModified"):
                                 date_modified = str(macro_obj.Properties("DateModified"))
-                        except Exception:
+                        except Exception as exc:
+                            logger.debug("get_macros %s DateModified failed: %s", macro_obj.Name, exc)
                             pass
                         from ms_access_mcp.models import MacroInfo
                         macros.append(MacroInfo(
@@ -1307,9 +1313,11 @@ class AccessAdapter:
                             date_created=date_created,
                             date_modified=date_modified,
                         ))
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("get_macros %s processing failed: %s", macro_obj.Name, exc)
                         pass
-            except Exception:
+            except Exception as exc:
+                logger.debug("get_macros AllMacros collection access failed: %s", exc)
                 pass
             return macros
 
@@ -1327,9 +1335,14 @@ class AccessAdapter:
             try:
                 all_macros = self._dispatcher.access_app.CurrentProject.AllMacros
                 for i in range(all_macros.Count):
-                    if all_macros(i).Name == macro_name:
-                        return True
-            except Exception:
+                    try:
+                        if all_macros(i).Name == macro_name:
+                            return True
+                    except Exception as exc:
+                        logger.debug("macro_exists %s AllMacros(%s) failed: %s", macro_name, i, exc)
+                        pass
+            except Exception as exc:
+                logger.debug("macro_exists %s collection access failed: %s", macro_name, exc)
                 pass
             return False
 
@@ -1463,7 +1476,8 @@ class AccessAdapter:
                         ))
                     except Exception:
                         skipped += 1
-            except Exception:
+            except Exception as exc:
+                logger.debug("get_modules VBComponents collection failed: %s", exc)
                 pass
             if skipped:
                 logger.debug("get_modules: %d components skipped", skipped)
