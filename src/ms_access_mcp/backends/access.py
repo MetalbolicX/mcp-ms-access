@@ -326,7 +326,8 @@ class AccessAdapter:
             if temp_path:
                 try:
                     os.unlink(temp_path)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("temp file cleanup %s failed: %s", temp_path, exc)
                     pass
 
     def _load_object_from_text(self, object_type: int, object_name: str, text_data: str) -> bool:
@@ -358,7 +359,8 @@ class AccessAdapter:
             if temp_path:
                 try:
                     os.unlink(temp_path)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("temp file cleanup %s failed: %s", temp_path, exc)
                     pass
 
     @staticmethod
@@ -398,7 +400,8 @@ class AccessAdapter:
 
         except ImportError:
             pass
-        except Exception:
+        except Exception as exc:
+            logger.debug("dialog killer thread error: %s", exc)
             pass
 
     def _trusted_locations_wrap(self, func, *args, **kwargs):
