@@ -144,6 +144,51 @@ def maintenance_salvage_database(
     return to_mcp_result(_result_to_dict(result))
 
 
+def convert_legacy_database(
+    path: str,
+    params: dict[str, Any] | None = None,
+    confirm: bool = False,
+) -> CallToolResult:
+    """Convert an Access 95/97 (Jet 3) .mdb file to Jet 4 format.
+
+    Jet 3 files cannot be opened by ACE (the modern Access runtime).  This tool
+    uses the 32-bit JRO.JetEngine CompactDatabase via a WOW64 script bridge
+    to produce a Jet 4 .mdb that ACE can open.
+
+    Parameters
+    ----------
+    path:
+        Absolute path to the source Jet 3 .mdb file.
+    params:
+        Optional dict with ``dst`` key — absolute path for the converted file.
+        If omitted, the output is written alongside the source as
+        ``<name>.jet4.mdb``.
+    """
+    from pathlib import Path
+
+    from ..backends.jet3_bridge import convert_jet3_to_jet4
+    from ..safety import allowed_dirs_from_env, is_path_allowed
+
+    src = path
+    allowed = allowed_dirs_from_env()
+    if not is_path_allowed(src, allowed):
+        return to_mcp_result({"success": False, "error": f"Source path not allowed: {src}"})
+
+    p = params or {}
+    dst_param = p.get("dst")
+    if dst_param:
+        dst = dst_param
+    else:
+        src_path = Path(src)
+        dst = str(src_path.with_name(src_path.stem + ".jet4.mdb"))
+
+    if not is_path_allowed(dst, allowed):
+        return to_mcp_result({"success": False, "error": f"Destination path not allowed: {dst}"})
+
+    result = convert_jet3_to_jet4(src, dst)
+    return to_mcp_result(_result_to_dict(result))
+
+
 _TOOLS: ToolRegistry = {
     "maintenance_backup": (
         maintenance_backup,
@@ -180,6 +225,10 @@ _TOOLS: ToolRegistry = {
     "maintenance_salvage_database": (
         maintenance_salvage_database,
         "Salvage data from a corrupt .accdb by copying tables to a fresh DB (Rung 4, confirm required).",
+    ),
+    "convert_legacy_database": (
+        convert_legacy_database,
+        "Convert an Access 95/97 (Jet 3) .mdb to Jet 4 format via 32-bit JRO bridge.",
     ),
 }
 

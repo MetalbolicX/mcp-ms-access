@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 import time
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -83,3 +84,96 @@ def temp_db_copy():
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception:
             pass
+
+
+def _has_access() -> bool:
+    """Check if Microsoft Access is installed (msaccess.exe exists)."""
+    if not IS_WINDOWS:
+        return False
+    import shutil
+    return shutil.which("msaccess.exe") is not None
+
+
+skip_unless_access = pytest.mark.skipif(not _has_access(), reason="Requires Microsoft Access (msaccess.exe)")
+
+
+@lru_cache(maxsize=1)
+def _has_ace_dao() -> bool:
+    if not IS_WINDOWS:
+        return False
+    try:
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        try:
+            win32com.client.Dispatch("DAO.DBEngine.120")
+        finally:
+            pythoncom.CoUninitialize()
+        return True
+    except Exception:
+        return False
+
+
+@pytest.fixture
+def jet4_mdb_fixture():
+    """Create a real Jet 4 .mdb via DAO CreateDatabase(dbVersion40).
+
+    Yields a dict with:
+        - path: absolute path to the created .mdb file
+        - cleanup: callable to delete the file
+
+    The database is created with one table "T1" containing two text rows
+    to support read-back verification.
+
+    Skips if Access is not installed or COM is unavailable.
+    """
+    if not IS_WINDOWS or not _has_ace_dao():
+        pytest.skip("Requires ACE DAO (DAO.DBEngine.120)")
+
+    try:
+        import pythoncom
+        import win32com.client  # noqa: F401
+    except ImportError:
+        pytest.skip("Requires pywin32")
+
+    tmpdir = tempfile.mkdtemp(prefix="jet4_mdb_")
+    mdb_path = os.path.join(tmpdir, "test_jet4.mdb")
+
+    try:
+        pythoncom.CoInitialize()
+        try:
+            engine = win32com.client.Dispatch("DAO.DBEngine.120")
+            # DAO.CreateDatabase(path, locale, version)
+            # dbVersion40 = 64 → Jet 4 format
+            new_db = engine.CreateDatabase(mdb_path, ";LANGID=0x0409;CP=1252;COUNTRY=0", 64)
+            new_db.Close()
+
+            # Populate with a simple table via DAO
+            dao_db = engine.OpenDatabase(mdb_path)
+            try:
+                dao_db.Execute(
+                    "CREATE TABLE [T1] ([id] INTEGER NOT NULL, [name] TEXT(100) NOT NULL)",
+                    128,  # dbFailOnError
+                )
+                dao_db.Execute(
+                    "INSERT INTO [T1] ([id], [name]) VALUES (1, 'alpha')",
+                    128,
+                )
+                dao_db.Execute(
+                    "INSERT INTO [T1] ([id], [name]) VALUES (2, 'beta')",
+                    128,
+                )
+            finally:
+                dao_db.Close()
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception as e:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        pytest.skip(f"Failed to create Jet 4 .mdb via DAO: {e}")
+
+    yield {"path": mdb_path, "cleanup": lambda: shutil.rmtree(tmpdir, ignore_errors=True)}
+
+    # Cleanup
+    time.sleep(0.25)
+    shutil.rmtree(tmpdir, ignore_errors=True)

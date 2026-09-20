@@ -25,7 +25,11 @@ DAO_DB_FAIL_ON_ERROR = 128
 
 # Default locale / version for blank `.accdb` creation
 DEFAULT_DB_LOCALE = ";LANGID=0x0409;CP=1252;COUNTRY=0"
-DEFAULT_DB_VERSION = 128  # dbVersion120
+DEFAULT_DB_VERSION = 128  # dbVersion120 — .accdb / ACE format
+
+# Jet 4 .mdb format constants
+JET4_DB_VERSION = 64  # dbVersion40
+JET4_DB_LOCALE = ";LANGID=0x0409;CP=1252;COUNTRY=0"  # same locale as default
 
 
 class ComDispatcher:
@@ -179,17 +183,29 @@ class ComDispatcher:
 
         self.call(_do)
 
-    def create_dao_database(self, db_path: str) -> Any:
-        """Create a blank .accdb at db_path on the STA thread.
+    def create_dao_database(self, db_path: str, *, format: str = "accdb") -> Any:
+        """Create a blank Access database at db_path on the STA thread.
 
         Primary: DAO.DBEngine.120.CreateDatabase.
         Fallback: Access.Application.NewCurrentDatabase for hosts without DAO.
+
+        Args:
+            db_path: Target file path.
+            format: "accdb" (default, dbVersion120) or "mdb" (Jet 4, dbVersion40).
+
         """
         if sys.platform != "win32":
             msg = (
                 "PlatformUnsupported: create_dao_database requires Windows (DAO/COM)"
             )
             raise RuntimeError(msg)
+
+        if format == "mdb":
+            db_version = JET4_DB_VERSION
+            db_locale = JET4_DB_LOCALE
+        else:
+            db_version = DEFAULT_DB_VERSION
+            db_locale = DEFAULT_DB_LOCALE
 
         def _do() -> Any:
             import win32com.client  # type: ignore[import-not-found]
@@ -198,9 +214,7 @@ class ComDispatcher:
             dao_error: BaseException | None = None
             try:
                 engine = win32com.client.Dispatch("DAO.DBEngine.120")
-                new_db = engine.CreateDatabase(
-                    db_path, DEFAULT_DB_LOCALE, DEFAULT_DB_VERSION
-                )
+                new_db = engine.CreateDatabase(db_path, db_locale, db_version)
                 try:
                     new_db.Close()
                 except Exception:

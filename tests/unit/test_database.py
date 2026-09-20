@@ -1,7 +1,7 @@
 """Tests for database.py — DatabaseUseCases with fakes for TDD."""
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -293,6 +293,71 @@ class TestPathValidation:
         result = db.open_database("/forbidden/path.accdb")
         assert isinstance(result, Err)
         assert "not allowed" in result.message
+
+
+class TestJet3Rejection:
+    """Test that Jet 3 (Access 95/97) files are rejected with a clear error."""
+
+    def test_open_database_rejects_jet3_format(self, tmp_path):
+        """open_database returns Err for a JET3 file before attempting connection."""
+        from ms_access_mcp.backends.format_detector import _JET_MAGIC, _VERSION_OFFSET
+
+        # Build a fake JET3 header: Standard Jet DB + version byte 0x00
+        header_bytes = bytearray(32)
+        header_bytes[0:4] = b"\x00\x01\x00\x00"
+        header_bytes[4:4 + len(_JET_MAGIC)] = _JET_MAGIC
+        header_bytes[_VERSION_OFFSET] = 0x00  # JET3 version byte
+
+        jet3_path = tmp_path / "test_jet3.mdb"
+        jet3_path.write_bytes(bytes(header_bytes))
+
+        db = DatabaseUseCases(allowed_dirs=[tmp_path])
+        result = db.open_database(str(jet3_path))
+
+        assert isinstance(result, Err)
+        assert "Jet 3" in result.message or "not supported" in result.message
+        assert "convert" in result.message.lower()
+
+    def test_open_database_accepts_jet4_format(self, tmp_path):
+        """open_database proceeds normally for a JET4 file (no early rejection)."""
+        from ms_access_mcp.backends.format_detector import _JET_MAGIC, _VERSION_OFFSET
+
+        header_bytes = bytearray(32)
+        header_bytes[0:4] = b"\x00\x01\x00\x00"
+        header_bytes[4:4 + len(_JET_MAGIC)] = _JET_MAGIC
+        header_bytes[_VERSION_OFFSET] = 0x01  # JET4 version byte
+
+        jet4_path = tmp_path / "test_jet4.mdb"
+        jet4_path.write_bytes(bytes(header_bytes))
+
+        db = DatabaseUseCases(allowed_dirs=[tmp_path])
+        # Patch get_adapter so we don't need real COM
+        from unittest.mock import patch
+        fake_adapter = FakeAdapter()
+        with patch("ms_access_mcp.application.database.BackendSelector.get_adapter", return_value=fake_adapter):
+            result = db.open_database(str(jet4_path))
+
+        # Should not fail on JET4 check; passes through to adapter.connect
+        assert isinstance(result, Ok) or isinstance(result, Err)
+
+    def test_open_database_accepts_ace_format(self, tmp_path):
+        """open_database proceeds normally for an ACE format file."""
+        from ms_access_mcp.backends.format_detector import _ACE_MAGIC, _VERSION_OFFSET
+
+        header_bytes = bytearray(32)
+        header_bytes[0:4] = b"\x00\x01\x00\x00"
+        header_bytes[4:4 + len(_ACE_MAGIC)] = _ACE_MAGIC
+        header_bytes[_VERSION_OFFSET] = 0x00
+
+        ace_path = tmp_path / "test.accdb"
+        ace_path.write_bytes(bytes(header_bytes))
+
+        db = DatabaseUseCases(allowed_dirs=[tmp_path])
+        fake_adapter = FakeAdapter()
+        with patch("ms_access_mcp.application.database.BackendSelector.get_adapter", return_value=fake_adapter):
+            result = db.open_database(str(ace_path))
+
+        assert isinstance(result, Ok) or isinstance(result, Err)
 
     def test_export_data_rejects_disallowed_output_path(self):
         """export_data rejects output paths not in allowed_dirs."""

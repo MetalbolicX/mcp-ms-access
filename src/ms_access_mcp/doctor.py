@@ -162,24 +162,22 @@ def _check_dao_engine() -> Check:
 
 
 def _check_odbc_driver() -> Check:
-    """Check: ODBC Microsoft Access Driver present."""
+    """Check: ODBC Microsoft Access Driver present (enumerated, not assumed)."""
     try:
         import pyodbc  # type: ignore[import]
 
         drivers = pyodbc.drivers()
-        has_access_driver = any(
-            "access" in d.lower() or "mdb" in d.lower() or "ace" in d.lower()
-            for d in drivers
-        )
+        access_drivers = [d for d in drivers if "microsoft access driver" in d.lower()]
+        has_access_driver = len(access_drivers) > 0
         return Check(
             name="odbc_driver",
             passed=has_access_driver,
             message=(
-                "Microsoft Access ODBC driver found"
+                f"Microsoft Access ODBC driver(s): {', '.join(access_drivers)}"
                 if has_access_driver
-                else "No Microsoft Access ODBC driver found"
+                else "No Microsoft Access ODBC driver found (ACE OLEDB may still work)"
             ),
-            details={"drivers": drivers},
+            details={"drivers": drivers, "access_drivers": access_drivers},
         )
     except Exception as e:
         return Check(
@@ -321,6 +319,30 @@ def _format_human(checks: list[Check]) -> str:
             all_passed = False
 
     lines.append("")
+    lines.append("Format Support Matrix:")
+    lines.append("  accdb  | jet4 (.mdb 2000-2003) | jet3 (.mdb 95/97)")
+    lines.append("  " + "-" * 50)
+
+    ace_ok = any(c.name == "ace_provider" and c.passed for c in checks)
+    odbc_ok = any(c.name == "odbc_driver" and c.passed for c in checks)
+    any(c.name == "dao_engine" and c.passed for c in checks)
+
+    # accdb: OK when ACE OLEDB or Access ODBC driver found
+    accdb_status = "OK" if (ace_ok or odbc_ok) else "MISSING"
+    # jet4: OK under same conditions (ACE reads Jet 4 natively)
+    jet4_status = "OK" if (ace_ok or odbc_ok) else "MISSING"
+    # jet3: requires conversion (32-bit Jet bridge)
+    from .backends.jet3_bridge import bridge_available
+
+    jet3_status = (
+        "conversion available (32-bit Jet bridge)"
+        if bridge_available()
+        else "requires conversion (32-bit Jet bridge not found)"
+    )
+
+    lines.append(f"  {accdb_status:6s} | {jet4_status:21s} | {jet3_status}")
+
+    lines.append("")
     if all_passed:
         lines.append("All checks passed.")
     else:
@@ -345,6 +367,11 @@ def _format_human(checks: list[Check]) -> str:
 
 def _format_json(checks: list[Check]) -> str:
     """Format checks as machine-readable JSON."""
+    ace_ok = any(c.name == "ace_provider" and c.passed for c in checks)
+    odbc_ok = any(c.name == "odbc_driver" and c.passed for c in checks)
+    any(c.name == "dao_engine" and c.passed for c in checks)
+    from .backends.jet3_bridge import bridge_available
+
     return json.dumps(
         {
             "passed": all(c.passed for c in checks),
@@ -357,6 +384,15 @@ def _format_json(checks: list[Check]) -> str:
                 }
                 for c in checks
             ],
+            "format_support": {
+                "accdb": "OK" if (ace_ok or odbc_ok) else "MISSING",
+                "jet4": "OK" if (ace_ok or odbc_ok) else "MISSING",
+                "jet3": (
+                    "conversion available (32-bit Jet bridge)"
+                    if bridge_available()
+                    else "requires conversion (32-bit Jet bridge not found)"
+                ),
+            },
         },
         indent=2,
     )

@@ -246,7 +246,7 @@ class FakeDispatcher:
         self.started = 0
         self.open_calls: list[tuple[str, str, bool]] = []
         self.close_calls = 0
-        self.create_calls: list[str] = []
+        self.create_calls: list[tuple[str, str]] = []
         self.unhealthy_marked = False
         self.fail_open: Exception | None = None
         self.fail_close: Exception | None = None
@@ -277,8 +277,8 @@ class FakeDispatcher:
             raise self.fail_close
         self._db = None
 
-    def create_dao_database(self, db_path: str) -> None:
-        self.create_calls.append(db_path)
+    def create_dao_database(self, db_path: str, *, format: str = "accdb") -> None:
+        self.create_calls.append((db_path, format))
         if self.fail_create is not None:
             raise self.fail_create
 
@@ -375,7 +375,15 @@ class TestLifecycle:
 
     def test_create_database_happy_path(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         assert adapter.create_database("C:\\db\\new.accdb") is True
-        assert dispatcher.create_calls == ["C:\\db\\new.accdb"]
+        assert dispatcher.create_calls == [("C:\\db\\new.accdb", "accdb")]
+
+    def test_create_database_mdb_format(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
+        assert adapter.create_database("C:\\db\\new.mdb", format="mdb") is True
+        assert dispatcher.create_calls == [("C:\\db\\new.mdb", "mdb")]
+
+    def test_create_database_explicit_accdb_format(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
+        assert adapter.create_database("C:\\db\\new.accdb", format="accdb") is True
+        assert dispatcher.create_calls == [("C:\\db\\new.accdb", "accdb")]
 
     def test_create_database_failure_raises_dao_operation_error(self, dispatcher: FakeDispatcher):
         dispatcher.fail_create = FakeComError("create failed")

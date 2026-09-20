@@ -80,6 +80,8 @@ def create_access_database(
     path: str,
     backend_name: str,
     confirm: bool = False,
+    *,
+    format: str = "accdb",
 ) -> Result:
     """Create a blank Access database at the given path.
 
@@ -89,6 +91,7 @@ def create_access_database(
         path: Target path for the new .accdb or .mdb file
         backend_name: Backend name to use
         confirm: Must be True to execute
+        format: "accdb" (default, ACE/.accdb) or "mdb" (Jet 4 format).
 
     Returns:
         Ok on success, or Err
@@ -111,7 +114,7 @@ def create_access_database(
             backend=cast(Literal["odbc", "com", "dao", "auto"] | None, backend_name),
             capabilities=DATA_READ_CAPS,
         )
-        cast(Any, adapter).create_database(path)
+        cast(Any, adapter).create_database(path, format=format)
         return _ok(rowcount=1)
     except Exception as e:
         return _err(f"create_access_database failed: {e}")

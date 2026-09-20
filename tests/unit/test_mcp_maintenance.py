@@ -25,6 +25,7 @@ class TestMaintenanceToolRegistry:
             "maintenance_diagnose_environment",
             "maintenance_repair_with_access_cli",
             "maintenance_salvage_database",
+            "convert_legacy_database",
         }
         actual = set(_TOOLS.keys())
         assert expected == actual, f"Expected {expected}, got {actual}"
@@ -44,7 +45,7 @@ class TestMaintenanceRegister:
 
         mock_mcp = MagicMock()
         register(mock_mcp)
-        assert mock_mcp.add_tool.call_count == 9
+        assert mock_mcp.add_tool.call_count == 10
 
 
 class TestMaintenanceToolFunctions:

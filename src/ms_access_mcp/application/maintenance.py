@@ -542,12 +542,12 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
     # -------------------------------------------------------------------------
 
     def salvage_database(self, path: str, *, confirm: bool) -> Result:
-        """Rung 4: salvage data from a corrupt .accdb by copying tables to a fresh DB.
+        """Rung 4: salvage data from a corrupt Access DB by copying tables to a fresh DB.
 
-        Renames the original to ``<name>.corrupt-<timestamp>.accdb``, creates a
-        fresh .accdb at the original path, then copies tables row-by-row from the
-        corrupt file. Per-table try/except — a table that fails to open is
-        recorded as lost, not fatal.
+        Renames the original to ``<name>.corrupt-<timestamp.<ext>>``, creates a
+        fresh database at the original path (matching the original format: .accdb
+        or .mdb), then copies tables row-by-row from the corrupt file. Per-table
+        try/except — a table that fails to open is recorded as lost, not fatal.
 
         Returns ``Ok`` with per-table ``{salvaged_rows, lost_tables}`` report.
         """
@@ -560,10 +560,17 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         if not is_path_allowed(path, self._allowed_dirs):
             return _err(f"Database path not allowed: {path}")
 
+        # Detect original format to create replacement in the same format.
+        from ..backends.format_detector import AccessFormat, detect_access_format
+
+        fmt = detect_access_format(Path(path))
+        original_ext = os.path.splitext(path)[1]
+        file_format = "mdb" if (fmt == AccessFormat.JET4 and original_ext == ".mdb") else "accdb"
+
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
         basename = os.path.basename(path)
         name_without_ext = os.path.splitext(basename)[0]
-        corrupt_name = f"{name_without_ext}.corrupt-{timestamp}.accdb"
+        corrupt_name = f"{name_without_ext}.corrupt-{timestamp}{original_ext}"
         corrupt_path = os.path.join(os.path.dirname(path), corrupt_name)
 
         # Rename original to .corrupt-*
@@ -571,8 +578,6 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
             os.rename(path, corrupt_path)
         except Exception as e:
             return _err(f"Cannot rename original file: {e}")
-
-        table_reports: list[dict[str, Any]] = []
 
         # Create a fresh database at the original path
         try:
@@ -585,70 +590,164 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
                 backend=cast(Literal["odbc", "com", "dao", "auto"] | None, "dao"),
                 capabilities=DATA_READ_CAPS,
             )
-            cast(Any, fresh_adapter).create_database(path)
+            cast(Any, fresh_adapter).create_database(path, format=file_format)
         except Exception as e:
             return _err(f"Cannot create fresh database at {path}: {e}")
 
         # Open corrupt DB and iterate tables using DAO via ComDispatcher
         from ..backends.dispatcher import ComDispatcher
 
-        dispatcher = ComDispatcher()
-        try:
-            access_app = dispatcher.access_app
-            if access_app is None:
-                return _err("Cannot access DAO — Access COM object not available")
+        class _Do:
+            """Callable that runs the salvage logic on a provided DAO engine."""
 
-            db_engine = access_app.DBEngine
+            def __init__(self, corrupt_path: str, path: str) -> None:
+                self._corrupt_path = corrupt_path
+                self._path = path
 
-            # Open the corrupt database
-            try:
-                corrupt_db = db_engine.OpenDatabase(corrupt_path)
-            except Exception as e:
-                return _err(f"Cannot open corrupt database: {e}")
+            def __call__(self, engine: Any = None) -> list[dict[str, Any]]:
+                import win32com.client
+                if engine is None:
+                    engine = win32com.client.Dispatch("DAO.DBEngine.120")
+                corrupt_path = self._corrupt_path
+                path = self._path
+                table_reports: list[dict[str, Any]] = []
 
-            try:
-                for table_def in corrupt_db.TableDefs:
-                    tname = table_def.Name
-                    if tname.startswith("MSys"):
-                        continue
-                    try:
-                        rs = corrupt_db.OpenRecordset(f"SELECT * FROM [{tname}]", 2)
-                        rows = []
-                        while not rs.EOF:
-                            rows.append([rs.Fields(i).Value for i in range(rs.Fields.Count)])
-                            rs.MoveNext()
-                        rs.Close()
-
-                        # Open fresh DB and insert rows
-                        fresh_db = db_engine.OpenDatabase(path)
-                        try:
-                            fresh_db.Execute(f"CREATE TABLE [{tname}] (id AUTOINCREMENT PRIMARY KEY)")
-                        except Exception:
-                            pass
-                        for row in rows:
-                            placeholders = ",".join(["?"] * len(row))
-                            try:
-                                fresh_db.Execute(f"INSERT INTO [{tname}] VALUES ({placeholders})", row)
-                            except Exception:
-                                pass
-                        fresh_db.Close()
-
-                        table_reports.append({
-                            "table_name": tname,
-                            "salvaged_rows": len(rows),
-                            "error": None,
-                        })
-                    except Exception as table_err:
-                        table_reports.append({
-                            "table_name": tname,
-                            "salvaged_rows": 0,
-                            "error": str(table_err),
-                        })
-            finally:
+                # Open corrupt database
                 try:
+                    corrupt_db = engine.OpenDatabase(corrupt_path)
+                except Exception as e:
+                    return [{"table_name": "<init>", "salvaged_rows": 0, "error": f"Cannot open corrupt database: {e}"}]
+
+                # Open fresh database
+                try:
+                    fresh_db = engine.OpenDatabase(path)
+                except Exception as e:
                     corrupt_db.Close()
-                except Exception:
-                    pass
+                    return [{"table_name": "<init>", "salvaged_rows": 0, "error": f"Cannot open fresh database: {e}"}]
+
+                try:
+                    for table_def in corrupt_db.TableDefs:
+                        tname = table_def.Name
+                        if tname.startswith("MSys"):
+                            continue
+                        try:
+                            # Read source rows via recordset
+                            src_rs = corrupt_db.OpenRecordset(f"SELECT * FROM [{tname}]", 2)
+                            field_count = src_rs.Fields.Count
+                            rows: list[list[Any]] = []
+                            while not src_rs.EOF:
+                                rows.append([src_rs.Fields(i).Value for i in range(field_count)])
+                                src_rs.MoveNext()
+                            src_rs.Close()
+
+                            if not rows:
+                                table_reports.append({
+                                    "table_name": tname,
+                                    "salvaged_rows": 0,
+                                    "error": None,
+                                })
+                                continue
+
+                            # Build DDL from source FieldDefs
+                            src_rs2 = corrupt_db.OpenRecordset(f"SELECT * FROM [{tname}]", 2)
+                            field_count = src_rs2.Fields.Count
+                            ddl_parts = []
+                            for i in range(field_count):
+                                fld = src_rs2.Fields(i)
+                                fname = f"[{fld.Name}]"
+                                ftype = fld.Type  # DAO field type number
+                                fsize = fld.Size
+
+                                # Map DAO type to Access DDL
+                                if ftype == 1:  # YESNO
+                                    col_ddl = f"{fname} YESNO"
+                                elif ftype == 2:  # BYTE
+                                    col_ddl = f"{fname} BYTE"
+                                elif ftype == 3:  # INTEGER
+                                    col_ddl = f"{fname} INTEGER"
+                                elif ftype == 4:  # LONG
+                                    col_ddl = f"{fname} LONG"
+                                elif ftype == 5:  # CURRENCY
+                                    col_ddl = f"{fname} CURRENCY"
+                                elif ftype == 6:  # SINGLE
+                                    col_ddl = f"{fname} SINGLE"
+                                elif ftype == 7:  # DOUBLE
+                                    col_ddl = f"{fname} DOUBLE"
+                                elif ftype == 8:  # DATETIME
+                                    col_ddl = f"{fname} DATETIME"
+                                elif ftype == 10:  # TEXT
+                                    col_ddl = f"{fname} TEXT({fsize})" if fsize else f"{fname} TEXT"
+                                elif ftype == 11:  # LONGBINARY
+                                    col_ddl = f"{fname} LONGBINARY"
+                                elif ftype == 12:  # MEMO
+                                    col_ddl = f"{fname} MEMO"
+                                elif ftype == 15:  # GUID
+                                    col_ddl = f"{fname} GUID"
+                                elif ftype == 20:  # DECIMAL
+                                    col_ddl = f"{fname} DECIMAL(28,8)"
+                                else:
+                                    col_ddl = f"{fname} MEMO"
+                                ddl_parts.append(col_ddl)
+                            src_rs2.Close()
+
+                            create_sql = f"CREATE TABLE [{tname}] ({', '.join(ddl_parts)})"
+                            try:
+                                fresh_db.Execute(create_sql)
+                            except Exception as create_err:
+                                table_reports.append({
+                                    "table_name": tname,
+                                    "salvaged_rows": 0,
+                                    "error": f"CREATE TABLE failed: {create_err}",
+                                })
+                                continue
+
+                            # Insert rows via DAO recordset
+                            dst_rs = fresh_db.OpenRecordset(tname, 2)  # dbOpenDynaset
+                            salvaged = 0
+                            insert_errors: list[str] = []
+                            for row in rows:
+                                try:
+                                    dst_rs.AddNew()
+                                    for i, val in enumerate(row):
+                                        dst_rs.Fields(i).Value = val
+                                    dst_rs.Update()
+                                    salvaged += 1
+                                except Exception as insert_err:
+                                    insert_errors.append(str(insert_err))
+                                    try:
+                                        dst_rs.CancelUpdate()
+                                    except Exception:
+                                        pass
+                            dst_rs.Close()
+
+                            err_msg = "; ".join(insert_errors[:3]) if insert_errors else None
+                            table_reports.append({
+                                "table_name": tname,
+                                "salvaged_rows": salvaged,
+                                "error": err_msg,
+                            })
+                        except Exception as table_err:
+                            table_reports.append({
+                                "table_name": tname,
+                                "salvaged_rows": 0,
+                                "error": str(table_err),
+                            })
+                finally:
+                    try:
+                        corrupt_db.Close()
+                    except Exception:
+                        pass
+                    try:
+                        fresh_db.Close()
+                    except Exception:
+                        pass
+
+                return table_reports
+
+        dispatcher = ComDispatcher()
+        dispatcher.start()
+        try:
+            table_reports = dispatcher.call(_Do(corrupt_path, path))
         finally:
             try:
                 dispatcher.shutdown()

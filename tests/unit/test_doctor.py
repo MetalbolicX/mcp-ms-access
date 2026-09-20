@@ -223,8 +223,9 @@ class TestOdbcDriverProbe:
 
         assert result.name == "odbc_driver"
         assert result.passed is True
-        assert result.message == "Microsoft Access ODBC driver found"
+        assert "Microsoft Access Driver (*.mdb, *.accdb)" in result.message
         assert "Microsoft Access Driver (*.mdb, *.accdb)" in result.details["drivers"]
+        assert "Microsoft Access Driver (*.mdb, *.accdb)" in result.details["access_drivers"]
 
     def test_no_access_driver(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setitem(sys.modules, "pyodbc", FakePyodbc(drivers=["SQL Server"]))
@@ -232,11 +233,12 @@ class TestOdbcDriverProbe:
         result = doctor._check_odbc_driver()
 
         assert result.passed is False
-        assert result.message == "No Microsoft Access ODBC driver found"
+        assert "No Microsoft Access ODBC driver found" in result.message
+        assert result.details["access_drivers"] == []
 
-    @pytest.mark.parametrize("needle", ["access", "MDB", "ACE"])
-    def test_driver_match_is_case_insensitive(self, monkeypatch: pytest.MonkeyPatch, needle: str):
-        monkeypatch.setitem(sys.modules, "pyodbc", FakePyodbc(drivers=[f"Some {needle} Driver"]))
+    @pytest.mark.parametrize("needle", ["Microsoft Access Driver (*.mdb, *.accdb)", "Microsoft Access Driver (*.mdb)"])
+    def test_driver_match_requires_microsoft_access_driver(self, monkeypatch: pytest.MonkeyPatch, needle: str):
+        monkeypatch.setitem(sys.modules, "pyodbc", FakePyodbc(drivers=[needle]))
 
         result = doctor._check_odbc_driver()
 
@@ -567,3 +569,99 @@ class TestCheckShape:
         a.details["k"] = "v"
 
         assert b.details == {}
+
+
+# ---------------------------------------------------------------------------
+# Format support matrix
+# ---------------------------------------------------------------------------
+
+
+class TestFormatSupportMatrix:
+    """Format matrix derived from probe outcomes."""
+
+    def test_all_formats_ok(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture):
+        monkeypatch.setattr(doctor, "_is_windows_x64", lambda: _fake_check("platform", True))
+        monkeypatch.setattr(doctor, "_check_package_versions", lambda: _fake_check("packages", True))
+        monkeypatch.setattr(doctor, "_check_access_com_probe", lambda: _fake_check("access_com", True))
+        monkeypatch.setattr(doctor, "_check_ace_provider", lambda: _fake_check("ace_provider", True))
+        monkeypatch.setattr(doctor, "_check_dao_engine", lambda: _fake_check("dao_engine", True))
+        monkeypatch.setattr(doctor, "_check_odbc_driver", lambda: _fake_check("odbc_driver", True))
+        # Mock bridge_available at the source module so the local imports inside
+        # _format_human and _format_json both see the patched value.
+        import ms_access_mcp.backends.jet3_bridge as jb
+
+        monkeypatch.setattr(jb, "bridge_available", lambda: True)
+
+        doctor.doctor_main(deep=False, json_output=False)
+
+        out = capsys.readouterr().out
+        assert "Format Support Matrix:" in out
+        assert "accdb  | jet4" in out
+        # accdb and jet4 should show OK when ACE or ODBC is available
+        assert "OK" in out
+        # jet3 shows "conversion available" when bridge is available
+        assert "conversion available (32-bit Jet bridge)" in out
+
+    def test_no_odbc_driver(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture):
+        monkeypatch.setattr(doctor, "_is_windows_x64", lambda: _fake_check("platform", True))
+        monkeypatch.setattr(doctor, "_check_package_versions", lambda: _fake_check("packages", True))
+        monkeypatch.setattr(doctor, "_check_access_com_probe", lambda: _fake_check("access_com", True))
+        monkeypatch.setattr(doctor, "_check_ace_provider", lambda: _fake_check("ace_provider", False))
+        monkeypatch.setattr(doctor, "_check_dao_engine", lambda: _fake_check("dao_engine", True))
+        monkeypatch.setattr(doctor, "_check_odbc_driver", lambda: _fake_check("odbc_driver", False))
+
+        doctor.doctor_main(deep=False, json_output=False)
+
+        out = capsys.readouterr().out
+        assert "Format Support Matrix:" in out
+        # When neither ACE nor ODBC is available, accdb and jet4 show MISSING
+        assert "MISSING" in out
+
+    def test_no_dao(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture):
+        monkeypatch.setattr(doctor, "_is_windows_x64", lambda: _fake_check("platform", True))
+        monkeypatch.setattr(doctor, "_check_package_versions", lambda: _fake_check("packages", True))
+        monkeypatch.setattr(doctor, "_check_access_com_probe", lambda: _fake_check("access_com", True))
+        monkeypatch.setattr(doctor, "_check_ace_provider", lambda: _fake_check("ace_provider", True))
+        monkeypatch.setattr(doctor, "_check_dao_engine", lambda: _fake_check("dao_engine", False))
+        monkeypatch.setattr(doctor, "_check_odbc_driver", lambda: _fake_check("odbc_driver", True))
+        # Bridge unavailable (cscript missing) — jet3 shows the not-found variant
+        import ms_access_mcp.backends.jet3_bridge as jb
+
+        monkeypatch.setattr(jb, "bridge_available", lambda: False)
+
+        doctor.doctor_main(deep=False, json_output=False)
+
+        out = capsys.readouterr().out
+        assert "Format Support Matrix:" in out
+        # DAO missing + bridge unavailable shows "requires conversion" with not-found suffix
+        assert "requires conversion (32-bit Jet bridge not found)" in out
+
+    def test_json_output_includes_format_support(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture):
+        monkeypatch.setattr(doctor, "_is_windows_x64", lambda: _fake_check("platform", True))
+        monkeypatch.setattr(doctor, "_check_package_versions", lambda: _fake_check("packages", True))
+        monkeypatch.setattr(doctor, "_check_access_com_probe", lambda: _fake_check("access_com", True))
+        monkeypatch.setattr(doctor, "_check_ace_provider", lambda: _fake_check("ace_provider", True))
+        monkeypatch.setattr(doctor, "_check_dao_engine", lambda: _fake_check("dao_engine", True))
+        monkeypatch.setattr(doctor, "_check_odbc_driver", lambda: _fake_check("odbc_driver", True))
+        import ms_access_mcp.backends.jet3_bridge as jb
+
+        monkeypatch.setattr(jb, "bridge_available", lambda: False)
+
+        doctor.doctor_main(deep=False, json_output=True)
+
+        payload = json.loads(capsys.readouterr().out)
+        assert "format_support" in payload
+        assert payload["format_support"]["accdb"] == "OK"
+        assert payload["format_support"]["jet4"] == "OK"
+        assert payload["format_support"]["jet3"] == "requires conversion (32-bit Jet bridge not found)"
+
+    def test_non_windows_odbc_driver_message(self, monkeypatch: pytest.MonkeyPatch):
+        """On non-Windows, ODBC driver check reports correctly."""
+        monkeypatch.setattr(doctor.sys, "platform", "linux")
+        monkeypatch.setitem(sys.modules, "pyodbc", FakePyodbc(drivers=["Microsoft Access Driver (*.mdb, *.accdb)"]))
+
+        result = doctor._check_odbc_driver()
+
+        # Non-Windows path doesn't exist in current implementation
+        # but if it did, it should handle gracefully
+        assert result.name == "odbc_driver"

@@ -161,11 +161,17 @@ class DaoAdapter:
         finally:
             self._connected = False
 
-    def create_database(self, path: str) -> bool:
-        """Create a blank .accdb at path via the shared dispatcher."""
+    def create_database(self, path: str, *, format: str = "accdb") -> bool:
+        """Create a blank Access database at path via the shared dispatcher.
+
+        Args:
+            path: Target file path.
+            format: "accdb" (default, ACE/.accdb) or "mdb" (Jet 4 format).
+
+        """
         self._dispatcher.start()
         try:
-            self._dispatcher.create_dao_database(path)
+            self._dispatcher.create_dao_database(path, format=format)
             return True
         except Exception as e:
             self._dispatcher.mark_unhealthy()

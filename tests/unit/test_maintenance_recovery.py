@@ -232,7 +232,12 @@ class TestSalvageDatabase:
             DBEngine = _FakeDBEngine()
 
         class _FakeDispatcher:
-            access_app = _FakeApp()
+            def start(self):
+                pass
+
+            def call(self, fn, engine=None):
+                return fn(engine)
+
             def shutdown(self):
                 pass
 
@@ -260,18 +265,62 @@ class TestSalvageDatabase:
             def __init__(self, name):
                 self.Name = name
 
+        class _FakeField:
+            def __init__(self, name, value, ftype=10, fsize=255):
+                self.Name = name
+                self.Type = ftype
+                self.Size = fsize
+                self.Value = value
+
+        class _FakeFields:
+            def __init__(self, rows, offset=0):
+                self._rows = rows
+                self._offset = offset
+
+            @property
+            def Count(self):
+                return len(self._rows[0]) if self._rows else 0
+
+            def __call__(self, i):
+                val = self._rows[0][i] if self._rows else None
+                # Infer DAO type from Python type
+                if isinstance(val, bool):
+                    t, s = 1, 1
+                elif isinstance(val, int):
+                    t, s = 4, 4
+                elif isinstance(val, float):
+                    t, s = 7, 8
+                elif isinstance(val, str):
+                    t, s = 10, min(len(val), 255) if val else 255
+                else:
+                    t, s = 12, 0  # MEMO
+                return _FakeField(f"field_{i}", val, t, s)
+
         class _FakeRS:
-            def __init__(self):
-                self._rows = [[1, "row1"]]
+            def __init__(self, rows):
+                self._rows = rows
                 self._i = 0
+
+            @property
             def EOF(self):
                 return self._i >= len(self._rows)
+
             def MoveNext(self):
                 self._i += 1
-            def Fields(self, i):
-                class _FakeField:
-                    Value = self._rows[0][i]
-                return _FakeField()
+
+            @property
+            def Fields(self):
+                return _FakeFields(self._rows)
+
+            def AddNew(self):
+                pass
+
+            def Update(self):
+                pass
+
+            def CancelUpdate(self):
+                pass
+
             def Close(self):
                 pass
 
@@ -281,7 +330,11 @@ class TestSalvageDatabase:
             def OpenRecordset(self, sql, type_=2):
                 if "bad_table" in sql:
                     raise Exception("Cannot read table")
-                return _FakeRS()
+                return _FakeRS([[1, "row1"]])
+
+            def Execute(self, sql, options=None):
+                # Silently succeed for test purposes
+                pass
 
             def Close(self):
                 pass
@@ -296,7 +349,15 @@ class TestSalvageDatabase:
             DBEngine = _FakeDBEngine()
 
         class _FakeDispatcher:
-            access_app = _FakeApp()
+            def __init__(self):
+                self._fake_engine = _FakeDBEngine()
+
+            def start(self):
+                pass
+
+            def call(self, fn, engine=None):
+                return fn(self._fake_engine)
+
             def shutdown(self):
                 pass
 

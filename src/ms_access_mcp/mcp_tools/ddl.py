@@ -207,11 +207,22 @@ def upsert_linked_table(path: str, params: dict[str, Any] | None = None, confirm
 
 
 def create_access_database(path: str, params: dict[str, Any] | None = None, confirm: bool = False) -> CallToolResult:
-    """Create a blank Access database at the target path (destructive). Requires confirm=True."""
+    """Create a blank Access database at the target path (destructive). Requires confirm=True.
+
+    Args:
+        path: Absolute path for the new database (used as target if params.path not set).
+        params: Optional dict that may contain ``path`` (override target) and ``format``.
+            ``format`` must be ``"accdb"`` (default, ACE/.accdb) or ``"mdb"`` (Jet 4,
+            Access 2000-2003). Example: ``params={"format": "mdb"}``.
+        confirm: Must be True to execute.
+    """
     p = params or {}
     target_path = p.get("path", path)
+    file_format = p.get("format", "accdb")
+    if file_format not in ("accdb", "mdb"):
+        return to_mcp_result({"success": False, "error": 'format must be "accdb" or "mdb"'})
     uc = _new_db(readonly=False)
-    result = uc.create_access_database(path=target_path, confirm=confirm)
+    result = uc.create_access_database(path=target_path, confirm=confirm, format=file_format)
     return to_mcp_result(_result_to_dict(result))
 
 

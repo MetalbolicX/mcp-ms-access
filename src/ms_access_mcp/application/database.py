@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from ..backends import DATA_READ_CAPS, BackendSelector
+from ..backends.format_detector import AccessFormat, detect_access_format
 from ..credentials import contains_credential, resolve_profile
 from ..errors import Err, Ok, Result, err, ok  # noqa: F401 — re-exported for backward compatibility
 from ..models import QueryResult
@@ -137,6 +138,17 @@ class DatabaseUseCases:
                 backend=cast(Literal["odbc", "com", "dao", "auto"] | None, self._backend_name),
                 capabilities=DATA_READ_CAPS,
             )
+
+            # Reject Jet 3 (Access 95/97) before any connection attempt — ACE
+            # cannot open Jet 3 files and produces a cryptic COM error that
+            # gives no actionable guidance.  Detect first so users get a clear
+            # domain error with conversion instructions.
+            fmt = detect_access_format(Path(db_path))
+            if fmt == AccessFormat.JET3:
+                return _err(
+                    "Access 95/97 (Jet 3) format is not supported by ACE. "
+                    "Use the convert_legacy_database MCP tool to convert to Jet 4 format first."
+                )
 
             # Rung 1 retry: if lock signature + stale .ldb exists, retry up to 3x
             lock_file = _get_lock_file(db_path)
@@ -1206,17 +1218,20 @@ class DatabaseUseCases:
         self,
         path: str,
         confirm: bool = False,
+        *,
+        format: str = "accdb",
     ) -> Result:
         """Create a blank Access database at the given path.
 
         Args:
             path: Target path for the new .accdb or .mdb file
             confirm: Must be True to execute
+            format: "accdb" (default, ACE/.accdb) or "mdb" (Jet 4 format).
 
         Returns:
             Ok on success, or Err
         """
-        return _create_db(self._policy, self._allowed_dirs, path, self._backend_name, confirm)
+        return _create_db(self._policy, self._allowed_dirs, path, self._backend_name, confirm, format=format)
 
     # -------------------------------------------------------------------------
     # Analysis Tools (plan 025)
