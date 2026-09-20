@@ -1632,7 +1632,7 @@ class TestSwallowLogging:
         adapter._get_vb_project = lambda: _FakeVBProject()
 
         with caplog.at_level(logging.DEBUG):
-            result = adapter.compile_vba()
+            adapter.compile_vba()
 
         adapter._get_vb_project = original_get
 
