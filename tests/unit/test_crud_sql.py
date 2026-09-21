@@ -10,11 +10,8 @@ unmodified after refactoring (Step 4 proof).
 
 from __future__ import annotations
 
-import pytest
-
 from ms_access_mcp.backends.ado import AdoAdapter
 from ms_access_mcp.backends.odbc import OdbcAdapter
-
 
 # ----------------------------------------------------------------------
 # Fake cursor/connection helpers

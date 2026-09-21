@@ -6,8 +6,6 @@ and build_delete — matching the golden bytes pinned from the ADO/ODBC backends
 
 from __future__ import annotations
 
-import pytest
-
 from ms_access_mcp.backends import crud_sql
 
 

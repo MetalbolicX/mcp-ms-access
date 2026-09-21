@@ -17,10 +17,12 @@ def build_insert(table: str, data: dict | list[dict]) -> tuple[str, list]:
 
     Returns:
         Tuple of (sql_string, list_of_params).
+
     """
     rows = data if isinstance(data, list) else [data]
     if not rows:
-        raise ValueError("data must contain at least one row")
+        msg = "data must contain at least one row"
+        raise ValueError(msg)
     row = rows[0]
     cols = list(row.keys())
     vals = list(row.values())
@@ -41,6 +43,7 @@ def build_update(
 
     Returns:
         Tuple of (sql_string, list_of_params).
+
     """
     set_clause = ", ".join(f"[{k}] = ?" for k in set_dict)
     vals = list(set_dict.values())
@@ -61,6 +64,7 @@ def build_delete(table: str, where_dict: dict | None = None) -> tuple[str, list]
 
     Returns:
         Tuple of (sql_string, list_of_params).
+
     """
     sql = f"DELETE FROM [{table}]"
     vals: list = []
