@@ -20,7 +20,6 @@ import logging
 import os
 import tempfile
 import threading
-import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -28,7 +27,7 @@ from ...errors import AccessBackendError, AccessObjectNotFoundError
 from ..dispatcher import ComDispatcher
 from ..protocols import AccessDispatcherProtocol
 from ..trusted_locations import capture_trusted_locations, restore_trusted_locations
-from . import control_types
+from . import control_types, dialog_killer
 
 logger = logging.getLogger(__name__)
 
@@ -308,38 +307,7 @@ class AccessAdapter:
             stop_event: threading.Event — set when the dialog killer should stop.
 
         """
-        try:
-            import win32con
-            import win32gui
-
-            while not stop_event.is_set():
-                def find_and_click(hwnd: int, _: object) -> bool:
-                    if stop_event.is_set():
-                        return False
-                    cls = win32gui.GetClassName(hwnd)
-                    title = win32gui.GetWindowText(hwnd)
-                    if cls != "#32770" or "save" not in title.lower():
-                        return True
-                    btn = win32gui.FindWindowEx(hwnd, None, "Button", None)
-                    while btn:
-                        btn_title = win32gui.GetWindowText(btn).strip()
-                        if btn_title in ("OK", "Save", "&OK", "&Save"):
-                            win32gui.PostMessage(hwnd, win32con.WM_COMMAND,
-                                                 win32gui.GetWindowLong(btn, win32con.GWL_ID), 0)
-                            return True
-                        btn = win32gui.FindWindowEx(hwnd, btn, "Button", None)
-                    win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, 0x0D, 0)
-                    return True
-
-                win32gui.EnumWindows(find_and_click, None)
-                if not stop_event.is_set():
-                    time.sleep(0.1)
-
-        except ImportError:
-            pass
-        except Exception as exc:
-            logger.debug("dialog killer thread error: %s", exc)
-            pass
+        dialog_killer.start_dialog_killer(stop_event)
 
     def _trusted_locations_wrap(self, func, *args, **kwargs):
         """Execute func(*args, **kwargs) with Trusted Locations preservation if enabled.
