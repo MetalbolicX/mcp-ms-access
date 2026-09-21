@@ -24,10 +24,11 @@ import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from ..errors import AccessBackendError, AccessObjectNotFoundError
-from .dispatcher import ComDispatcher
-from .protocols import AccessDispatcherProtocol
-from .trusted_locations import capture_trusted_locations, restore_trusted_locations
+from ...errors import AccessBackendError, AccessObjectNotFoundError
+from ..dispatcher import ComDispatcher
+from ..protocols import AccessDispatcherProtocol
+from ..trusted_locations import capture_trusted_locations, restore_trusted_locations
+from . import control_types
 
 logger = logging.getLogger(__name__)
 
@@ -142,86 +143,22 @@ class AccessAdapter:
     @staticmethod
     def _control_type_name(ctrl_type: int) -> str:
         """Map Access AcControlType integer to readable name."""
-        type_map = {
-            100: "TextBox",
-            101: "Label",
-            102: "CommandButton",
-            103: "OptionButton",
-            104: "ComboBox",
-            105: "ListBox",
-            106: "SubForm",
-            107: "ToggleButton",
-            108: "CheckBox",
-            109: "OptionGroup",
-            110: "TabControl",
-            111: "Page",
-            112: "Image",
-            114: "BoundObjectFrame",
-            115: "ObjectFrame",
-            118: "Line",
-            119: "Rectangle",
-            120: "PageBreak",
-            122: "Attachment",
-            123: "NavigationButton",
-            124: "NavigationControl",
-            126: "WebBrowserControl",
-            128: "EmptyCell",
-        }
-        return type_map.get(ctrl_type, f"Control({ctrl_type})")
+        return control_types.control_type_name(ctrl_type)
 
     @staticmethod
     def _control_type_id(name: str) -> int:
         """Map readable control type name to Access AcControlType integer."""
-        type_map = {
-            "TextBox": 100,
-            "Label": 101,
-            "CommandButton": 102,
-            "OptionButton": 103,
-            "ComboBox": 104,
-            "ListBox": 105,
-            "SubForm": 106,
-            "ToggleButton": 107,
-            "CheckBox": 108,
-            "OptionGroup": 109,
-            "TabControl": 110,
-            "Page": 111,
-            "Image": 112,
-            "BoundObjectFrame": 114,
-            "ObjectFrame": 115,
-            "Line": 118,
-            "Rectangle": 119,
-            "PageBreak": 120,
-            "Attachment": 122,
-            "NavigationButton": 123,
-            "NavigationControl": 124,
-            "WebBrowserControl": 126,
-            "EmptyCell": 128,
-        }
-        return type_map.get(name, 0)
+        return control_types.control_type_id(name)
 
     @staticmethod
     def _section_name(section_id: int) -> str:
         """Map Access AcSection integer to readable name."""
-        section_map = {
-            0: "detail",
-            1: "header",
-            2: "footer",
-            3: "page_header",
-            4: "page_footer",
-        }
-        return section_map.get(section_id, f"Section({section_id})")
+        return control_types.section_name(section_id)
 
     @staticmethod
     def _section_id(name: str) -> int:
         """Map readable section name to Access AcSection integer."""
-        section_map = {
-            "detail": 0,
-            "header": 1,
-            "footer": 2,
-            "page_header": 3,
-            "page_footer": 4,
-        }
-        return section_map.get(name.lower(), 0)
+        return control_types.section_id(name)
 
     # Registry for form/report clone-family deduplication.
     # Maps kind key to COM collection names and Access object-type constants.
