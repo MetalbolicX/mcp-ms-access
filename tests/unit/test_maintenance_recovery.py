@@ -365,6 +365,10 @@ class TestSalvageDatabase:
         with patch("ms_access_mcp.backends.dispatcher.ComDispatcher", return_value=_FakeDispatcher()):
             with patch("ms_access_mcp.backends.BackendSelector.get_adapter") as mock_get:
                 mock_adapter = MagicMock()
+                mock_adapter.salvage_tables.return_value = [
+                    {"table_name": "good_table", "salvaged_rows": 1, "error": None},
+                    {"table_name": "bad_table", "salvaged_rows": 0, "error": "Cannot read table"},
+                ]
                 mock_get.return_value = mock_adapter
                 result = mc.salvage_database(str(db), confirm=True)
 
