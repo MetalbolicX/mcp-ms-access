@@ -15,10 +15,7 @@ Behavior invariants:
 
 from __future__ import annotations
 
-import locale
 import logging
-import os
-import tempfile
 import threading
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -26,7 +23,7 @@ from typing import Any, TypeVar
 from ...errors import AccessBackendError, AccessObjectNotFoundError
 from ..dispatcher import ComDispatcher
 from ..protocols import AccessDispatcherProtocol
-from . import control_types, dialog_killer, trusted_locations
+from . import control_types, dialog_killer, trusted_locations, vba
 
 logger = logging.getLogger(__name__)
 
@@ -231,13 +228,10 @@ class AccessAdapter:
         COM VBProjects collection uses 1-based indexing.
         """
         try:
-            vbe = self._dispatcher.access_app.VBE
-            for i in range(1, vbe.VBProjects.Count + 1):
-                return vbe.VBProjects(i)
+            return vba.get_vb_project(self._dispatcher.access_app)
         except Exception as exc:
             logger.debug("vb project unavailable: %s", exc)
-            pass
-        return None
+            return None
 
     def _save_object_to_text(self, object_type: int, object_name: str) -> str:
         """Export an Access object to text using SaveAsText.
@@ -245,25 +239,9 @@ class AccessAdapter:
         Returns the text content or empty string on failure.
         object_type: acForm=2, acReport=4, acModule=5, acMacro=8
         """
-        temp_path = None
-        try:
-            fd, temp_path = tempfile.mkstemp(suffix=".txt", prefix="mcp_exp_")
-            os.close(fd)
-            self._dispatcher.access_app.SaveAsText(object_type, object_name, temp_path)
-            with open(temp_path, "rb") as f:
-                raw = f.read()
-            # SaveAsText outputs UTF-16-LE with BOM; decode accordingly
-            content = raw.decode("utf-16-le", errors="replace").lstrip("\ufeff")
-            return content
-        except Exception:
-            return ""
-        finally:
-            if temp_path:
-                try:
-                    os.unlink(temp_path)
-                except Exception as exc:
-                    logger.debug("temp file cleanup %s failed: %s", temp_path, exc)
-                    pass
+        return vba.save_object_to_text(
+            self._dispatcher.access_app, object_type, object_name
+        )
 
     def _load_object_from_text(self, object_type: int, object_name: str, text_data: str) -> bool:
         """Import an Access object from text data using LoadFromText.
@@ -274,29 +252,9 @@ class AccessAdapter:
         without BOM. Forms, reports, queries, and macros expect UTF-16-LE
         with BOM.
         """
-        temp_path = None
-        try:
-            fd, temp_path = tempfile.mkstemp(suffix=".txt", prefix="mcp_imp_")
-            os.close(fd)
-            if object_type == 5:  # acModule
-                enc = locale.getpreferredencoding(False) or "cp1252"
-                with open(temp_path, "w", encoding=enc, errors="replace") as f:
-                    f.write(text_data)
-            else:
-                with open(temp_path, "wb") as f:
-                    f.write(b"\xff\xfe")
-                    f.write(text_data.encode("utf-16-le"))
-            self._dispatcher.access_app.LoadFromText(object_type, object_name, temp_path)
-            return True
-        except Exception:
-            return False
-        finally:
-            if temp_path:
-                try:
-                    os.unlink(temp_path)
-                except Exception as exc:
-                    logger.debug("temp file cleanup %s failed: %s", temp_path, exc)
-                    pass
+        return vba.load_object_from_text(
+            self._dispatcher.access_app, object_type, object_name, text_data
+        )
 
     @staticmethod
     def _dialog_killer(stop_event: threading.Event) -> None:
@@ -1588,48 +1546,21 @@ class AccessAdapter:
         if not self._dispatcher._started:
             return {"success": False, "error": "Not connected"}
 
+        # Fetch VB project via adapter method (allows test patches to work)
+        vb_project = self._get_vb_project()
+
         def _do() -> dict:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return {"success": False, "error": "No VBA project"}
-            app = self._dispatcher.access_app
-
-            # Save all modules first so compilation doesn't trigger "Save As" dialog
-            for comp in vb_project.VBComponents:
-                if comp.Type == 1:  # vbext_ct_StdModule
-                    try:
-                        app.DoCmd.Save(5, comp.Name)
-                    except Exception as exc:
-                        logger.debug("DoCmd.Save module %s failed: %s", comp.Name, exc)
-                        pass
-
-            # Start dialog killer as safety net
-            dismissed = threading.Event()
-            killer_thread = threading.Thread(
-                target=self._dialog_killer,
-                args=(dismissed,),
-                daemon=True,
+            return vba.compile_vba(
+                self._dispatcher.access_app,
+                _COMPILE_CMD_IDS,
+                dialog_killer.start_dialog_killer,
+                vb_project,
             )
-            killer_thread.start()
-
-            try:
-                for cmd_id in _COMPILE_CMD_IDS:
-                    try:
-                        app.DoCmd.RunCommand(cmd_id)
-                        return {"success": True}
-                    except Exception as exc:
-                        logger.debug("compile_vba RunCommand %s failed: %s", cmd_id, exc)
-                        continue
-                return {
-                    "success": False,
-                    "error": "Could not find working compile command for this Access version",
-                }
-            finally:
-                dismissed.set()
-                killer_thread.join(timeout=2.0)
 
         try:
-            return self._dispatcher.call(self._trusted_locations_wrap, _do)
+            return self._dispatcher.call(
+                lambda: trusted_locations.trusted_locations_wrap(_do)
+            )
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -1649,40 +1580,7 @@ class AccessAdapter:
             if vb_project is None:
                 return []
             try:
-                target_module = None
-                for comp in vb_project.VBComponents:
-                    if comp.Name == module_name:
-                        target_module = comp.CodeModule
-                        break
-                if target_module is None:
-                    return []
-
-                total_lines = target_module.CountOfLines
-                if total_lines == 0:
-                    return []
-
-                procedures: list[dict] = []
-                seen_procs: set[str] = set()
-
-                for line in range(1, total_lines + 1):
-                    try:
-                        proc_name = target_module.ProcOfLine(line, 0)
-                        if proc_name and proc_name not in seen_procs:
-                            seen_procs.add(proc_name)
-                            proc_kind = target_module.ProcKind(line, 0)
-                            proc_type = {0: "Sub", 1: "Function", 2: "Property"}.get(proc_kind, "Sub")
-                            start_line = target_module.ProcStartLine(proc_name, 0)
-                            line_count = target_module.ProcCountLines(proc_name, 0)
-                            procedures.append({
-                                "name": proc_name,
-                                "type": proc_type,
-                                "start_line": start_line,
-                                "line_count": line_count,
-                            })
-                    except Exception as exc:
-                        logger.debug("ProcOfLine failed for line %s in %s: %s", line, module_name, exc)
-                        pass
-                return procedures
+                return vba.list_procedures(self._dispatcher.access_app, vb_project, module_name)
             except Exception as exc:
                 logger.debug("list procedures %s failed: %s", module_name, exc)
                 return []
