@@ -22,31 +22,26 @@ class TestBuildIisamInsertSqlConnectionStringHardening:
     def test_path_with_semicolon_is_rejected(self):
         """A path containing ';' in any segment must be rejected before interpolation."""
         result = _build_iisam_insert_sql("Users", r"C:\out;HDR=NO\data.xlsx", "Sheet1")
-        # Either returns Err, or the returned SQL does not contain the raw path
-        if isinstance(result, Err):
-            assert "semicolon" in result.message.lower() or ";" in result.message
-        else:
-            sql = result if isinstance(result, str) else str(result)
-            assert r"C:\out;HDR=NO\data.xlsx" not in sql, (
-                f"Path with semicolon appears raw in SQL: {sql!r}"
-            )
+        # Must return Err (path validation failure)
+        assert isinstance(result, Err), (
+            f"Expected Err for path with semicolon, got {type(result).__name__}: {result!r}"
+        )
+        assert "semicolon" in result.message.lower() or ";" in result.message
 
     def test_path_with_quote_is_rejected(self):
-        """A path containing '\"' must be rejected before interpolation."""
+        """A path containing '"' must be rejected before interpolation."""
         result = _build_iisam_insert_sql("Users", r'C:\out"file\data.xlsx', "Sheet1")
-        if isinstance(result, Err):
-            assert '"' in result.message
-        else:
-            sql = result if isinstance(result, str) else str(result)
-            assert r'C:\out"file\data.xlsx' not in sql, (
-                f"Path with quote appears raw in SQL: {sql!r}"
-            )
+        assert isinstance(result, Err), (
+            f"Expected Err for path with quote, got {type(result).__name__}: {result!r}"
+        )
+        assert '"' in result.message
 
     def test_legal_path_unchanged(self):
         """A legal path without special characters is interpolated normally."""
         result = _build_iisam_insert_sql("Users", r"C:\exports\data.xlsx", "Sheet1")
         # Result must be Ok(str) and contain the absolute path
-        assert isinstance(result, str), f"Expected str, got {type(result).__name__}: {result!r}"
-        assert r"C:\exports\data.xlsx" in result
-        assert "INSERT INTO" in result
-        assert "[Sheet1$]" in result
+        assert isinstance(result, Ok), f"Expected Ok, got {type(result).__name__}: {result!r}"
+        sql = result.data  # type: ignore[union-attr]
+        assert r"C:\exports\data.xlsx" in sql
+        assert "INSERT INTO" in sql
+        assert "[Sheet1$]" in sql
