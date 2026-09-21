@@ -26,8 +26,7 @@ from typing import Any, TypeVar
 from ...errors import AccessBackendError, AccessObjectNotFoundError
 from ..dispatcher import ComDispatcher
 from ..protocols import AccessDispatcherProtocol
-from ..trusted_locations import capture_trusted_locations, restore_trusted_locations
-from . import control_types, dialog_killer
+from . import control_types, dialog_killer, trusted_locations
 
 logger = logging.getLogger(__name__)
 
@@ -315,15 +314,7 @@ class AccessAdapter:
         Captures Trusted Locations before the call and restores after,
         controlled by ACCESS_MCP_PRESERVE_TRUSTED_LOCATIONS env var (default False).
         """
-        if not _TRUSTED_LOCATIONS_PRESERVE:
-            return func(*args, **kwargs)
-
-        captured = capture_trusted_locations()
-        try:
-            return func(*args, **kwargs)
-        finally:
-            if captured:
-                restore_trusted_locations(captured)
+        return trusted_locations.trusted_locations_wrap(func, *args, **kwargs)
 
     # ------------------------------------------------------------------ #
     # Form operations
@@ -331,42 +322,9 @@ class AccessAdapter:
 
     def _list_objects(self, kind: str):
         """List all objects of a given kind (form/report)."""
-        if not self._dispatcher._started:
-            return []
-
-        from ms_access_mcp.models import FormInfo, ReportInfo
-
-        def _do():
-            objects = []
-            skipped_props = 0
-            skipped_objs = 0
-            collection_name = self._OBJECT_KINDS[kind]["collection"]
-            try:
-                all_objects = getattr(self._dispatcher.access_app.CurrentProject, collection_name)
-                for i in range(all_objects.Count):
-                    obj = all_objects(i)
-                    try:
-                        record_source = ""
-                        try:
-                            record_source = str(obj.Properties("RecordSource")) if obj.Properties.Exists("RecordSource") else ""
-                        except Exception:
-                            skipped_props += 1
-                        model = FormInfo if kind == "form" else ReportInfo
-                        objects.append(model(name=obj.Name, record_source=record_source))
-                    except Exception:
-                        skipped_objs += 1
-            except Exception:
-                logger.debug("list_objects %s collection access failed", kind)
-                pass
-            if skipped_props or skipped_objs:
-                logger.debug("list_objects %s: %d objects, %d property failures skipped", kind, skipped_objs, skipped_props)
-            return objects
-
-        try:
-            return self._dispatcher.call(_do)
-        except Exception as exc:
-            logger.debug("list_objects %s dispatcher failed: %s", kind, exc)
-            return []
+        return trusted_locations.list_objects(
+            self._dispatcher, self._OBJECT_KINDS, kind
+        )
 
     def get_forms(self):
         """Get all forms in the database."""
