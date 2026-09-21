@@ -7,7 +7,7 @@ avoiding the need for test fakes to inherit from the concrete class.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
 # ComDispatcher slots actually used by VersioningBackend._check_connected (line 48)
@@ -102,4 +102,31 @@ class SchemaDispatcherProtocol(Protocol):
 
     def is_connected(self) -> bool:
         """Return True if the dispatcher is connected."""
+        ...
+
+
+@runtime_checkable
+class CrudBackendProtocol(Protocol):
+    """Structural protocol for backends that expose the CRUD surface.
+
+    All three backends (ADO, ODBC, DAO) expose insert_data, update_data,
+    delete_data, and execute_query with compatible signatures.
+    """
+
+    def execute_query(self, sql: str, params: tuple | None = None) -> Any:
+        """Execute a SELECT query and return results."""
+        ...
+
+    def insert_data(self, table_name: str, data: dict | list[dict]) -> Any:
+        """Insert rows into a table."""
+        ...
+
+    def update_data(
+        self, table_name: str, set_dict: dict, where_dict: dict | None = None
+    ) -> Any:
+        """Update rows in a table."""
+        ...
+
+    def delete_data(self, table_name: str, where_dict: dict | None = None) -> Any:
+        """Delete rows from a table."""
         ...
