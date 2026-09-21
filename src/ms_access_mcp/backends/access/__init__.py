@@ -23,7 +23,7 @@ from typing import Any, TypeVar
 from ...errors import AccessBackendError, AccessObjectNotFoundError
 from ..dispatcher import ComDispatcher
 from ..protocols import AccessDispatcherProtocol
-from . import control_types, dialog_killer, trusted_locations, vba
+from . import control_types, dialog_killer, forms, macros, object_kinds, reports, trusted_locations, vba
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ _COMPILE_CMD_IDS = [301, 206, 317, 232]
 # Module-level cache for preserve_trusted_locations
 _TRUSTED_LOCATIONS_PRESERVE = False
 
-# XML template for creating empty macros
+# XML template for creating empty macros (kept here for backward compatibility)
 _MACRO_TEMPLATE = (
     '<?xml version="1.0" encoding="UTF-16" standalone="no"?>\n'
     "<Macros>\n"
@@ -157,15 +157,11 @@ class AccessAdapter:
 
     # Registry for form/report clone-family deduplication.
     # Maps kind key to COM collection names and Access object-type constants.
-    _OBJECT_KINDS = {
-        "form": {"collection": "AllForms", "ac_type": 2, "open_verb": "OpenForm", "live_collection": "Forms", "close_ac": 2},
-        "report": {"collection": "AllReports", "ac_type": 4, "open_verb": "OpenReport", "live_collection": "Reports", "close_ac": 4},
-    }
+    _OBJECT_KINDS = object_kinds.OBJECT_KINDS
 
     def _open_object_in_design(self, kind: str, object_name: str) -> None:
         """Open a form/report in design view via the kind's DoCmd verb."""
-        open_verb = self._OBJECT_KINDS[kind]["open_verb"]
-        getattr(self._dispatcher.access_app.DoCmd, open_verb)(object_name, 1)  # acDesign=1
+        object_kinds._open_object_in_design(self._dispatcher, kind, object_name)
 
     def _live_object(self, kind: str, object_name: str) -> Any:
         """Resolve the live form/report in design view (None when unavailable).
@@ -174,17 +170,7 @@ class AccessAdapter:
         report side reads Reports(name) directly. A raising Forms(name)
         fallback propagates to the caller's handler, matching legacy behavior.
         """
-        app = self._dispatcher.access_app
-        if kind == "form":
-            try:
-                return app.Screen.ActiveForm
-            except Exception:
-                return app.Forms(object_name)
-        try:
-            collection = self._OBJECT_KINDS[kind]["live_collection"]
-            return getattr(app, collection)(object_name)
-        except Exception:
-            return None
+        return object_kinds._live_object(self._dispatcher, kind, object_name)
 
     def _with_design_view(
         self,
@@ -202,25 +188,17 @@ class AccessAdapter:
         Close failures are swallowed (best-effort cleanup); work failures are routed
         through on_error (getters return a default, setters log-and-False).
         """
-        if not self._dispatcher._started:
-            return default
-
-        def _do() -> _T:
-            try:
-                self._open_object_in_design(kind, object_name)
-                obj = self._live_object(kind, object_name)
-                return work(obj)
-            except Exception as exc:
-                return on_error(exc)
-            finally:
-                try:
-                    close_ac = self._OBJECT_KINDS[kind]["close_ac"]
-                    self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, save_flag)
-                except Exception as exc:
-                    logger.debug("design-view close %s/%s failed: %s", kind, object_name, exc)
-                    pass
-
-        return self._dispatcher.call(_do)
+        return object_kinds._with_design_view(
+            self._dispatcher,
+            kind,
+            object_name,
+            save_flag=save_flag,
+            work=work,
+            on_error=on_error,
+            default=default,
+            open_object_in_design=object_kinds._open_object_in_design,
+            live_object=object_kinds._live_object,
+        )
 
     def _get_vb_project(self) -> Any:
         """Get the first VBA project via VBProjects enumeration.
@@ -294,26 +272,7 @@ class AccessAdapter:
 
     def _object_exists(self, kind: str, name: str) -> bool:
         """Check if an object of the given kind (form/report) exists."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                collection_name = self._OBJECT_KINDS[kind]["collection"]
-                all_objects = getattr(self._dispatcher.access_app.CurrentProject, collection_name)
-                for i in range(all_objects.Count):
-                    if all_objects(i).Name == name:
-                        return True
-            except Exception as exc:
-                logger.debug("object_exists %s/%s collection access failed: %s", kind, name, exc)
-                pass
-            return False
-
-        try:
-            return self._dispatcher.call(_do)
-        except Exception as exc:
-            logger.debug("object_exists %s/%s dispatcher failed: %s", kind, name, exc)
-            return False
+        return object_kinds._object_exists(self._dispatcher, kind, name)
 
     def form_exists(self, form_name: str) -> bool:
         """Check if a form exists."""
@@ -325,148 +284,51 @@ class AccessAdapter:
 
     def open_form(self, form_name: str) -> bool:
         """Open a form in Access (appears on the server desktop)."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                self._dispatcher.access_app.DoCmd.OpenForm(form_name)
-                return True
-            except Exception as exc:
-                self._log_object_failure("form", "open", form_name, exc)
-                return False
-
-        try:
-            return self._dispatcher.call(_do)
-        except Exception:
-            return False
+        return forms.open_form(self._dispatcher, form_name)
 
     def close_form(self, form_name: str) -> bool:
         """Close an open form without saving."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                self._dispatcher.access_app.DoCmd.Close(2, form_name, 2)  # acForm=2, acSaveNo=2
-                return True
-            except Exception as exc:
-                self._log_object_failure("form", "close", form_name, exc)
-                return False
-
-        try:
-            return self._dispatcher.call(_do)
-        except Exception:
-            return False
+        return forms.close_form(self._dispatcher, form_name)
 
     def _create_object(self, kind: str, object_name: str, record_source: str = "", template_name: str = "", properties: dict[str, Any] | None = None) -> bool:
         """Create a form or report via DoCmd.CreateForm/CreateReport."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                create_method = "CreateForm" if kind == "form" else "CreateReport"
-                obj = getattr(self._dispatcher.access_app.DoCmd, create_method)()
-                if record_source:
-                    try:
-                        obj.RecordSource = record_source
-                    except Exception as exc:
-                        logger.debug("create_%s: RecordSource %r rejected: %s", kind, record_source, exc)
-                if properties:
-                    for prop_name, value in properties.items():
-                        try:
-                            obj.Properties(prop_name).Value = value
-                        except Exception as exc:
-                            logger.warning("create_%s: property %s rejected: %s", kind, prop_name, exc)
-                self._dispatcher.access_app.DoCmd.Close(ac_type, obj.Name, 1)  # acSaveYes=1
-                return True
-            except Exception as exc:
-                self._log_object_failure(kind, "create", object_name, exc)
-                return False
-
-        return self._dispatcher.call(_do)
+        return object_kinds._create_object(
+            self._dispatcher,
+            kind,
+            object_name,
+            record_source,
+            template_name,
+            properties,
+            log_object_failure=self._log_object_failure,
+        )
 
     def _classify_object_failure(self, kind: str, operation: str, object_name: str, exc: BaseException) -> AccessObjectNotFoundError | AccessBackendError:
         """Classify a COM failure: object_name/0x8004 in message → not-found, else backend."""
-        if object_name in str(exc) or "0x8004" in str(exc):
-            return AccessObjectNotFoundError(kind, object_name)
-        return AccessBackendError(operation, object_name, str(exc))
+        return object_kinds._classify_object_failure(kind, operation, object_name, exc)
 
     def _log_object_failure(self, kind: str, operation: str, object_name: str, exc: BaseException) -> None:
         """Classify a COM failure and log it as a warning (for bool-collapsing operations)."""
-        error = self._classify_object_failure(kind, operation, object_name, exc)
-        logger.warning(
-            "%s %s '%s' failed: %s: %s",
-            operation,
-            kind,
-            object_name,
-            type(error).__name__,
-            error,
-        )
+        object_kinds._log_object_failure(kind, operation, object_name, exc)
 
     def _rename_object(self, kind: str, old_name: str, new_name: str) -> bool:
         """Rename a form or report via DoCmd.Rename."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                self._dispatcher.access_app.DoCmd.Rename(new_name, ac_type, old_name)
-                return True
-            except Exception as exc:
-                raise self._classify_object_failure(kind, "rename", old_name, exc) from exc
-
-        try:
-            return self._dispatcher.call(_do)
-        except (AccessObjectNotFoundError, AccessBackendError) as exc:
-            logger.warning(
-                "rename %s '%s' failed: %s: %s",
-                kind,
-                old_name,
-                type(exc).__name__,
-                exc,
-            )
-            return False
+        return object_kinds._rename_object(self._dispatcher, kind, old_name, new_name)
 
     def _delete_object(self, kind: str, object_name: str) -> bool:
         """Delete a form or report from the database."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                ac_type = self._OBJECT_KINDS[kind]["ac_type"]
-                self._dispatcher.access_app.DoCmd.DeleteObject(ac_type, object_name)
-                return True
-            except Exception as exc:
-                raise self._classify_object_failure(kind, "delete", object_name, exc) from exc
-
-        try:
-            return self._dispatcher.call(_do)
-        except (AccessObjectNotFoundError, AccessBackendError) as exc:
-            logger.warning(
-                "delete %s '%s' failed: %s: %s",
-                kind,
-                object_name,
-                type(exc).__name__,
-                exc,
-            )
-            return False
+        return object_kinds._delete_object(self._dispatcher, kind, object_name)
 
     def create_form(self, form_name: str, record_source: str = "", template_name: str = "", properties: dict[str, Any] | None = None) -> bool:
         """Create a new form via DoCmd.CreateForm, optionally setting RecordSource and properties."""
-        return self._create_object("form", form_name, record_source, template_name, properties)
+        return forms.create_form(self._dispatcher, form_name, record_source, template_name, properties, log_object_failure=self._log_object_failure)
 
     def rename_form(self, old_name: str, new_name: str) -> bool:
         """Rename a form via DoCmd.Rename with acForm=2."""
-        return self._rename_object("form", old_name, new_name)
+        return forms.rename_form(self._dispatcher, old_name, new_name)
 
     def delete_form(self, form_name: str) -> bool:
         """Delete a form from the database."""
-        return self._delete_object("form", form_name)
+        return forms.delete_form(self._dispatcher, form_name)
 
     def _get_object_properties(self, kind: str, object_name: str) -> dict[str, str]:
         """Get all properties of a form/report by opening it in design view."""
@@ -480,11 +342,11 @@ class AccessAdapter:
 
     def get_form_properties(self, form_name: str) -> dict[str, str]:
         """Get all properties of a form by opening it in design view."""
-        return self._get_object_properties("form", form_name)
+        return forms.get_form_properties(self._dispatcher, form_name)
 
     def get_report_properties(self, report_name: str) -> dict[str, str]:
         """Get all properties of a report by opening it in design view."""
-        return self._get_object_properties("report", report_name)
+        return reports.get_report_properties(self._dispatcher, report_name)
 
     def _set_object_property(self, kind: str, object_name: str, property_name: str, value: str) -> bool:
         """Set a single property of a form/report by opening it in design view."""
@@ -504,238 +366,81 @@ class AccessAdapter:
 
     def set_form_property(self, form_name: str, property_name: str, value: str) -> bool:
         """Set a single property of a form by opening it in design view."""
-        return self._set_object_property("form", form_name, property_name, value)
+        return forms.set_form_property(self._dispatcher, form_name, property_name, value, log_object_failure=self._log_object_failure)
 
     def _set_object_properties(self, kind: str, object_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form/report. Returns dict of {property_name: success}."""
-        def work_for_prop(prop_name: str, value: Any) -> bool:
-            def inner(obj):
-                if obj is None:
-                    return False
-                try:
-                    obj.Properties(prop_name).Value = value
-                    return True
-                except Exception:
-                    return False
-            return self._with_design_view(
-                kind, object_name,
-                save_flag=1,
-                work=inner,
-                on_error=lambda exc: self._log_object_failure(kind, "set_properties", object_name, exc) or False,
-                default=False,
-            )
-
-        results: dict[str, bool] = {}
-        for prop_name, value in properties.items():
-            results[prop_name] = work_for_prop(prop_name, value)
-        return results
+        if kind == "form":
+            return forms.set_form_properties(self._dispatcher, object_name, properties)
+        return reports.set_report_properties(self._dispatcher, object_name, properties)
 
     def set_form_properties(self, form_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form. Returns dict of {property_name: success}."""
-        return self._set_object_properties("form", form_name, properties)
+        return forms.set_form_properties(self._dispatcher, form_name, properties)
 
     def _get_object_controls(self, kind: str, object_name: str):
         """Get all controls in a form/report by opening it in design view."""
-        def work(obj):
-            if obj is None:
-                return []
-            controls = []
-            skipped_ctrls = 0
-            skipped_props = 0
-            for i in range(obj.Controls.Count):
-                try:
-                    ctrl = obj.Controls(i)
-                    ctrl_name = ctrl.Name
-                    ctrl_type_code = ctrl.ControlType
-                    ctrl_type = self._control_type_name(ctrl_type_code)
-
-                    props: dict[str, str] = {}
-                    for prop_name in ("Visible", "Enabled", "Left", "Top",
-                                      "Width", "Height", "Caption",
-                                      "ControlSource", "TabIndex"):
-                        try:
-                            val = ctrl.Properties(prop_name).Value
-                            if val is not None:
-                                props[prop_name] = str(val)
-                        except Exception:
-                            skipped_props += 1
-
-                    from ms_access_mcp.models import ControlInfo
-                    controls.append(ControlInfo(
-                        name=ctrl_name, type=ctrl_type, properties=props,
-                    ))
-                except Exception:
-                    skipped_ctrls += 1
-            if skipped_ctrls or skipped_props:
-                logger.debug("get_object_controls %s/%s: %d controls, %d properties skipped", kind, object_name, skipped_ctrls, skipped_props)
-            return controls
-
-        return self._with_design_view(
-            kind, object_name,
-            save_flag=2,
-            work=work,
-            on_error=lambda exc: [],
-            default=[],
-        )
+        if kind == "form":
+            return forms.get_form_controls(self._dispatcher, object_name)
+        return reports.get_report_controls(self._dispatcher, object_name)
 
     def get_form_controls(self, form_name: str):
         """Get all controls in a form by opening it in design view."""
-        return self._get_object_controls("form", form_name)
+        return forms.get_form_controls(self._dispatcher, form_name)
 
     def get_report_controls(self, report_name: str):
         """Get all controls in a report by opening it in design view."""
-        return self._get_object_controls("report", report_name)
+        return reports.get_report_controls(self._dispatcher, report_name)
 
     def _get_object_control_properties(self, kind: str, object_name: str, control_name: str) -> dict[str, str]:
         """Get all properties of a specific control by opening the form/report in design view."""
-        def work(obj):
-            if obj is None:
-                return {}
-            for i in range(obj.Controls.Count):
-                try:
-                    ctrl = obj.Controls(i)
-                    if ctrl.Name == control_name:
-                        return _props_to_dict(ctrl.Properties)
-                except Exception as exc:
-                    logger.debug("get_object_control_properties %s/%s control lookup failed: %s", kind, object_name, exc)
-                    pass
-            return {}
-
-        return self._with_design_view(
-            kind, object_name,
-            save_flag=2,
-            work=work,
-            on_error=lambda exc: {},
-            default={},
-        )
+        if kind == "form":
+            return forms.get_control_properties(self._dispatcher, object_name, control_name)
+        return reports.get_report_control_properties(self._dispatcher, object_name, control_name)
 
     def get_control_properties(self, form_name: str, control_name: str) -> dict[str, str]:
         """Get all properties of a specific control by opening the form in design view."""
-        return self._get_object_control_properties("form", form_name, control_name)
+        return forms.get_control_properties(self._dispatcher, form_name, control_name)
 
     def _set_object_control_property(self, kind: str, object_name: str, control_name: str, property_name: str, value: str) -> bool:
         """Set a property of a control by opening the form/report in design view."""
-        def work(obj):
-            if obj is None:
-                return False
-            for i in range(obj.Controls.Count):
-                try:
-                    ctrl = obj.Controls(i)
-                    if ctrl.Name == control_name:
-                        ctrl.Properties(property_name).Value = value
-                        return True
-                except Exception as exc:
-                    logger.debug("set_control_property %s[%s] %s failed: %s", object_name, control_name, property_name, exc)
-                    pass
-            return False
-
-        return self._with_design_view(
-            kind, object_name,
-            save_flag=1,
-            work=work,
-            on_error=lambda exc: self._log_object_failure(kind, "set_control_property", object_name, exc) or False,
-            default=False,
-        )
+        if kind == "form":
+            return forms.set_control_property(self._dispatcher, object_name, control_name, property_name, value)
+        return reports.set_report_control_property(self._dispatcher, object_name, control_name, property_name, value)
 
     def set_control_property(self, form_name: str, control_name: str, property_name: str, value: str) -> bool:
         """Set a property of a control by opening the form in design view."""
-        return self._set_object_control_property("form", form_name, control_name, property_name, value)
+        return forms.set_control_property(self._dispatcher, form_name, control_name, property_name, value)
 
     def _set_object_control_properties(self, kind: str, object_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form/report control. Returns dict of {property_name: success}."""
-        def work_for_prop(prop_name: str, value: Any) -> bool:
-            def inner(obj):
-                if obj is None:
-                    return False
-                skipped = 0
-                for i in range(obj.Controls.Count):
-                    try:
-                        ctrl = obj.Controls(i)
-                        if ctrl.Name == control_name:
-                            ctrl.Properties(prop_name).Value = value
-                            return True
-                    except Exception:
-                        skipped += 1
-                if skipped:
-                    logger.debug("set_control_properties %s/%s[%s]: %d controls skipped", kind, object_name, control_name, skipped)
-                return False
-
-            return self._with_design_view(
-                kind, object_name,
-                save_flag=1,
-                work=inner,
-                on_error=lambda exc: self._log_object_failure(kind, "set_control_properties", object_name, exc) or False,
-                default=False,
-            )
-
-        results: dict[str, bool] = {}
-        for prop_name, value in properties.items():
-            results[prop_name] = work_for_prop(prop_name, value)
-        return results
+        if kind == "form":
+            return forms.set_control_properties(self._dispatcher, object_name, control_name, properties)
+        return reports.set_report_control_properties(self._dispatcher, object_name, control_name, properties)
 
     def set_control_properties(self, form_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties at once. Returns dict of {property_name: success}."""
-        return self._set_object_control_properties("form", form_name, control_name, properties)
+        return forms.set_control_properties(self._dispatcher, form_name, control_name, properties)
 
     def _add_object_control(self, kind: str, object_name: str, control_type: str, control_name: str, section: int = 0, properties: dict[str, Any] | None = None) -> bool:
         """Add a control to a form/report by opening it in design view."""
-        def work(obj):
-            type_int = self._control_type_id(control_type)
-            if type_int == 0:
-                return False
-
-            ctrl = self._dispatcher.access_app.DoCmd.CreateControl(object_name, type_int, section)
-            ctrl.Name = control_name
-
-            if properties:
-                for prop_name, value in properties.items():
-                    try:
-                        ctrl.Properties(prop_name).Value = value
-                    except Exception as exc:
-                        logger.debug("add_object_control set property %s/%s[%s].%s failed: %s", kind, object_name, control_name, prop_name, exc)
-                        pass
-            return True
-
-        return self._with_design_view(
-            kind, object_name,
-            save_flag=1,
-            work=work,
-            on_error=lambda exc: self._log_object_failure(kind, "add_object_control", object_name, exc) or False,
-            default=False,
-        )
+        if kind == "form":
+            return forms.add_control(self._dispatcher, object_name, control_type, control_name, section, properties)
+        return reports.add_report_control(self._dispatcher, object_name, control_type, control_name, section, properties)
 
     def add_control(self, form_name: str, control_type: str, control_name: str, section: int = 0, properties: dict[str, Any] | None = None) -> bool:
         """Add a control to a form by opening it in design view."""
-        return self._add_object_control("form", form_name, control_type, control_name, section, properties)
+        return forms.add_control(self._dispatcher, form_name, control_type, control_name, section, properties)
 
     def _remove_object_control(self, kind: str, object_name: str, control_name: str) -> bool:
         """Remove a control from a form/report by opening it in design view."""
-        def work(obj):
-            if obj is None:
-                return False
-            for i in range(obj.Controls.Count):
-                try:
-                    ctrl = obj.Controls(i)
-                    if ctrl.Name == control_name:
-                        ctrl.SetFocus()
-                        self._dispatcher.access_app.DoCmd.RunCommand(365)  # acCmdDelete
-                        return True
-                except Exception as exc:
-                    logger.debug("remove_object_control %s/%s[%s] failed: %s", kind, object_name, control_name, exc)
-                    pass
-            return False
-
-        return self._with_design_view(
-            kind, object_name,
-            save_flag=2,
-            work=work,
-            on_error=lambda exc: self._log_object_failure(kind, "remove_object_control", object_name, exc) or False,
-            default=False,
-        )
+        if kind == "form":
+            return forms.remove_control(self._dispatcher, object_name, control_name)
+        return reports.remove_report_control(self._dispatcher, object_name, control_name)
 
     def remove_control(self, form_name: str, control_name: str) -> bool:
         """Remove a control from a form by opening it in design view."""
-        return self._remove_object_control("form", form_name, control_name)
+        return forms.remove_control(self._dispatcher, form_name, control_name)
 
     def get_control_event_procedures(self, form_name: str, control_name: str = "") -> list[dict]:
         """List event procedures for a specific control in a form."""
@@ -856,116 +561,51 @@ class AccessAdapter:
 
     def _get_object_sections(self, kind: str, object_name: str) -> list[dict]:
         """Get all sections of a form/report by opening it in design view."""
-        def work(obj):
-            if obj is None:
-                return []
-            sections: list[dict] = []
-            for i in range(5):
-                try:
-                    section = obj.Section(i)
-                    sections.append({
-                        "index": i,
-                        "name": str(section.Name),
-                        "section_type": self._section_name(i),
-                        "visible": bool(section.Visible),
-                        "height": int(section.Height),
-                    })
-                except Exception as exc:
-                    logger.debug("get_%s_sections %s section %s failed: %s", kind, object_name, i, exc)
-                    pass
-            return sections
-
-        return self._with_design_view(
-            kind, object_name,
-            save_flag=2,
-            work=work,
-            on_error=lambda exc: [],
-            default=[],
-        )
+        if kind == "form":
+            return forms.get_form_sections(self._dispatcher, object_name)
+        return reports.get_report_sections(self._dispatcher, object_name)
 
     def get_form_sections(self, form_name: str) -> list[dict]:
         """Get all sections of a form by opening it in design view."""
-        return self._get_object_sections("form", form_name)
+        return forms.get_form_sections(self._dispatcher, form_name)
 
     def get_report_sections(self, report_name: str) -> list[dict]:
         """Get all sections of a report by opening it in design view."""
-        return self._get_object_sections("report", report_name)
+        return reports.get_report_sections(self._dispatcher, report_name)
 
     def _get_object_section_properties(self, kind: str, object_name: str, section_id: int) -> dict[str, str]:
         """Get all properties of a specific section by opening the form/report in design view."""
-        def work(obj):
-            if obj is not None:
-                section = obj.Section(section_id)
-                return _props_to_dict(section.Properties)
-            return {}
-
-        return self._with_design_view(
-            kind, object_name,
-            save_flag=2,
-            work=work,
-            on_error=lambda exc: {},
-            default={},
-        )
+        if kind == "form":
+            return forms.get_form_section_properties(self._dispatcher, object_name, section_id)
+        return reports.get_report_section_properties(self._dispatcher, object_name, section_id)
 
     def get_form_section_properties(self, form_name: str, section_id: int) -> dict[str, str]:
         """Get all properties of a specific section by opening the form in design view."""
-        return self._get_object_section_properties("form", form_name, section_id)
+        return forms.get_form_section_properties(self._dispatcher, form_name, section_id)
 
     def get_report_section_properties(self, report_name: str, section_id: int) -> dict[str, str]:
         """Get all properties of a specific section by opening the report in design view."""
-        return self._get_object_section_properties("report", report_name, section_id)
+        return reports.get_report_section_properties(self._dispatcher, report_name, section_id)
 
     def _set_object_section_property(self, kind: str, object_name: str, section_id: int, property_name: str, value: str) -> bool:
         """Set a single property of a form/report section by opening it in design view."""
-        def work(obj):
-            if obj is None:
-                return False
-            section = obj.Section(section_id)
-            section.Properties(property_name).Value = value
-            return True
-
-        return self._with_design_view(
-            kind, object_name,
-            save_flag=1,
-            work=work,
-            on_error=lambda exc: self._log_object_failure(kind, "set_section_property", object_name, exc) or False,
-            default=False,
-        )
+        if kind == "form":
+            return forms.set_form_section_property(self._dispatcher, object_name, section_id, property_name, value)
+        return reports.set_report_section_property(self._dispatcher, object_name, section_id, property_name, value)
 
     def set_form_section_property(self, form_name: str, section_id: int, property_name: str, value: str) -> bool:
         """Set a single property of a form section by opening the form in design view."""
-        return self._set_object_section_property("form", form_name, section_id, property_name, value)
+        return forms.set_form_section_property(self._dispatcher, form_name, section_id, property_name, value)
 
     def _set_object_section_properties(self, kind: str, object_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form/report section. Returns dict of {property_name: success}."""
-        def work_for_prop(prop_name: str, value: Any) -> bool:
-            def inner(obj):
-                if obj is None:
-                    return False
-                try:
-                    section = obj.Section(section_id)
-                    section.Properties(prop_name).Value = value
-                    return True
-                except Exception as exc:
-                    logger.debug("set_section_property %s/%s[%s].%s failed: %s", kind, object_name, section_id, prop_name, exc)
-                    return False
-
-            return self._with_design_view(
-                kind, object_name,
-                save_flag=1,
-                work=inner,
-                on_error=lambda exc: self._log_object_failure(kind, "set_section_properties", object_name, exc) or False,
-                default=False,
-            )
-
-        results: dict[str, bool] = {}
-        for prop_name, value in properties.items():
-            results[prop_name] = work_for_prop(prop_name, value)
-        return results
+        if kind == "form":
+            return forms.set_form_section_properties(self._dispatcher, object_name, section_id, properties)
+        return reports.set_report_section_properties(self._dispatcher, object_name, section_id, properties)
 
     def set_form_section_properties(self, form_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a form section. Returns dict of {property_name: success}."""
-        return self._set_object_section_properties("form", form_name, section_id, properties)
+        return forms.set_form_section_properties(self._dispatcher, form_name, section_id, properties)
 
     def export_table_to_xlsx(self, table_or_query: str, target_path: str) -> int:
         """Export a table or query to an xlsx file via DoCmd.TransferSpreadsheet.
@@ -1007,23 +647,11 @@ class AccessAdapter:
 
     def export_form_to_text(self, form_name: str) -> str:
         """Export a form to text representation via SaveAsText."""
-        if not self._dispatcher._started:
-            return ""
-
-        def _do() -> str:
-            return self._save_object_to_text(2, form_name)
-
-        return self._dispatcher.call(_do)
+        return forms.export_form_to_text(self._dispatcher, form_name, save_object_to_text=self._save_object_to_text)
 
     def import_form_from_text(self, form_name: str, form_data: str) -> bool:
         """Import a form from text data via LoadFromText."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            return self._load_object_from_text(2, form_name, form_data)
-
-        return self._dispatcher.call(_do)
+        return forms.import_form_from_text(self._dispatcher, form_name, form_data, load_object_from_text=self._load_object_from_text)
 
     # ------------------------------------------------------------------ #
     # Report operations
@@ -1031,71 +659,59 @@ class AccessAdapter:
 
     def create_report(self, report_name: str, record_source: str = "", template_name: str = "", properties: dict[str, Any] | None = None) -> bool:
         """Create a new report via DoCmd.CreateReport, optionally setting RecordSource and properties."""
-        return self._create_object("report", report_name, record_source, template_name, properties)
+        return reports.create_report(self._dispatcher, report_name, record_source, template_name, properties, log_object_failure=self._log_object_failure)
 
     def rename_report(self, old_name: str, new_name: str) -> bool:
         """Rename a report via DoCmd.Rename with acReport=4."""
-        return self._rename_object("report", old_name, new_name)
+        return reports.rename_report(self._dispatcher, old_name, new_name)
 
     def delete_report(self, report_name: str) -> bool:
         """Delete a report from the database."""
-        return self._delete_object("report", report_name)
+        return reports.delete_report(self._dispatcher, report_name)
 
     def set_report_property(self, report_name: str, property_name: str, value: str) -> bool:
         """Set a single property of a report by opening it in design view."""
-        return self._set_object_property("report", report_name, property_name, value)
+        return reports.set_report_property(self._dispatcher, report_name, property_name, value, log_object_failure=self._log_object_failure)
 
     def set_report_properties(self, report_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a report. Returns dict of {property_name: success}."""
-        return self._set_object_properties("report", report_name, properties)
+        return reports.set_report_properties(self._dispatcher, report_name, properties)
 
     def get_report_control_properties(self, report_name: str, control_name: str) -> dict[str, str]:
         """Get all properties of a specific control by opening the report in design view."""
-        return self._get_object_control_properties("report", report_name, control_name)
+        return reports.get_report_control_properties(self._dispatcher, report_name, control_name)
 
     def set_report_control_property(self, report_name: str, control_name: str, property_name: str, value: str) -> bool:
         """Set a property of a control by opening the report in design view."""
-        return self._set_object_control_property("report", report_name, control_name, property_name, value)
+        return reports.set_report_control_property(self._dispatcher, report_name, control_name, property_name, value)
 
     def set_report_control_properties(self, report_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a report control. Returns dict of {property_name: success}."""
-        return self._set_object_control_properties("report", report_name, control_name, properties)
+        return reports.set_report_control_properties(self._dispatcher, report_name, control_name, properties)
 
     def add_report_control(self, report_name: str, control_type: str, control_name: str, section: int = 0, properties: dict[str, Any] | None = None) -> bool:
         """Add a control to a report by opening it in design view."""
-        return self._add_object_control("report", report_name, control_type, control_name, section, properties)
+        return reports.add_report_control(self._dispatcher, report_name, control_type, control_name, section, properties)
 
     def remove_report_control(self, report_name: str, control_name: str) -> bool:
         """Remove a control from a report by opening it in design view."""
-        return self._remove_object_control("report", report_name, control_name)
+        return reports.remove_report_control(self._dispatcher, report_name, control_name)
 
     def set_report_section_property(self, report_name: str, section_id: int, property_name: str, value: str) -> bool:
         """Set a single property of a report section by opening the report in design view."""
-        return self._set_object_section_property("report", report_name, section_id, property_name, value)
+        return reports.set_report_section_property(self._dispatcher, report_name, section_id, property_name, value)
 
     def set_report_section_properties(self, report_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:
         """Set multiple properties of a report section. Returns dict of {property_name: success}."""
-        return self._set_object_section_properties("report", report_name, section_id, properties)
+        return reports.set_report_section_properties(self._dispatcher, report_name, section_id, properties)
 
     def export_report_to_text(self, report_name: str) -> str:
         """Export a report to text representation via SaveAsText."""
-        if not self._dispatcher._started:
-            return ""
-
-        def _do() -> str:
-            return self._save_object_to_text(4, report_name)
-
-        return self._dispatcher.call(_do)
+        return reports.export_report_to_text(self._dispatcher, report_name, save_object_to_text=self._save_object_to_text)
 
     def import_report_from_text(self, report_name: str, report_data: str) -> bool:
         """Import a report from text data via LoadFromText."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            return self._load_object_from_text(4, report_name, report_data)
-
-        return self._dispatcher.call(_do)
+        return reports.import_report_from_text(self._dispatcher, report_name, report_data, load_object_from_text=self._load_object_from_text)
 
     # ------------------------------------------------------------------ #
     # Macro operations
@@ -1103,158 +719,31 @@ class AccessAdapter:
 
     def get_macros(self):
         """Get all macros in the database."""
-        if not self._dispatcher._started:
-            return []
-
-        def _do():
-            macros = []
-            try:
-                all_macros = self._dispatcher.access_app.CurrentProject.AllMacros
-                for i in range(all_macros.Count):
-                    macro_obj = all_macros(i)
-                    try:
-                        date_created = ""
-                        date_modified = ""
-                        try:
-                            if macro_obj.Properties.Exists("DateCreated"):
-                                date_created = str(macro_obj.Properties("DateCreated"))
-                        except Exception as exc:
-                            logger.debug("get_macros %s DateCreated failed: %s", macro_obj.Name, exc)
-                            pass
-                        try:
-                            if macro_obj.Properties.Exists("DateModified"):
-                                date_modified = str(macro_obj.Properties("DateModified"))
-                        except Exception as exc:
-                            logger.debug("get_macros %s DateModified failed: %s", macro_obj.Name, exc)
-                            pass
-                        from ms_access_mcp.models import MacroInfo
-                        macros.append(MacroInfo(
-                            name=macro_obj.Name,
-                            type="Macro",
-                            date_created=date_created,
-                            date_modified=date_modified,
-                        ))
-                    except Exception as exc:
-                        logger.debug("get_macros %s processing failed: %s", macro_obj.Name, exc)
-                        pass
-            except Exception as exc:
-                logger.debug("get_macros AllMacros collection access failed: %s", exc)
-                pass
-            return macros
-
-        try:
-            return self._dispatcher.call(_do)
-        except Exception:
-            return []
+        return macros.get_macros(self._dispatcher)
 
     def macro_exists(self, macro_name: str) -> bool:
         """Check if a macro exists."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                all_macros = self._dispatcher.access_app.CurrentProject.AllMacros
-                for i in range(all_macros.Count):
-                    try:
-                        if all_macros(i).Name == macro_name:
-                            return True
-                    except Exception as exc:
-                        logger.debug("macro_exists %s AllMacros(%s) failed: %s", macro_name, i, exc)
-                        pass
-            except Exception as exc:
-                logger.debug("macro_exists %s collection access failed: %s", macro_name, exc)
-                pass
-            return False
-
-        return self._dispatcher.call(_do)
+        return macros.macro_exists(self._dispatcher, macro_name)
 
     def create_macro(self, macro_name: str) -> bool:
         """Create an empty macro via LoadFromText using a minimal XML template."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                xml = _MACRO_TEMPLATE.replace("TemplateMacro", macro_name)
-                return self._load_object_from_text(8, macro_name, xml)
-            except Exception:
-                return False
-
-        return self._dispatcher.call(_do)
+        return macros.create_macro(self._dispatcher, macro_name, load_object_from_text=self._load_object_from_text)
 
     def rename_macro(self, old_name: str, new_name: str) -> bool:
         """Rename a macro via DoCmd.Rename with acMacro=8."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                self._dispatcher.access_app.DoCmd.Rename(new_name, 8, old_name)
-                return True
-            except Exception as exc:
-                logger.debug("rename_macro %s->%s failed: %s", old_name, new_name, exc)
-                return False
-
-        return self._dispatcher.call(_do)
+        return macros.rename_macro(self._dispatcher, old_name, new_name)
 
     def delete_macro(self, macro_name: str) -> bool:
         """Delete a macro via DoCmd.DeleteObject with acMacro=8."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                self._dispatcher.access_app.DoCmd.DeleteObject(8, macro_name)
-                return True
-            except Exception as exc:
-                logger.debug("delete_macro %s failed: %s", macro_name, exc)
-                return False
-
-        return self._dispatcher.call(_do)
+        return macros.delete_macro(self._dispatcher, macro_name)
 
     def run_macro(self, macro_name: str) -> bool:
         """Execute a macro via DoCmd.RunMacro."""
-        if not self._dispatcher._started:
-            return False
-
-        def _do() -> bool:
-            try:
-                self._dispatcher.access_app.DoCmd.RunMacro(macro_name)
-                return True
-            except Exception as exc:
-                logger.debug("run_macro %s failed: %s", macro_name, exc)
-                return False
-
-        return self._dispatcher.call(_do)
+        return macros.run_macro(self._dispatcher, macro_name)
 
     def get_macro_properties(self, macro_name: str) -> dict[str, str]:
         """Get all properties of a macro by reading its AccessObject Properties collection."""
-        if not self._dispatcher._started:
-            return {}
-
-        def _do() -> dict[str, str]:
-            try:
-                all_macros = self._dispatcher.access_app.CurrentProject.AllMacros
-                for i in range(all_macros.Count):
-                    macro_obj = all_macros(i)
-                    if macro_obj.Name == macro_name:
-                        props: dict[str, str] = {}
-                        skipped_props = 0
-                        for prop in macro_obj.Properties:
-                            try:
-                                props[prop.Name] = str(prop.Value)
-                            except Exception:
-                                skipped_props += 1
-                        if skipped_props:
-                            logger.debug("get_macro_properties %s: %d property failures skipped", macro_name, skipped_props)
-                        return props
-            except Exception as exc:
-                logger.debug("get_macro_properties %s failed: %s", macro_name, exc)
-                pass
-            return {}
-
-        return self._dispatcher.call(_do)
+        return macros.get_macro_properties(self._dispatcher, macro_name)
 
     # ------------------------------------------------------------------ #
     # VBA operations
@@ -1264,13 +753,8 @@ class AccessAdapter:
         """Get the VBA project name from COM."""
         if not self._dispatcher._started:
             return ""
-
-        def _do() -> str:
-            vb_project = self._get_vb_project()
-            return vb_project.Name if vb_project else ""
-
         try:
-            return self._dispatcher.call(_do)
+            return self._dispatcher.call(lambda: vba.get_vba_project_name(self._dispatcher.access_app))
         except Exception as exc:
             logger.debug("get_vba_project_name dispatcher failed: %s", exc)
             return ""
@@ -1279,36 +763,8 @@ class AccessAdapter:
         """Get all VBA modules in the database."""
         if not self._dispatcher._started:
             return []
-
-        def _do():
-            modules = []
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return []
-            skipped = 0
-            try:
-                for comp in vb_project.VBComponents:
-                    try:
-                        code = ""
-                        if comp.Type == 1:
-                            code = comp.CodeModule.Lines(1, comp.CodeModule.CountOfLines)
-                        from ms_access_mcp.models import ModuleInfo
-                        modules.append(ModuleInfo(
-                            name=comp.Name,
-                            type="Standard Module" if comp.Type == 1 else "Class Module",
-                            code=code,
-                        ))
-                    except Exception:
-                        skipped += 1
-            except Exception as exc:
-                logger.debug("get_modules VBComponents collection failed: %s", exc)
-                pass
-            if skipped:
-                logger.debug("get_modules: %d components skipped", skipped)
-            return modules
-
         try:
-            return self._dispatcher.call(_do)
+            return self._dispatcher.call(lambda: vba.get_modules(self._dispatcher.access_app))
         except Exception as exc:
             logger.debug("get_modules dispatcher failed: %s", exc)
             return []
@@ -1317,24 +773,7 @@ class AccessAdapter:
         """Get VBA code from a module."""
         if not self._dispatcher._started:
             return ""
-
-        def _do() -> str:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return ""
-            try:
-                for comp in vb_project.VBComponents:
-                    if comp.Name == module_name:
-                        lines = comp.CodeModule.CountOfLines
-                        if lines > 0:
-                            return comp.CodeModule.Lines(1, lines)
-                        return ""
-            except Exception as exc:
-                logger.debug("get_vba_code %s failed: %s", module_name, exc)
-                pass
-            return ""
-
-        return self._dispatcher.call(_do)
+        return self._dispatcher.call(lambda: vba.get_vba_code(self._dispatcher.access_app, module_name))
 
     def set_vba_code(self, module_name: str, code: str) -> bool:
         """Set VBA code in a module.
@@ -1346,34 +785,12 @@ class AccessAdapter:
             return False
 
         def _do() -> bool:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return False
-            try:
-                target_module = None
-                for mod in vb_project.VBComponents:
-                    if mod.Name == module_name:
-                        target_module = mod
-                        break
-
-                if target_module is None:
-                    # New module: use LoadFromText
-                    text_data = f"Attribute VB_Name = \"{module_name}\"\r\n{code}"
-                    return self._load_object_from_text(5, module_name, text_data)
-                else:
-                    # Existing module: clear and repopulate in-memory
-                    try:
-                        target_module.CodeModule.DeleteLines(
-                            1, target_module.CodeModule.CountOfLines
-                        )
-                        target_module.CodeModule.AddFromString(code)
-                        return True
-                    except Exception as exc:
-                        logger.debug("set_vba_code %s repopulate failed: %s", module_name, exc)
-                        return False
-            except Exception as exc:
-                logger.debug("set_vba_code %s failed: %s", module_name, exc)
-                return False
+            return vba.set_vba_code(
+                self._dispatcher.access_app,
+                module_name,
+                code,
+                load_object_from_text_fn=self._load_object_from_text,
+            )
 
         return self._dispatcher.call(self._trusted_locations_wrap, _do)
 
@@ -1387,25 +804,13 @@ class AccessAdapter:
             return False
 
         def _do() -> bool:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return False
-            try:
-                target_module = None
-                for comp in vb_project.VBComponents:
-                    if comp.Name == module_name:
-                        target_module = comp
-                        break
-                if target_module is None:
-                    # New module: use LoadFromText
-                    text_data = f"Attribute VB_Name = \"{module_name}\"\r\n{code}"
-                    return self._load_object_from_text(5, module_name, text_data)
-                else:
-                    target_module.CodeModule.AddFromString(code)
-                    return True
-            except Exception as exc:
-                logger.debug("add_vba_procedure %s.%s failed: %s", module_name, procedure_name, exc)
-                return False
+            return vba.add_vba_procedure(
+                self._dispatcher.access_app,
+                module_name,
+                procedure_name,
+                code,
+                load_object_from_text_fn=self._load_object_from_text,
+            )
 
         return self._dispatcher.call(self._trusted_locations_wrap, _do)
 
@@ -1413,140 +818,41 @@ class AccessAdapter:
         """Delete a VBA module from the database."""
         if not self._dispatcher._started:
             return False
-
-        def _do() -> bool:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return False
-            try:
-                for comp in vb_project.VBComponents:
-                    if comp.Name == module_name:
-                        vb_project.VBComponents.Remove(comp)
-                        return True
-                return False
-            except Exception as exc:
-                logger.debug("delete_module %s failed: %s", module_name, exc)
-                return False
-
-        return self._dispatcher.call(_do)
+        return self._dispatcher.call(lambda: vba.delete_module(self._dispatcher.access_app, module_name))
 
     def create_module(self, module_name: str, module_type: int = 1) -> bool:
-        """Create a new VBA module in the database.
-
-        Args:
-            module_name: Name for the new module
-            module_type: vbext_ComponentType — 1 = standard module, 2 = class module
-
-        """
+        """Create a new VBA module in the database."""
         if not self._dispatcher._started:
             return False
-
-        def _do() -> bool:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return False
-            try:
-                comp = vb_project.VBComponents.Add(module_type)
-                comp.Name = module_name
-                return True
-            except Exception as exc:
-                logger.debug("create_module %s failed: %s", module_name, exc)
-                return False
-
-        return self._dispatcher.call(_do)
+        return self._dispatcher.call(lambda: vba.create_module(self._dispatcher.access_app, module_name, module_type))
 
     def rename_module(self, old_name: str, new_name: str) -> bool:
         """Rename an existing VBA module."""
         if not self._dispatcher._started:
             return False
-
-        def _do() -> bool:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return False
-            try:
-                for comp in vb_project.VBComponents:
-                    if comp.Name == old_name:
-                        comp.Name = new_name
-                        return True
-                return False
-            except Exception as exc:
-                logger.debug("rename_module %s->%s failed: %s", old_name, new_name, exc)
-                return False
-
-        return self._dispatcher.call(_do)
+        return self._dispatcher.call(lambda: vba.rename_module(self._dispatcher.access_app, old_name, new_name))
 
     def module_exists(self, module_name: str) -> bool:
-        """Check if a VBA module exists in the database.
-
-        Uses CurrentProject.AllModules (0-based DAO collection).
-        """
+        """Check if a VBA module exists in the database."""
         if not self._dispatcher._started:
             return False
-
-        def _do() -> bool:
-            try:
-                for i in range(self._dispatcher.access_app.CurrentProject.AllModules.Count):
-                    mod = self._dispatcher.access_app.CurrentProject.AllModules(i)
-                    if mod.Name == module_name:
-                        return True
-            except Exception as exc:
-                logger.debug("module_exists %s failed: %s", module_name, exc)
-                return False
-            return False
-
-        return self._dispatcher.call(_do)
+        return self._dispatcher.call(lambda: vba.module_exists(self._dispatcher.access_app, module_name))
 
     def save_database(self) -> dict:
-        """Save all VBA modules and database changes.
-
-        Returns:
-            dict with success=True on success, error message on failure
-
-        """
+        """Save all VBA modules and database changes."""
         if not self._dispatcher._started:
             return {"success": False, "error": "Not connected"}
-
-        def _do() -> dict:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return {"success": False, "error": "No VBA project"}
-            app = self._dispatcher.access_app
-            saved = 0
-            errors = []
-            try:
-                for comp in vb_project.VBComponents:
-                    if comp.Type == 1:  # vbext_ct_StdModule
-                        try:
-                            app.DoCmd.Save(5, comp.Name)  # 5 = acModule
-                            saved += 1
-                        except Exception as e:
-                            errors.append(f"{comp.Name}: {e}")
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-            return {
-                "success": True,
-                "saved_modules": saved,
-                "errors": errors,
-            }
-
-        return self._dispatcher.call(_do)
+        return self._dispatcher.call(lambda: vba.save_database(self._dispatcher.access_app))
 
     def compile_vba(self) -> dict:
         """Compile VBA code.
 
         Tries known DoCmd.RunCommand constants for VBA compilation.
         Starts _dialog_killer daemon thread and stops it before returning.
-
-        Returns:
-            dict with success=True on success
-            dict with success=False and error message on failure
-
         """
         if not self._dispatcher._started:
             return {"success": False, "error": "Not connected"}
 
-        # Fetch VB project via adapter method (allows test patches to work)
         vb_project = self._get_vb_project()
 
         def _do() -> dict:
@@ -1565,103 +871,29 @@ class AccessAdapter:
             return {"success": False, "error": str(e)}
 
     def vba_list_procedures(self, module_name: str) -> list[dict]:
-        """List all procedures in a module with name, type, line info.
-
-        Returns:
-            List of dicts with keys: name, type ("Sub"|"Function"|"Property"),
-            start_line, line_count
-
-        """
+        """List all procedures in a module with name, type, line info."""
         if not self._dispatcher._started:
             return []
-
-        def _do() -> list[dict]:
+        try:
             vb_project = self._get_vb_project()
-            if vb_project is None:
-                return []
-            try:
-                return vba.list_procedures(self._dispatcher.access_app, vb_project, module_name)
-            except Exception as exc:
-                logger.debug("list procedures %s failed: %s", module_name, exc)
-                return []
-
-        return self._dispatcher.call(_do)
+            return self._dispatcher.call(lambda: vba.list_procedures(self._dispatcher.access_app, vb_project, module_name))
+        except Exception as exc:
+            logger.debug("list procedures %s failed: %s", module_name, exc)
+            return []
 
     def vba_get_procedure(self, module_name: str, procedure_name: str) -> dict:
-        """Get full source code of a specific procedure.
-
-        Returns:
-            dict with keys: name, type, code, signature
-
-        """
+        """Get full source code of a specific procedure."""
         if not self._dispatcher._started:
             return {}
-
-        def _do() -> dict:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return {}
-            try:
-                target_module = None
-                for comp in vb_project.VBComponents:
-                    if comp.Name == module_name:
-                        target_module = comp.CodeModule
-                        break
-                if target_module is None:
-                    return {}
-
-                start_line = target_module.ProcStartLine(procedure_name, 0)
-                line_count = target_module.ProcCountLines(procedure_name, 0)
-                code = target_module.Lines(start_line, line_count)
-
-                lines = code.split("\n")
-                signature = lines[0] if lines else ""
-
-                proc_kind = target_module.ProcKind(start_line, 0)
-                proc_type = {0: "Sub", 1: "Function", 2: "Property"}.get(proc_kind, "Sub")
-
-                return {
-                    "name": procedure_name,
-                    "type": proc_type,
-                    "code": code,
-                    "signature": signature,
-                }
-            except Exception as exc:
-                logger.debug("vba_get_procedure %s.%s failed: %s", module_name, procedure_name, exc)
-                return {}
-
-        return self._dispatcher.call(_do)
+        return self._dispatcher.call(lambda: vba.vba_get_procedure(self._dispatcher.access_app, module_name, procedure_name))
 
     def vba_replace_procedure(self, module_name: str, procedure_name: str, new_code: str) -> bool:
-        """Replace a procedure's body with new code (preserves signature).
-
-        Deletes the old procedure lines and inserts new code at the same position.
-        """
+        """Replace a procedure's body with new code (preserves signature)."""
         if not self._dispatcher._started:
             return False
 
         def _do() -> bool:
-            vb_project = self._get_vb_project()
-            if vb_project is None:
-                return False
-            try:
-                target_module = None
-                for comp in vb_project.VBComponents:
-                    if comp.Name == module_name:
-                        target_module = comp.CodeModule
-                        break
-                if target_module is None:
-                    return False
-
-                start_line = target_module.ProcStartLine(procedure_name, 0)
-                line_count = target_module.ProcCountLines(procedure_name, 0)
-
-                target_module.DeleteLines(start_line, line_count)
-                target_module.InsertLines(start_line, new_code)
-                return True
-            except Exception as exc:
-                logger.debug("vba_replace_procedure %s.%s failed: %s", module_name, procedure_name, exc)
-                return False
+            return vba.vba_replace_procedure(self._dispatcher.access_app, module_name, procedure_name, new_code)
 
         return self._dispatcher.call(self._trusted_locations_wrap, _do)
 

@@ -206,3 +206,300 @@ def compile_vba(
     finally:
         dismissed.set()
         killer_thread.join(timeout=2.0)
+
+
+def get_vba_project_name(access_app: Any) -> str:
+    """Get the VBA project name from COM."""
+    vb_project = get_vb_project(access_app)
+    return vb_project.Name if vb_project else ""
+
+
+def get_modules(access_app: Any) -> list:
+    """Get all VBA modules in the database."""
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return []
+    modules = []
+    skipped = 0
+    try:
+        for comp in vb_project.VBComponents:
+            try:
+                code = ""
+                if comp.Type == 1:
+                    code = comp.CodeModule.Lines(1, comp.CodeModule.CountOfLines)
+                from ms_access_mcp.models import ModuleInfo
+                modules.append(ModuleInfo(
+                    name=comp.Name,
+                    type="Standard Module" if comp.Type == 1 else "Class Module",
+                    code=code,
+                ))
+            except Exception:
+                skipped += 1
+    except Exception as exc:
+        logger.debug("get_modules VBComponents collection failed: %s", exc)
+        pass
+    if skipped:
+        logger.debug("get_modules: %d components skipped", skipped)
+    return modules
+
+
+def get_vba_code(access_app: Any, module_name: str) -> str:
+    """Get VBA code from a module."""
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return ""
+    try:
+        for comp in vb_project.VBComponents:
+            if comp.Name == module_name:
+                lines = comp.CodeModule.CountOfLines
+                if lines > 0:
+                    return comp.CodeModule.Lines(1, lines)
+                return ""
+    except Exception as exc:
+        logger.debug("get_vba_code %s failed: %s", module_name, exc)
+        pass
+    return ""
+
+
+def set_vba_code(
+    access_app: Any,
+    module_name: str,
+    code: str,
+    load_object_from_text_fn: Any = None,
+) -> bool:
+    """Set VBA code in a module.
+
+    For non-existent modules: uses LoadFromText.
+    For existing modules: uses DeleteLines + AddFromString.
+    """
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return False
+    try:
+        target_module = None
+        for mod in vb_project.VBComponents:
+            if mod.Name == module_name:
+                target_module = mod
+                break
+
+        if target_module is None:
+            # New module: use LoadFromText
+            text_data = f"Attribute VB_Name = \"{module_name}\"\r\n{code}"
+            if load_object_from_text_fn:
+                return load_object_from_text_fn(5, module_name, text_data)
+            return False
+        else:
+            # Existing module: clear and repopulate in-memory
+            try:
+                target_module.CodeModule.DeleteLines(
+                    1, target_module.CodeModule.CountOfLines
+                )
+                target_module.CodeModule.AddFromString(code)
+                return True
+            except Exception as exc:
+                logger.debug("set_vba_code %s repopulate failed: %s", module_name, exc)
+                return False
+    except Exception as exc:
+        logger.debug("set_vba_code %s failed: %s", module_name, exc)
+        return False
+
+
+def add_vba_procedure(
+    access_app: Any,
+    module_name: str,
+    procedure_name: str,
+    code: str,
+    load_object_from_text_fn: Any = None,
+) -> bool:
+    """Add a VBA procedure to a module.
+
+    For non-existent modules: uses LoadFromText.
+    For existing modules: appends via AddFromString.
+    """
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return False
+    try:
+        target_module = None
+        for comp in vb_project.VBComponents:
+            if comp.Name == module_name:
+                target_module = comp
+                break
+        if target_module is None:
+            # New module: use LoadFromText
+            text_data = f"Attribute VB_Name = \"{module_name}\"\r\n{code}"
+            if load_object_from_text_fn:
+                return load_object_from_text_fn(5, module_name, text_data)
+            return False
+        else:
+            target_module.CodeModule.AddFromString(code)
+            return True
+    except Exception as exc:
+        logger.debug("add_vba_procedure %s.%s failed: %s", module_name, procedure_name, exc)
+        return False
+
+
+def delete_module(access_app: Any, module_name: str) -> bool:
+    """Delete a VBA module from the database."""
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return False
+    try:
+        for comp in vb_project.VBComponents:
+            if comp.Name == module_name:
+                vb_project.VBComponents.Remove(comp)
+                return True
+        return False
+    except Exception as exc:
+        logger.debug("delete_module %s failed: %s", module_name, exc)
+        return False
+
+
+def create_module(access_app: Any, module_name: str, module_type: int = 1) -> bool:
+    """Create a new VBA module in the database.
+
+    Args:
+        access_app: The Access COM application object.
+        module_name: Name for the new module.
+        module_type: vbext_ComponentType — 1 = standard module, 2 = class module.
+
+    """
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return False
+    try:
+        comp = vb_project.VBComponents.Add(module_type)
+        comp.Name = module_name
+        return True
+    except Exception as exc:
+        logger.debug("create_module %s failed: %s", module_name, exc)
+        return False
+
+
+def rename_module(access_app: Any, old_name: str, new_name: str) -> bool:
+    """Rename an existing VBA module."""
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return False
+    try:
+        for comp in vb_project.VBComponents:
+            if comp.Name == old_name:
+                comp.Name = new_name
+                return True
+        return False
+    except Exception as exc:
+        logger.debug("rename_module %s->%s failed: %s", old_name, new_name, exc)
+        return False
+
+
+def module_exists(access_app: Any, module_name: str) -> bool:
+    """Check if a VBA module exists in the database.
+
+    Uses CurrentProject.AllModules (0-based DAO collection).
+    """
+    try:
+        for i in range(access_app.CurrentProject.AllModules.Count):
+            mod = access_app.CurrentProject.AllModules(i)
+            if mod.Name == module_name:
+                return True
+    except Exception as exc:
+        logger.debug("module_exists %s failed: %s", module_name, exc)
+        return False
+    return False
+
+
+def save_database(access_app: Any) -> dict:
+    """Save all VBA modules and database changes.
+
+    Returns:
+        dict with success=True on success, error message on failure.
+
+    """
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return {"success": False, "error": "No VBA project"}
+    saved = 0
+    errors = []
+    try:
+        for comp in vb_project.VBComponents:
+            if comp.Type == 1:  # vbext_ct_StdModule
+                try:
+                    access_app.DoCmd.Save(5, comp.Name)  # 5 = acModule
+                    saved += 1
+                except Exception as e:
+                    errors.append(f"{comp.Name}: {e}")
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    return {
+        "success": True,
+        "saved_modules": saved,
+        "errors": errors,
+    }
+
+
+def vba_get_procedure(access_app: Any, module_name: str, procedure_name: str) -> dict:
+    """Get full source code of a specific procedure.
+
+    Returns:
+        dict with keys: name, type, code, signature.
+
+    """
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return {}
+    try:
+        target_module = None
+        for comp in vb_project.VBComponents:
+            if comp.Name == module_name:
+                target_module = comp.CodeModule
+                break
+        if target_module is None:
+            return {}
+
+        start_line = target_module.ProcStartLine(procedure_name, 0)
+        line_count = target_module.ProcCountLines(procedure_name, 0)
+        code = target_module.Lines(start_line, line_count)
+
+        lines = code.split("\n")
+        signature = lines[0] if lines else ""
+
+        proc_kind = target_module.ProcKind(start_line, 0)
+        proc_type = {0: "Sub", 1: "Function", 2: "Property"}.get(proc_kind, "Sub")
+
+        return {
+            "name": procedure_name,
+            "type": proc_type,
+            "code": code,
+            "signature": signature,
+        }
+    except Exception as exc:
+        logger.debug("vba_get_procedure %s.%s failed: %s", module_name, procedure_name, exc)
+        return {}
+
+
+def vba_replace_procedure(access_app: Any, module_name: str, procedure_name: str, new_code: str) -> bool:
+    """Replace a procedure's body with new code (preserves signature).
+
+    Deletes the old procedure lines and inserts new code at the same position.
+    """
+    vb_project = get_vb_project(access_app)
+    if vb_project is None:
+        return False
+    try:
+        target_module = None
+        for comp in vb_project.VBComponents:
+            if comp.Name == module_name:
+                target_module = comp.CodeModule
+                break
+        if target_module is None:
+            return False
+
+        start_line = target_module.ProcStartLine(procedure_name, 0)
+        line_count = target_module.ProcCountLines(procedure_name, 0)
+
+        target_module.DeleteLines(start_line, line_count)
+        target_module.InsertLines(start_line, new_code)
+        return True
+    except Exception as exc:
+        logger.debug("vba_replace_procedure %s.%s failed: %s", module_name, procedure_name, exc)
+        return False
