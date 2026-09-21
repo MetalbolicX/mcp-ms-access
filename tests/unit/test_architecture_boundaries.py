@@ -158,6 +158,45 @@ def _find_boundary_violations() -> list[str]:
     return violations
 
 
+def _find_win32com_in_application() -> list[str]:
+    """Scan application/ modules and report any win32com imports at any nesting level."""
+    violations: list[str] = []
+    app_root = SRC_ROOT / "application"
+    if not app_root.exists():
+        return violations
+    for path in sorted(app_root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "win32com" or alias.name.startswith("win32com."):
+                        violations.append(f"{path.relative_to(SRC_ROOT)}: imports '{alias.name}'")
+            elif isinstance(node, ast.ImportFrom):
+                if node.module == "win32com" or (node.module and node.module.startswith("win32com.")):
+                    names = ", ".join(a.name for a in node.names)
+                    violations.append(f"{path.relative_to(SRC_ROOT)}: from {node.module} imports [{names}]")
+    return violations
+
+
+def test_no_win32com_in_application_layer():
+    """Architecture rule: win32com imports are forbidden in the application/ layer.
+
+    win32com is a DAO/COM implementation detail that belongs in the backends/ layer.
+    The application/ layer must use the DAO backend seam, not call COM directly.
+    This test catches imports at any nesting level (including inside nested classes,
+    functions, and conditional blocks).
+
+    Plan 059: This guard would have caught the _Do.__call__ win32com import at line 608.
+    """
+    violations = _find_win32com_in_application()
+    assert violations == [], (
+        "win32com imports found in application/ layer (must use DAO backend seam):\n"
+        + "\n".join(f"  - {v}" for v in violations)
+    )
+
+
 def test_layer_direction_and_private_imports():
     """The AST guard encodes the repo's architectural contract (post-012).
 

@@ -845,3 +845,172 @@ class DaoAdapter:
                 return {"success": False, "error": _strip_password(str(e))}
 
         return self._dispatcher.call(_do)
+
+    # -------------------------------------------------------------------------- #
+    # Salvage — recovery of tables from a corrupt database
+    # -------------------------------------------------------------------------- #
+
+    def salvage_tables(
+        self,
+        corrupt_path: str,
+        path: str,
+        engine: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Recover tables from a corrupt .accdb/.mdb into a fresh database.
+
+        Args:
+            corrupt_path: Path to the damaged database file.
+            path: Path to the freshly-created target database.
+            engine: Optional DAO engine instance; if None, creates one via COM.
+
+        Returns:
+            A list of per-table result dicts with keys:
+            - ``table_name``: name of the source table
+            - ``salvaged_rows``: rows successfully copied (0 if table unreadable)
+            - ``error``: None on success, error string on failure
+
+        """
+
+        def _do() -> list[dict[str, Any]]:
+            import win32com.client  # type: ignore[import-not-found]
+
+            if engine is None:
+                actual_engine = win32com.client.Dispatch("DAO.DBEngine.120")
+            else:
+                actual_engine = engine
+            table_reports: list[dict[str, Any]] = []
+
+            # Open corrupt database
+            try:
+                corrupt_db = actual_engine.OpenDatabase(corrupt_path)
+            except Exception as e:
+                return [{"table_name": "<init>", "salvaged_rows": 0, "error": f"Cannot open corrupt database: {e}"}]
+
+            # Open fresh database
+            try:
+                fresh_db = actual_engine.OpenDatabase(path)
+            except Exception as e:
+                corrupt_db.Close()
+                return [{"table_name": "<init>", "salvaged_rows": 0, "error": f"Cannot open fresh database: {e}"}]
+
+            try:
+                for table_def in corrupt_db.TableDefs:
+                    tname = table_def.Name
+                    if tname.startswith("MSys"):
+                        continue
+                    try:
+                        # Read source rows via recordset
+                        src_rs = corrupt_db.OpenRecordset(f"SELECT * FROM [{tname}]", 2)
+                        field_count = src_rs.Fields.Count
+                        rows: list[list[Any]] = []
+                        while not src_rs.EOF:
+                            rows.append([src_rs.Fields(i).Value for i in range(field_count)])
+                            src_rs.MoveNext()
+                        src_rs.Close()
+
+                        if not rows:
+                            table_reports.append({
+                                "table_name": tname,
+                                "salvaged_rows": 0,
+                                "error": None,
+                            })
+                            continue
+
+                        # Build DDL from source FieldDefs
+                        src_rs2 = corrupt_db.OpenRecordset(f"SELECT * FROM [{tname}]", 2)
+                        field_count = src_rs2.Fields.Count
+                        ddl_parts = []
+                        for i in range(field_count):
+                            fld = src_rs2.Fields(i)
+                            fname = f"[{fld.Name}]"
+                            ftype = fld.Type  # DAO field type number
+                            fsize = fld.Size
+
+                            # Map DAO type to Access DDL
+                            if ftype == 1:  # YESNO
+                                col_ddl = f"{fname} YESNO"
+                            elif ftype == 2:  # BYTE
+                                col_ddl = f"{fname} BYTE"
+                            elif ftype == 3:  # INTEGER
+                                col_ddl = f"{fname} INTEGER"
+                            elif ftype == 4:  # LONG
+                                col_ddl = f"{fname} LONG"
+                            elif ftype == 5:  # CURRENCY
+                                col_ddl = f"{fname} CURRENCY"
+                            elif ftype == 6:  # SINGLE
+                                col_ddl = f"{fname} SINGLE"
+                            elif ftype == 7:  # DOUBLE
+                                col_ddl = f"{fname} DOUBLE"
+                            elif ftype == 8:  # DATETIME
+                                col_ddl = f"{fname} DATETIME"
+                            elif ftype == 10:  # TEXT
+                                col_ddl = f"{fname} TEXT({fsize})" if fsize else f"{fname} TEXT"
+                            elif ftype == 11:  # LONGBINARY
+                                col_ddl = f"{fname} LONGBINARY"
+                            elif ftype == 12:  # MEMO
+                                col_ddl = f"{fname} MEMO"
+                            elif ftype == 15:  # GUID
+                                col_ddl = f"{fname} GUID"
+                            elif ftype == 20:  # DECIMAL
+                                col_ddl = f"{fname} DECIMAL(28,8)"
+                            else:
+                                col_ddl = f"{fname} MEMO"
+                            ddl_parts.append(col_ddl)
+                        src_rs2.Close()
+
+                        create_sql = f"CREATE TABLE [{tname}] ({', '.join(ddl_parts)})"
+                        try:
+                            fresh_db.Execute(create_sql)
+                        except Exception as create_err:
+                            table_reports.append({
+                                "table_name": tname,
+                                "salvaged_rows": 0,
+                                "error": f"CREATE TABLE failed: {create_err}",
+                            })
+                            continue
+
+                        # Insert rows via DAO recordset
+                        dst_rs = fresh_db.OpenRecordset(tname, 2)  # dbOpenDynaset
+                        salvaged = 0
+                        insert_errors: list[str] = []
+                        for row in rows:
+                            try:
+                                dst_rs.AddNew()
+                                for i, val in enumerate(row):
+                                    dst_rs.Fields(i).Value = val
+                                dst_rs.Update()
+                                salvaged += 1
+                            except Exception as insert_err:
+                                insert_errors.append(str(insert_err))
+                                try:
+                                    dst_rs.CancelUpdate()
+                                except Exception:
+                                    pass
+                        dst_rs.Close()
+
+                        err_msg = "; ".join(insert_errors[:3]) if insert_errors else None
+                        table_reports.append({
+                            "table_name": tname,
+                            "salvaged_rows": salvaged,
+                            "error": err_msg,
+                        })
+                    except Exception as table_err:
+                        table_reports.append({
+                            "table_name": tname,
+                            "salvaged_rows": 0,
+                            "error": str(table_err),
+                        })
+            finally:
+                try:
+                    corrupt_db.Close()
+                except Exception:
+                    pass
+                try:
+                    fresh_db.Close()
+                except Exception:
+                    pass
+
+            return table_reports
+
+        # Use the dispatcher's call mechanism to support test injection
+        return self._dispatcher.call(_do, engine=engine)
