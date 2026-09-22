@@ -13,6 +13,7 @@ import pyodbc
 
 from ..errors import BackendCapabilityMismatchError
 from ..models import IndexInfo
+from .crud_sql import build_delete, build_insert, build_update
 from .odbc_schema_reader import OdbcSchemaReader
 
 logger = logging.getLogger(__name__)
@@ -104,10 +105,7 @@ class OdbcAdapter:
             rows = data if isinstance(data, list) else [data]
             total = 0
             for row in rows:
-                cols = list(row.keys())
-                vals = list(row.values())
-                placeholders = ", ".join(["?" for _ in vals])
-                sql = f"INSERT INTO [{table_name}] ({', '.join(cols)}) VALUES ({placeholders})"
+                sql, vals = build_insert(table_name, row)
                 cursor.execute(sql, vals)
                 total += cursor.rowcount
             self._conn.commit()
@@ -128,14 +126,7 @@ class OdbcAdapter:
             return {"success": False, "error": "Not connected", "affected": 0}
 
         try:
-            set_clause = ", ".join(f"[{k}] = ?" for k in set_dict)
-            vals = list(set_dict.values())
-            sql = f"UPDATE [{table_name}] SET {set_clause}"
-            if where_dict:
-                where_clause = " AND ".join(f"[{k}] = ?" for k in where_dict.keys())
-                sql += f" WHERE {where_clause}"
-                vals.extend(where_dict.values())
-
+            sql, vals = build_update(table_name, set_dict, where_dict)
             cursor = self._conn.cursor()
             cursor.execute(sql, vals)
             self._conn.commit()
@@ -152,13 +143,7 @@ class OdbcAdapter:
             return {"success": False, "error": "Not connected", "affected": 0}
 
         try:
-            sql = f"DELETE FROM [{table_name}]"
-            vals: list[Any] = []
-            if where_dict:
-                where_clause = " AND ".join(f"[{k}] = ?" for k in where_dict.keys())
-                sql += f" WHERE {where_clause}"
-                vals = list(where_dict.values())
-
+            sql, vals = build_delete(table_name, where_dict)
             cursor = self._conn.cursor()
             cursor.execute(sql, vals)
             self._conn.commit()

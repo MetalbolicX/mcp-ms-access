@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .crud_sql import build_delete, build_insert, build_update
 from .dao_sql import _strip_password
 from .script import parse_script_lines
 
@@ -126,10 +127,7 @@ class AdoAdapter:
         total = 0
         try:
             for row in rows:
-                cols = list(row.keys())
-                vals = list(row.values())
-                placeholders = ", ".join(["?" for _ in vals])
-                sql = f"INSERT INTO [{table_name}] ({', '.join(cols)}) VALUES ({placeholders})"
+                sql, vals = build_insert(table_name, row)
                 self._conn.Execute(sql, vals)
                 total += 1
             return {"success": True, "affected": total}
@@ -142,14 +140,7 @@ class AdoAdapter:
             return {"success": False, "error": "Not connected", "affected": 0}
 
         try:
-            set_clause = ", ".join(f"[{k}] = ?" for k in set_dict)
-            vals = list(set_dict.values())
-            sql = f"UPDATE [{table_name}] SET {set_clause}"
-            if where_dict:
-                where_clause = " AND ".join(f"[{k}] = ?" for k in where_dict.keys())
-                sql += f" WHERE {where_clause}"
-                vals.extend(where_dict.values())
-
+            sql, vals = build_update(table_name, set_dict, where_dict)
             self._conn.Execute(sql, vals)
             return {"success": True, "affected": 1}
         except Exception as e:
@@ -161,13 +152,7 @@ class AdoAdapter:
             return {"success": False, "error": "Not connected", "affected": 0}
 
         try:
-            sql = f"DELETE FROM [{table_name}]"
-            vals = []
-            if where_dict:
-                where_clause = " AND ".join(f"[{k}] = ?" for k in where_dict.keys())
-                sql += f" WHERE {where_clause}"
-                vals = list(where_dict.values())
-
+            sql, vals = build_delete(table_name, where_dict)
             self._conn.Execute(sql, vals)
             return {"success": True, "affected": 1}
         except Exception as e:
