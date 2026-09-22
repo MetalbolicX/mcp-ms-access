@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..backends import BackendSelector
+from ..backends.dao_sql import quote_ident
 from ..backends.migration import (
     get_connector,
     render_schema_ddl,
@@ -612,7 +613,7 @@ class MigrationUseCases:
         try:
             # Access the underlying connection cursor
             cursor = connector._conn.cursor()  # noqa: SLF001
-            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            cursor.execute(f"SELECT COUNT(*) FROM {quote_ident(table)}")
             count = cursor.fetchone()[0]
             return count
         except Exception:

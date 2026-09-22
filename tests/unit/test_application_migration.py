@@ -615,3 +615,90 @@ class TestBaseConnectorRepr:
         # repr must contain the class name and [redacted]
         assert "TestConnector" in repr_str
         assert "[redacted]" in repr_str
+
+
+class SpyCursor:
+    """Spy cursor that captures execute() SQL for testing."""
+
+    def __init__(self):
+        self._captured_sql: list[str] = []
+
+    def execute(self, sql: str, *args, **kwargs):
+        self._captured_sql.append(sql)
+        return None
+
+    def fetchone(self):
+        return (0,)
+
+
+class SpyConnection:
+    """Spy connection whose cursor() returns a SpyCursor."""
+
+    def __init__(self):
+        self._cursor = SpyCursor()
+
+    def cursor(self):
+        return self._cursor
+
+
+class TestCountTargetRowsQuoting:
+    """Plan 057: hostile table names must be bracket-quoted in _count_target_rows SQL.
+
+    The SQL f"SELECT COUNT(*) FROM {table}" is a SQL injection vector when
+    table names originate from untrusted LLM tool parameters.
+    """
+
+    def _make_spy_connector(self) -> FakeConnector:
+        """Build a FakeConnector whose _conn is a SpyConnection."""
+        connector = FakeConnector("Driver={ODBC};Database=test.db")
+        connector._conn = SpyConnection()  # type: ignore[assignment]
+        return connector
+
+    def test_hostile_table_name_not_unquoted_in_count_sql(self):
+        """SQL must not contain unquoted hostile table name 'Orders]; DROP TABLE x'."""
+        connector = self._make_spy_connector()
+        uc = MigrationUseCases()
+
+        # The raw unquoted form must NOT appear in any captured SQL
+        try:
+            uc._count_target_rows(connector, "Orders]; DROP TABLE x")
+        except Exception:
+            pass  # We only care that raw SQL is not emitted
+
+        cursor = connector._conn.cursor()
+        for sql in cursor._captured_sql:
+            assert "Orders]; DROP TABLE x" not in sql, (
+                f"Hostile table name appears unquoted in SQL: {sql!r}"
+            )
+
+    def test_spaced_table_name_is_bracket_quoted(self):
+        """Legal spaced table name 'My Table' must appear as [My Table] in SQL."""
+        connector = self._make_spy_connector()
+        uc = MigrationUseCases()
+
+        try:
+            uc._count_target_rows(connector, "My Table")
+        except Exception:
+            pass
+
+        cursor = connector._conn.cursor()
+        captured = " ".join(cursor._captured_sql)
+        assert "[My Table]" in captured, (
+            f"Spaced table name must be bracket-quoted, got: {captured!r}"
+        )
+
+    def test_embedded_bracket_escaped_in_count_sql(self):
+        """Table name 'x]' must appear as [x]] in SQL (embedded bracket doubled)."""
+        connector = self._make_spy_connector()
+        uc = MigrationUseCases()
+
+        try:
+            uc._count_target_rows(connector, "x]")
+        except Exception:
+            pass
+
+        cursor = connector._conn.cursor()
+        captured = " ".join(cursor._captured_sql)
+        assert "[x]]" in captured, (
+            f"Embedded bracket must be doubled, got: {captured!r}"
+        )

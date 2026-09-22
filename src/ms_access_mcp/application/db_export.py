@@ -50,14 +50,22 @@ def _sanitize_sheet_name(name: str) -> Result:
     return _ok(sanitized)
 
 
-def _build_iisam_insert_sql(table_or_query: str, output_path: str, sheet_name: str) -> str:
+def _build_iisam_insert_sql(table_or_query: str, output_path: str, sheet_name: str) -> Result:
     """Build the IISAM INSERT INTO SQL for xlsx export.
 
     Returns: INSERT INTO [Excel 12.0;HDR=YES;DATABASE=<abs>].[<sheet>$] <select>
+
+    Raises ValueError if output_path contains ';' or '"' — both are ODBC connection
+    string injection vectors in the DATABASE= segment.
     """
+    if ";" in output_path or '"' in output_path:
+        return _err(
+            f"Output path must not contain ';' or '\"' characters (ODBC connection-string "
+            f"injection vector). Got: {output_path!r}"
+        )
     abs_path = str(Path(output_path).absolute())
     select_clause = build_select(table_or_query, None, None, None)
-    return f"INSERT INTO [Excel 12.0;HDR=YES;DATABASE={abs_path}].[{sheet_name}$] {select_clause}"
+    return _ok(f"INSERT INTO [Excel 12.0;HDR=YES;DATABASE={abs_path}].[{sheet_name}$] {select_clause}")
 
 
 def _query_adapter(adapter: Any, sql: str) -> Result:
@@ -131,7 +139,10 @@ def export_data(
         if IisamProviderProbe.is_excel_provider_registered():
             if sheet_name_sanitized is None:
                 return _err("Sheet name sanitization failed")
-            sql = _build_iisam_insert_sql(table_or_query, output_path, sheet_name_sanitized)
+            sql_result = _build_iisam_insert_sql(table_or_query, output_path, sheet_name_sanitized)
+            if isinstance(sql_result, Err):
+                return sql_result
+            sql = sql_result.data  # type: ignore[union-attr]
             affected = adapter.execute_raw_sql(sql)
             return _ok(rowcount=affected)
         msg = (
