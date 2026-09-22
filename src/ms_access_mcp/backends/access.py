@@ -284,7 +284,8 @@ class AccessAdapter:
                 try:
                     close_ac = self._OBJECT_KINDS[kind]["close_ac"]
                     self._dispatcher.access_app.DoCmd.Close(close_ac, object_name, save_flag)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("design-view close %s/%s failed: %s", kind, object_name, exc)
                     pass
 
         return self._dispatcher.call(_do)
@@ -298,7 +299,8 @@ class AccessAdapter:
             vbe = self._dispatcher.access_app.VBE
             for i in range(1, vbe.VBProjects.Count + 1):
                 return vbe.VBProjects(i)
-        except Exception:
+        except Exception as exc:
+            logger.debug("vb project unavailable: %s", exc)
             pass
         return None
 
@@ -324,7 +326,8 @@ class AccessAdapter:
             if temp_path:
                 try:
                     os.unlink(temp_path)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("temp file cleanup %s failed: %s", temp_path, exc)
                     pass
 
     def _load_object_from_text(self, object_type: int, object_name: str, text_data: str) -> bool:
@@ -356,7 +359,8 @@ class AccessAdapter:
             if temp_path:
                 try:
                     os.unlink(temp_path)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("temp file cleanup %s failed: %s", temp_path, exc)
                     pass
 
     @staticmethod
@@ -396,7 +400,8 @@ class AccessAdapter:
 
         except ImportError:
             pass
-        except Exception:
+        except Exception as exc:
+            logger.debug("dialog killer thread error: %s", exc)
             pass
 
     def _trusted_locations_wrap(self, func, *args, **kwargs):
@@ -428,6 +433,8 @@ class AccessAdapter:
 
         def _do():
             objects = []
+            skipped_props = 0
+            skipped_objs = 0
             collection_name = self._OBJECT_KINDS[kind]["collection"]
             try:
                 all_objects = getattr(self._dispatcher.access_app.CurrentProject, collection_name)
@@ -438,18 +445,22 @@ class AccessAdapter:
                         try:
                             record_source = str(obj.Properties("RecordSource")) if obj.Properties.Exists("RecordSource") else ""
                         except Exception:
-                            pass
+                            skipped_props += 1
                         model = FormInfo if kind == "form" else ReportInfo
                         objects.append(model(name=obj.Name, record_source=record_source))
                     except Exception:
-                        pass
+                        skipped_objs += 1
             except Exception:
+                logger.debug("list_objects %s collection access failed", kind)
                 pass
+            if skipped_props or skipped_objs:
+                logger.debug("list_objects %s: %d objects, %d property failures skipped", kind, skipped_objs, skipped_props)
             return objects
 
         try:
             return self._dispatcher.call(_do)
-        except Exception:
+        except Exception as exc:
+            logger.debug("list_objects %s dispatcher failed: %s", kind, exc)
             return []
 
     def get_forms(self):
@@ -472,13 +483,15 @@ class AccessAdapter:
                 for i in range(all_objects.Count):
                     if all_objects(i).Name == name:
                         return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("object_exists %s/%s collection access failed: %s", kind, name, exc)
                 pass
             return False
 
         try:
             return self._dispatcher.call(_do)
-        except Exception:
+        except Exception as exc:
+            logger.debug("object_exists %s/%s dispatcher failed: %s", kind, name, exc)
             return False
 
     def form_exists(self, form_name: str) -> bool:
@@ -706,6 +719,8 @@ class AccessAdapter:
             if obj is None:
                 return []
             controls = []
+            skipped_ctrls = 0
+            skipped_props = 0
             for i in range(obj.Controls.Count):
                 try:
                     ctrl = obj.Controls(i)
@@ -722,14 +737,16 @@ class AccessAdapter:
                             if val is not None:
                                 props[prop_name] = str(val)
                         except Exception:
-                            pass
+                            skipped_props += 1
 
                     from ms_access_mcp.models import ControlInfo
                     controls.append(ControlInfo(
                         name=ctrl_name, type=ctrl_type, properties=props,
                     ))
                 except Exception:
-                    pass
+                    skipped_ctrls += 1
+            if skipped_ctrls or skipped_props:
+                logger.debug("get_object_controls %s/%s: %d controls, %d properties skipped", kind, object_name, skipped_ctrls, skipped_props)
             return controls
 
         return self._with_design_view(
@@ -758,7 +775,8 @@ class AccessAdapter:
                     ctrl = obj.Controls(i)
                     if ctrl.Name == control_name:
                         return _props_to_dict(ctrl.Properties)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("get_object_control_properties %s/%s control lookup failed: %s", kind, object_name, exc)
                     pass
             return {}
 
@@ -785,7 +803,8 @@ class AccessAdapter:
                     if ctrl.Name == control_name:
                         ctrl.Properties(property_name).Value = value
                         return True
-                except Exception:
+                except Exception as exc:
+                    logger.debug("set_control_property %s[%s] %s failed: %s", object_name, control_name, property_name, exc)
                     pass
             return False
 
@@ -807,6 +826,7 @@ class AccessAdapter:
             def inner(obj):
                 if obj is None:
                     return False
+                skipped = 0
                 for i in range(obj.Controls.Count):
                     try:
                         ctrl = obj.Controls(i)
@@ -814,7 +834,9 @@ class AccessAdapter:
                             ctrl.Properties(prop_name).Value = value
                             return True
                     except Exception:
-                        pass
+                        skipped += 1
+                if skipped:
+                    logger.debug("set_control_properties %s/%s[%s]: %d controls skipped", kind, object_name, control_name, skipped)
                 return False
 
             return self._with_design_view(
@@ -848,7 +870,8 @@ class AccessAdapter:
                 for prop_name, value in properties.items():
                     try:
                         ctrl.Properties(prop_name).Value = value
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("add_object_control set property %s/%s[%s].%s failed: %s", kind, object_name, control_name, prop_name, exc)
                         pass
             return True
 
@@ -876,7 +899,8 @@ class AccessAdapter:
                         ctrl.SetFocus()
                         self._dispatcher.access_app.DoCmd.RunCommand(365)  # acCmdDelete
                         return True
-                except Exception:
+                except Exception as exc:
+                    logger.debug("remove_object_control %s/%s[%s] failed: %s", kind, object_name, control_name, exc)
                     pass
             return False
 
@@ -932,7 +956,8 @@ class AccessAdapter:
                                 "line_count": line_count,
                                 "code": code,
                             })
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("vba_list_procedures ProcOfLine line %s failed: %s", line, exc)
                         pass
 
                 if control_name:
@@ -986,7 +1011,8 @@ class AccessAdapter:
                     if ctrl.Name == control_name:
                         target_ctrl = ctrl
                         break
-                except Exception:
+                except Exception as exc:
+                    logger.debug("set_control_event_procedure %s[%s] control lookup failed: %s", form_name, control_name, exc)
                     pass
 
             if target_ctrl is None:
@@ -1023,7 +1049,8 @@ class AccessAdapter:
                         "visible": bool(section.Visible),
                         "height": int(section.Height),
                     })
-                except Exception:
+                except Exception as exc:
+                    logger.debug("get_%s_sections %s section %s failed: %s", kind, object_name, i, exc)
                     pass
             return sections
 
@@ -1098,7 +1125,8 @@ class AccessAdapter:
                     section = obj.Section(section_id)
                     section.Properties(prop_name).Value = value
                     return True
-                except Exception:
+                except Exception as exc:
+                    logger.debug("set_section_property %s/%s[%s].%s failed: %s", kind, object_name, section_id, prop_name, exc)
                     return False
 
             return self._with_design_view(
@@ -1150,7 +1178,8 @@ class AccessAdapter:
                     return int(self._dispatcher.access_app.RecordsAffected)
                 except Exception:
                     return 0
-            except Exception:
+            except Exception as exc:
+                logger.debug("export_table_to_xlsx %s failed: %s", table_or_query, exc)
                 return 0
 
         return self._dispatcher.call(_do)
@@ -1268,12 +1297,14 @@ class AccessAdapter:
                         try:
                             if macro_obj.Properties.Exists("DateCreated"):
                                 date_created = str(macro_obj.Properties("DateCreated"))
-                        except Exception:
+                        except Exception as exc:
+                            logger.debug("get_macros %s DateCreated failed: %s", macro_obj.Name, exc)
                             pass
                         try:
                             if macro_obj.Properties.Exists("DateModified"):
                                 date_modified = str(macro_obj.Properties("DateModified"))
-                        except Exception:
+                        except Exception as exc:
+                            logger.debug("get_macros %s DateModified failed: %s", macro_obj.Name, exc)
                             pass
                         from ms_access_mcp.models import MacroInfo
                         macros.append(MacroInfo(
@@ -1282,9 +1313,11 @@ class AccessAdapter:
                             date_created=date_created,
                             date_modified=date_modified,
                         ))
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("get_macros %s processing failed: %s", macro_obj.Name, exc)
                         pass
-            except Exception:
+            except Exception as exc:
+                logger.debug("get_macros AllMacros collection access failed: %s", exc)
                 pass
             return macros
 
@@ -1302,9 +1335,14 @@ class AccessAdapter:
             try:
                 all_macros = self._dispatcher.access_app.CurrentProject.AllMacros
                 for i in range(all_macros.Count):
-                    if all_macros(i).Name == macro_name:
-                        return True
-            except Exception:
+                    try:
+                        if all_macros(i).Name == macro_name:
+                            return True
+                    except Exception as exc:
+                        logger.debug("macro_exists %s AllMacros(%s) failed: %s", macro_name, i, exc)
+                        pass
+            except Exception as exc:
+                logger.debug("macro_exists %s collection access failed: %s", macro_name, exc)
                 pass
             return False
 
@@ -1333,7 +1371,8 @@ class AccessAdapter:
             try:
                 self._dispatcher.access_app.DoCmd.Rename(new_name, 8, old_name)
                 return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("rename_macro %s->%s failed: %s", old_name, new_name, exc)
                 return False
 
         return self._dispatcher.call(_do)
@@ -1347,7 +1386,8 @@ class AccessAdapter:
             try:
                 self._dispatcher.access_app.DoCmd.DeleteObject(8, macro_name)
                 return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("delete_macro %s failed: %s", macro_name, exc)
                 return False
 
         return self._dispatcher.call(_do)
@@ -1361,7 +1401,8 @@ class AccessAdapter:
             try:
                 self._dispatcher.access_app.DoCmd.RunMacro(macro_name)
                 return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("run_macro %s failed: %s", macro_name, exc)
                 return False
 
         return self._dispatcher.call(_do)
@@ -1378,13 +1419,17 @@ class AccessAdapter:
                     macro_obj = all_macros(i)
                     if macro_obj.Name == macro_name:
                         props: dict[str, str] = {}
+                        skipped_props = 0
                         for prop in macro_obj.Properties:
                             try:
                                 props[prop.Name] = str(prop.Value)
                             except Exception:
-                                pass
+                                skipped_props += 1
+                        if skipped_props:
+                            logger.debug("get_macro_properties %s: %d property failures skipped", macro_name, skipped_props)
                         return props
-            except Exception:
+            except Exception as exc:
+                logger.debug("get_macro_properties %s failed: %s", macro_name, exc)
                 pass
             return {}
 
@@ -1405,7 +1450,8 @@ class AccessAdapter:
 
         try:
             return self._dispatcher.call(_do)
-        except Exception:
+        except Exception as exc:
+            logger.debug("get_vba_project_name dispatcher failed: %s", exc)
             return ""
 
     def get_modules(self):
@@ -1418,6 +1464,7 @@ class AccessAdapter:
             vb_project = self._get_vb_project()
             if vb_project is None:
                 return []
+            skipped = 0
             try:
                 for comp in vb_project.VBComponents:
                     try:
@@ -1431,14 +1478,18 @@ class AccessAdapter:
                             code=code,
                         ))
                     except Exception:
-                        pass
-            except Exception:
+                        skipped += 1
+            except Exception as exc:
+                logger.debug("get_modules VBComponents collection failed: %s", exc)
                 pass
+            if skipped:
+                logger.debug("get_modules: %d components skipped", skipped)
             return modules
 
         try:
             return self._dispatcher.call(_do)
-        except Exception:
+        except Exception as exc:
+            logger.debug("get_modules dispatcher failed: %s", exc)
             return []
 
     def get_vba_code(self, module_name: str) -> str:
@@ -1457,7 +1508,8 @@ class AccessAdapter:
                         if lines > 0:
                             return comp.CodeModule.Lines(1, lines)
                         return ""
-            except Exception:
+            except Exception as exc:
+                logger.debug("get_vba_code %s failed: %s", module_name, exc)
                 pass
             return ""
 
@@ -1495,9 +1547,11 @@ class AccessAdapter:
                         )
                         target_module.CodeModule.AddFromString(code)
                         return True
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("set_vba_code %s repopulate failed: %s", module_name, exc)
                         return False
-            except Exception:
+            except Exception as exc:
+                logger.debug("set_vba_code %s failed: %s", module_name, exc)
                 return False
 
         return self._dispatcher.call(self._trusted_locations_wrap, _do)
@@ -1528,7 +1582,8 @@ class AccessAdapter:
                 else:
                     target_module.CodeModule.AddFromString(code)
                     return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("add_vba_procedure %s.%s failed: %s", module_name, procedure_name, exc)
                 return False
 
         return self._dispatcher.call(self._trusted_locations_wrap, _do)
@@ -1548,7 +1603,8 @@ class AccessAdapter:
                         vb_project.VBComponents.Remove(comp)
                         return True
                 return False
-            except Exception:
+            except Exception as exc:
+                logger.debug("delete_module %s failed: %s", module_name, exc)
                 return False
 
         return self._dispatcher.call(_do)
@@ -1572,7 +1628,8 @@ class AccessAdapter:
                 comp = vb_project.VBComponents.Add(module_type)
                 comp.Name = module_name
                 return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("create_module %s failed: %s", module_name, exc)
                 return False
 
         return self._dispatcher.call(_do)
@@ -1592,7 +1649,8 @@ class AccessAdapter:
                         comp.Name = new_name
                         return True
                 return False
-            except Exception:
+            except Exception as exc:
+                logger.debug("rename_module %s->%s failed: %s", old_name, new_name, exc)
                 return False
 
         return self._dispatcher.call(_do)
@@ -1611,7 +1669,8 @@ class AccessAdapter:
                     mod = self._dispatcher.access_app.CurrentProject.AllModules(i)
                     if mod.Name == module_name:
                         return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("module_exists %s failed: %s", module_name, exc)
                 return False
             return False
 
@@ -1677,7 +1736,8 @@ class AccessAdapter:
                 if comp.Type == 1:  # vbext_ct_StdModule
                     try:
                         app.DoCmd.Save(5, comp.Name)
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("DoCmd.Save module %s failed: %s", comp.Name, exc)
                         pass
 
             # Start dialog killer as safety net
@@ -1694,7 +1754,8 @@ class AccessAdapter:
                     try:
                         app.DoCmd.RunCommand(cmd_id)
                         return {"success": True}
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("compile_vba RunCommand %s failed: %s", cmd_id, exc)
                         continue
                 return {
                     "success": False,
@@ -1755,10 +1816,12 @@ class AccessAdapter:
                                 "start_line": start_line,
                                 "line_count": line_count,
                             })
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("ProcOfLine failed for line %s in %s: %s", line, module_name, exc)
                         pass
                 return procedures
-            except Exception:
+            except Exception as exc:
+                logger.debug("list procedures %s failed: %s", module_name, exc)
                 return []
 
         return self._dispatcher.call(_do)
@@ -1802,7 +1865,8 @@ class AccessAdapter:
                     "code": code,
                     "signature": signature,
                 }
-            except Exception:
+            except Exception as exc:
+                logger.debug("vba_get_procedure %s.%s failed: %s", module_name, procedure_name, exc)
                 return {}
 
         return self._dispatcher.call(_do)
@@ -1834,7 +1898,8 @@ class AccessAdapter:
                 target_module.DeleteLines(start_line, line_count)
                 target_module.InsertLines(start_line, new_code)
                 return True
-            except Exception:
+            except Exception as exc:
+                logger.debug("vba_replace_procedure %s.%s failed: %s", module_name, procedure_name, exc)
                 return False
 
         return self._dispatcher.call(self._trusted_locations_wrap, _do)

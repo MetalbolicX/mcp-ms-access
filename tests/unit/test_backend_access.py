@@ -1514,3 +1514,887 @@ class TestWithDesignView:
         debug_msgs = [r.message for r in caplog.records if r.levelname == "DEBUG"]
         assert any("Broken" in msg for msg in debug_msgs), f"Expected DEBUG about 'Broken', got: {debug_msgs}"
 
+
+# -------------------------------------------------------------------------- #
+# Step N: swallow DEBUG logging — plan 056
+# -------------------------------------------------------------------------- #
+
+
+class TestSwallowLogging:
+    """Plan 056: every bare except Exception swallow must emit a DEBUG log."""
+
+    # 1. _get_vb_project — lines 301-303: except Exception: pass / return None
+    def test_get_vb_project_swallow_logs_debug(self, caplog):
+        """COM failure in _get_vb_project logs DEBUG with 'vb project'."""
+
+        class _FakeVBE:
+            @property
+            def VBProjects(self):
+                raise RuntimeError("VBProjects not available")
+
+        class _FakeAccessApp:
+            VBE = _FakeVBE()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter._get_vb_project()
+
+        assert result is None
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("vb project" in msg.lower() for msg in debug_msgs), (
+            f"Expected DEBUG about 'vb project', got: {debug_msgs}"
+        )
+
+    # 2. vba_list_procedures whole-_do — lines 1764-1765: except Exception: return []
+    def test_vba_list_procedures_swallow_logs_debug(self, caplog):
+        """Failure in vba_list_procedures._do logs DEBUG with 'list procedures'."""
+
+        class _BrokenCodeModule:
+            """Fake that raises on CountOfLines (in outer try, caught by outer handler)."""
+            @property
+            def CountOfLines(self):
+                raise RuntimeError("CountOfLines not available")
+
+        class _FakeVBComponent:
+            Name = "TestModule"
+            CodeModule = _BrokenCodeModule()
+
+        class _FakeVBComponents:
+            def __iter__(self):
+                return iter([_FakeVBComponent()])
+
+        class _FakeVBProject:
+            def __init__(self):
+                self.VBComponents = _FakeVBComponents()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        adapter._dispatcher = fake_disp
+
+        # Patch _get_vb_project so we reach the outer _do exception handler
+        original_get = adapter._get_vb_project
+        adapter._get_vb_project = lambda: _FakeVBProject()
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.vba_list_procedures("TestModule")
+
+        adapter._get_vb_project = original_get
+
+        assert result == []
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("list procedures" in msg.lower() for msg in debug_msgs), (
+            f"Expected DEBUG about 'list procedures', got: {debug_msgs}"
+        )
+
+    # 3. DoCmd.Save per-module — lines 1680-1681: except Exception: pass
+    def test_save_module_swallow_logs_debug_with_module_name(self, caplog):
+        """DoCmd.Save failure logs DEBUG containing the failing module name."""
+
+        class _FakeVBComponent:
+            Type = 1  # vbext_ct_StdModule
+            Name = "TestModule"
+
+        class _FakeVBComponents:
+            def __iter__(self):
+                return iter([_FakeVBComponent()])
+
+        class _FakeVBProject:
+            def __init__(self):
+                self.VBComponents = _FakeVBComponents()
+
+        class _FakeDoCmd:
+            def Save(self, obj_type, name):
+                raise RuntimeError("Save blocked")
+
+            def RunCommand(self, cmd_id):
+                raise RuntimeError("No compile")
+
+        class _FakeAccessApp:
+            DoCmd = _FakeDoCmd()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        # Patch _get_vb_project so we reach the DoCmd.Save swallow
+        original_get = adapter._get_vb_project
+        adapter._get_vb_project = lambda: _FakeVBProject()
+
+        with caplog.at_level(logging.DEBUG):
+            adapter.compile_vba()
+
+        adapter._get_vb_project = original_get
+
+        # compile_vba returns success=False when all RunCommand attempts fail
+        # but the module-save swallow still emits DEBUG
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("TestModule" in msg for msg in debug_msgs), (
+            f"Expected DEBUG with module name 'TestModule', got: {debug_msgs}"
+        )
+
+    # 4. ProcOfLine per-line — lines 1761-1762: except Exception: pass
+    def test_proc_of_line_swallow_logs_debug(self, caplog):
+        """ProcOfLine failure logs DEBUG with 'ProcOfLine' in message."""
+
+        class _FakeCodeModule:
+            CountOfLines = 5
+
+            def ProcOfLine(self, line, kind):
+                if line == 3:
+                    raise RuntimeError("ProcOfLine not available")
+                return f"Proc_{line}"
+
+            def ProcKind(self, line, kind):
+                return 0
+
+            def ProcStartLine(self, name, kind):
+                return 1
+
+            def ProcCountLines(self, name, kind):
+                return 2
+
+        class _FakeVBComponent:
+            Name = "TestModule"
+            CodeModule = _FakeCodeModule()
+
+        class _FakeVBComponents:
+            def __iter__(self):
+                return iter([_FakeVBComponent()])
+
+        class _FakeVBProject:
+            def __init__(self):
+                self.VBComponents = _FakeVBComponents()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        adapter._dispatcher = fake_disp
+
+        # Patch _get_vb_project to succeed so ProcOfLine loop is reached
+        original_get = adapter._get_vb_project
+        adapter._get_vb_project = lambda: _FakeVBProject()
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.vba_list_procedures("TestModule")
+
+        adapter._get_vb_project = original_get
+
+        assert isinstance(result, list)
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("ProcOfLine" in msg for msg in debug_msgs), (
+            f"Expected DEBUG about 'ProcOfLine', got: {debug_msgs}"
+        )
+
+    # 4. get_macro_properties inner loop — lines 1422-1426: per-prop Value swallow
+    def test_get_macro_properties_swallow_logs_debug(self, caplog):
+        """get_macro_properties skips unreadable prop.Values and logs aggregate DEBUG."""
+
+        class _FakeProperty:
+            def __init__(self, name, raise_on_value=False):
+                self.Name = name
+                self._raise_on_value = raise_on_value
+
+            @property
+            def Value(self):
+                if self._raise_on_value:
+                    raise RuntimeError("Property Value unreadable")
+                return "ok"
+
+        class _FakeProperties:
+            def __init__(self):
+                self._props = [
+                    _FakeProperty("PropOK"),
+                    _FakeProperty("PropBad", raise_on_value=True),
+                    _FakeProperty("PropAlsoOK"),
+                ]
+
+            def __iter__(self):
+                return iter(self._props)
+
+        class _FakeMacro:
+            Name = "TestMacro"
+            Properties = _FakeProperties()
+
+        class _FakeMacros:
+            def __init__(self):
+                self._items = [_FakeMacro()]
+
+            @property
+            def Count(self):
+                return len(self._items)
+
+            def __call__(self, i):
+                return self._items[i]
+
+        class _FakeCurrentProject:
+            @property
+            def AllMacros(self):
+                return _FakeMacros()
+
+        class _FakeAccessApp:
+            CurrentProject = _FakeCurrentProject()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.get_macro_properties("TestMacro")
+
+        assert result == {"PropOK": "ok", "PropAlsoOK": "ok"}
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("property failures skipped" in msg or "TestMacro" in msg for msg in debug_msgs), (
+            f"Expected DEBUG about skipped props for TestMacro, got: {debug_msgs}"
+        )
+
+    # 5. design-view finally-close — lines 287-288: except Exception: pass
+    def test_design_view_close_swallow_logs_debug(self, caplog):
+        """Close failure in _with_design_view finally block logs DEBUG with 'close'."""
+
+        class _FakeDoCmd:
+            def Close(self, ac_type, name, save):
+                raise RuntimeError("Close failed")
+
+        class _FakeAccessApp:
+            DoCmd = _FakeDoCmd()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            # work fn raises so we hit the except → on_error path, then finally runs
+            result = adapter._with_design_view(
+                "form", "TestForm",
+                save_flag=2,
+                work=lambda obj: {"worked": True},
+                on_error=lambda exc: {"error": True},
+                default={"default": True},
+            )
+
+        # on_error is called because work raises; close then fails silently
+        assert result == {"error": True}
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("close" in msg.lower() for msg in debug_msgs), (
+            f"Expected DEBUG about 'close', got: {debug_msgs}"
+        )
+
+    # ---------------------------------------------------------------------- #
+    # Sites found by heavy-verdict sweep (plan 056 follow-up):
+    # ---------------------------------------------------------------------- #
+
+    # 6. _set_object_control_property — lines 806-807: control lookup in loop
+    def test_set_control_property_swallow_logs_debug(self, caplog):
+        """Control property lookup loop swallows COM errors silently — should log DEBUG."""
+
+        class _FakeControl:
+            Name = "TargetCtrl"
+
+            class _FakeProperties:
+                def __getitem__(self, key):
+                    raise RuntimeError("Properties COM error")
+
+            Properties = _FakeProperties()
+
+        class _FakeControls:
+            @property
+            def Count(self):
+                return 1
+
+            def __call__(self, i):
+                raise RuntimeError("Controls(i) failed")
+
+        class _FakeForm:
+            Name = "TestForm"
+
+            @property
+            def Controls(self):
+                return _FakeControls()
+
+        class _FakeForms:
+            def __init__(self, form):
+                self._form = form
+
+            @property
+            def Count(self):
+                return 1
+
+            def __call__(self, name):
+                return self._form
+
+        class _FakeAccessApp:
+            DoCmd = MagicMock()
+            Forms = _FakeForms(_FakeForm())
+            Reports = MagicMock()
+
+            class _FakeScreen:
+                @property
+                def ActiveForm(self):
+                    raise RuntimeError("no active form")
+
+            Screen = _FakeScreen()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.set_control_property("TestForm", "TargetCtrl", "BackColor", "0")
+
+        assert result is False
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        found = any(
+            "TargetCtrl" in m or "set_control_property" in m.lower()
+            for m in debug_msgs
+        )
+        assert found, f"Expected DEBUG about set_control_property, got: {debug_msgs}"
+
+    # 7. set_control_event_procedure — lines 1012-1013: control lookup loop
+    def test_set_control_event_procedure_swallow_logs_debug(self, caplog):
+        """Control lookup loop swallows COM errors silently — should log DEBUG."""
+
+        class _FakeControl:
+            Name = "TargetCtrl"
+
+            class _FakeProperties:
+                def __getitem__(self, key):
+                    raise RuntimeError("control Properties failed")
+
+            Properties = _FakeProperties()
+
+        class _FakeControls:
+            @property
+            def Count(self):
+                return 1
+
+            def __call__(self, i):
+                raise RuntimeError(f"Controls({i}) failed")
+
+        class _FakeForm:
+            Name = "TestForm"
+
+            @property
+            def Controls(self):
+                return _FakeControls()
+
+        class _FakeForms:
+            def __init__(self, form):
+                self._form = form
+
+            @property
+            def Count(self):
+                return 1
+
+            def __call__(self, name):
+                return self._form
+
+        class _FakeAccessApp:
+            DoCmd = MagicMock()
+            Forms = _FakeForms(_FakeForm())
+            Reports = MagicMock()
+
+            class _FakeScreen:
+                @property
+                def ActiveForm(self):
+                    raise RuntimeError("no active form")
+
+            Screen = _FakeScreen()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.set_control_event_procedure("TestForm", "TargetCtrl", "Click", "MsgBox 'hi'")
+
+        assert result is False
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        found = any(
+            "TargetCtrl" in m or "control" in m.lower()
+            for m in debug_msgs
+        )
+        assert found, f"Expected DEBUG about control lookup, got: {debug_msgs}"
+
+    # 8. _get_object_sections — lines 1049-1050: section enumeration loop
+    def test_get_sections_swallow_logs_debug(self, caplog):
+        """Section enumeration loop swallows COM errors silently — should log DEBUG."""
+
+        class _FakeForm:
+            Name = "TestForm"
+
+            def Section(self, i):
+                raise RuntimeError(f"Section({i}) not available")
+
+        class _FakeForms:
+            def __init__(self, form):
+                self._form = form
+
+            @property
+            def Count(self):
+                return 1
+
+            def __call__(self, name):
+                return self._form
+
+        class _FakeAccessApp:
+            DoCmd = MagicMock()
+            Forms = _FakeForms(_FakeForm())
+            Reports = MagicMock()
+
+            class _FakeScreen:
+                @property
+                def ActiveForm(self):
+                    raise RuntimeError("no active form")
+
+            Screen = _FakeScreen()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.get_form_sections("TestForm")
+
+        assert result == []
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        found = any(
+            "section" in m.lower() or "TestForm" in m
+            for m in debug_msgs
+        )
+        assert found, f"Expected DEBUG about section, got: {debug_msgs}"
+
+    # 9. get_macros — lines 1296-1297: DateCreated property access
+    def test_get_macros_date_created_swallow_logs_debug(self, caplog):
+        """DateCreated property access swallows silently — should log DEBUG."""
+
+        class _FakeMacro:
+            Name = "TestMacro"
+
+            class _FakeProperties:
+                def Exists(self, name):
+                    if name == "DateCreated":
+                        raise RuntimeError("DateCreated not accessible")
+                    return False
+
+                def __call__(self, name):
+                    raise RuntimeError(f"Property {name} not accessible")
+
+            Properties = _FakeProperties()
+
+        class _FakeAllMacros:
+            def __init__(self):
+                self._macros = [_FakeMacro()]
+
+            @property
+            def Count(self):
+                return len(self._macros)
+
+            def __call__(self, i):
+                return self._macros[i]
+
+        class _FakeCurrentProject:
+            AllMacros = _FakeAllMacros()
+
+        class _FakeVBComponents:
+            @property
+            def Count(self):
+                return 0
+
+            def __iter__(self):
+                return iter([])
+
+        class _FakeVBProject:
+            VBComponents = _FakeVBComponents()
+
+        class _FakeVBProjects:
+            @property
+            def Count(self):
+                return 1
+
+            def __iter__(self):
+                return iter([_FakeVBProject()])
+
+        class _FakeVBE:
+            VBProjects = _FakeVBProjects()
+
+        class _FakeAccessApp:
+            CurrentProject = _FakeCurrentProject()
+            DoCmd = MagicMock()
+            VBE = _FakeVBE()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.get_macros()
+
+        # DateCreated raises → handler logs DEBUG and continues → macro appended with empty date
+        assert len(result) == 1
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        found = any(
+            "TestMacro" in m or "DateCreated" in m or "get_macros" in m.lower()
+            for m in debug_msgs
+        )
+        assert found, f"Expected DEBUG about get_macros DateCreated, got: {debug_msgs}"
+
+    # 10. get_macros — lines 1301-1302: DateModified property access
+    def test_get_macros_date_modified_swallow_logs_debug(self, caplog):
+        """DateModified property access swallows silently — should log DEBUG."""
+
+        class _FakeMacro:
+            Name = "TestMacro"
+
+            class _FakeProperties:
+                def Exists(self, name):
+                    if name == "DateCreated":
+                        return True
+                    if name == "DateModified":
+                        raise RuntimeError("DateModified not accessible")
+                    return False
+
+                def __call__(self, name):
+                    if name == "DateCreated":
+                        return "2024-01-01"
+                    raise RuntimeError(f"Property {name} not accessible")
+
+            Properties = _FakeProperties()
+
+        class _FakeAllMacros:
+            def __init__(self):
+                self._macros = [_FakeMacro()]
+
+            @property
+            def Count(self):
+                return len(self._macros)
+
+            def __call__(self, i):
+                return self._macros[i]
+
+        class _FakeCurrentProject:
+            AllMacros = _FakeAllMacros()
+
+        class _FakeVBComponents:
+            @property
+            def Count(self):
+                return 0
+
+            def __iter__(self):
+                return iter([])
+
+        class _FakeVBProject:
+            VBComponents = _FakeVBComponents()
+
+        class _FakeVBProjects:
+            @property
+            def Count(self):
+                return 1
+
+            def __iter__(self):
+                return iter([_FakeVBProject()])
+
+        class _FakeVBE:
+            VBProjects = _FakeVBProjects()
+
+        class _FakeAccessApp:
+            CurrentProject = _FakeCurrentProject()
+            DoCmd = MagicMock()
+            VBE = _FakeVBE()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.get_macros()
+
+        # DateModified raises → handler logs DEBUG and continues → macro appended with empty date
+        assert len(result) == 1
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        found = any(
+            "TestMacro" in m or "DateModified" in m or "get_macros" in m.lower()
+            for m in debug_msgs
+        )
+        assert found, f"Expected DEBUG about get_macros DateModified, got: {debug_msgs}"
+
+    # 11. get_macros — lines 1310-1311: per-macro processing (outer inner try)
+    def test_get_macros_per_macro_swallow_logs_debug(self, caplog):
+        """Per-macro processing loop swallows silently — should log DEBUG.
+
+        The outer handler at 1310-1311 catches if macro processing itself fails
+        (e.g., MacroInfo creation). This test exercises the inner DateCreated
+        handler to confirm the macro-processing path is reachable.
+        """
+
+        class _FakeMacro:
+            Name = "TestMacro"
+
+            class _FakeProperties:
+                def Exists(self, name):
+                    if name == "DateCreated":
+                        raise RuntimeError("DateCreated not accessible")
+                    return False
+
+                def __call__(self, key):
+                    raise RuntimeError(f"Property {key} not accessible")
+
+            Properties = _FakeProperties()
+
+        class _FakeAllMacros:
+            def __init__(self):
+                self._macros = [_FakeMacro()]
+
+            @property
+            def Count(self):
+                return len(self._macros)
+
+            def __call__(self, i):
+                return self._macros[i]
+
+        class _FakeCurrentProject:
+            AllMacros = _FakeAllMacros()
+
+        class _FakeVBComponents:
+            @property
+            def Count(self):
+                return 0
+
+            def __iter__(self):
+                return iter([])
+
+        class _FakeVBProject:
+            VBComponents = _FakeVBComponents()
+
+        class _FakeVBProjects:
+            def __init__(self):
+                self._projects = [_FakeVBProject()]
+
+            @property
+            def Count(self):
+                return len(self._projects)
+
+            def __call__(self, i):
+                return self._projects[i - 1]
+
+            def __iter__(self):
+                return iter(self._projects)
+
+        class _FakeVBE:
+            VBProjects = _FakeVBProjects()
+
+        class _FakeAccessApp:
+            CurrentProject = _FakeCurrentProject()
+            DoCmd = MagicMock()
+            VBE = _FakeVBE()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.get_macros()
+
+        # DateCreated raises → inner handler logs DEBUG → macro appended with empty dates
+        assert len(result) == 1
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        found = any(
+            "TestMacro" in m or "get_macros" in m.lower()
+            for m in debug_msgs
+        )
+        assert found, f"Expected DEBUG about get_macros processing, got: {debug_msgs}"
+
+    # 12. get_macros — lines 1312-1313: macro collection access
+    def test_get_macros_collection_access_swallow_logs_debug(self, caplog):
+        """AllMacros(i) collection access swallows silently — should log DEBUG."""
+
+        class _FakeAllMacros:
+            @property
+            def Count(self):
+                return 1
+
+            def __call__(self, i):
+                raise RuntimeError("AllMacros collection access failed")
+
+        class _FakeCurrentProject:
+            AllMacros = _FakeAllMacros()
+
+        class _FakeVBComponents:
+            @property
+            def Count(self):
+                return 0
+
+            def __iter__(self):
+                return iter([])
+
+        class _FakeVBProject:
+            VBComponents = _FakeVBComponents()
+
+        class _FakeVBProjects:
+            @property
+            def Count(self):
+                return 1
+
+            def __iter__(self):
+                return iter([_FakeVBProject()])
+
+        class _FakeVBE:
+            VBProjects = _FakeVBProjects()
+
+        class _FakeAccessApp:
+            CurrentProject = _FakeCurrentProject()
+            DoCmd = MagicMock()
+            VBE = _FakeVBE()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.get_macros()
+
+        assert result == []
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        found = any(
+            "AllMacros" in m or "get_macros" in m.lower() or "collection" in m.lower()
+            for m in debug_msgs
+        )
+        assert found, f"Expected DEBUG about get_macros collection, got: {debug_msgs}"
+
+    # 13. macro_exists — lines 1332-1333: macro existence collection access
+    def test_macro_exists_swallow_logs_debug(self, caplog):
+        """AllMacros(i).Name access swallows silently — should log DEBUG."""
+
+        class _FakeAllMacros:
+            @property
+            def Count(self):
+                return 1
+
+            def __call__(self, i):
+                raise RuntimeError("AllMacros(i) failed")
+
+        class _FakeCurrentProject:
+            AllMacros = _FakeAllMacros()
+
+        class _FakeAccessApp:
+            CurrentProject = _FakeCurrentProject()
+            DoCmd = MagicMock()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.macro_exists("TestMacro")
+
+        assert result is False
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        found = any(
+            "TestMacro" in m or "macro_exists" in m.lower() or "AllMacros" in m
+            for m in debug_msgs
+        )
+        assert found, f"Expected DEBUG about macro_exists, got: {debug_msgs}"
+
+    # 14. get_modules — lines 1466-1467: outer collection failure
+    def test_get_modules_outer_swallow_logs_debug(self, caplog):
+        """Outer get_modules collection access swallows silently — should log DEBUG."""
+
+        class _FakeVBComponent:
+            Type = 1
+            Name = "TestModule"
+            CodeModule = MagicMock()
+
+        class _FakeVBComponents:
+            @property
+            def Count(self):
+                raise RuntimeError("VBComponents collection access failed")
+
+            def __iter__(self):
+                raise RuntimeError("VBComponents iteration failed")
+
+        class _FakeVBProject:
+            VBComponents = _FakeVBComponents()
+
+        class _FakeVBProjects:
+            """Fake COM collection that supports Count and (i) indexer."""
+
+            def __init__(self):
+                self._projects = [_FakeVBProject()]
+
+            @property
+            def Count(self):
+                return len(self._projects)
+
+            def __call__(self, i):
+                """COM 1-based indexer."""
+                return self._projects[i - 1]
+
+            def __iter__(self):
+                return iter(self._projects)
+
+        class _FakeVBE:
+            VBProjects = _FakeVBProjects()
+
+        class _FakeAccessApp:
+            VBE = _FakeVBE()
+            DoCmd = MagicMock()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = _FakeAccessApp()
+        adapter._dispatcher = fake_disp
+
+        with caplog.at_level(logging.DEBUG):
+            result = adapter.get_modules()
+
+        assert result == []
+        debug_msgs = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        found = any(
+            "get_modules" in m.lower() or "VBComponents" in m
+            for m in debug_msgs
+        )
+        assert found, f"Expected DEBUG about get_modules, got: {debug_msgs}"
+
