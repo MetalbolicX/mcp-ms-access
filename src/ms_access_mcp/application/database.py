@@ -236,20 +236,6 @@ class DatabaseUseCases:
         """
         return _ok(data=list(self._connections.keys()))
 
-    def set_active(self, connection_name: str) -> Result:
-        """Set the active connection.
-
-        Args:
-            connection_name: Name of the connection to make active
-
-        Returns:
-            Ok on success, or Err if connection not found
-        """
-        if connection_name not in self._connections:
-            return _err(f"Connection not found: {connection_name}")
-        self._active_connection = connection_name
-        return _ok()
-
     def get_active(self) -> Result:
         """Get the name of the active connection.
 

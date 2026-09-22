@@ -116,21 +116,6 @@ def _is_dao_constructable() -> bool:
     return True
 
 
-def backend_available(backend: str) -> bool:
-    """Return whether the requested backend can be constructed on this platform."""
-    normalized = _normalize_backend(backend)
-    if normalized == "auto":
-        return True
-    if normalized == "odbc":
-        return True
-    if normalized == "com":
-        return sys.platform == "win32"
-    if normalized == "dao":
-        return _is_dao_constructable()
-    msg = f"Unknown backend: {backend!r}"
-    raise ValueError(msg)
-
-
 class BackendSelector:
     """Stateless factory for selecting and constructing adapter instances."""
 
