@@ -1194,21 +1194,21 @@ def _cmd_credentials_profile_remove(args: argparse.Namespace) -> int:
 # =============================================================================
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build and return the CLI argument parser (no I/O, no COM/dispatcher)."""
-    parser = argparse.ArgumentParser(prog="ms-access-mcp")
-    parser.add_argument("--version", action="version", version="ms-access-mcp 0.2.0")
+# =============================================================================
+# Family Builders — each builds one subcommand family
+# =============================================================================
 
-    subparsers = parser.add_subparsers(dest="command", help="Command to run")
-
-    # doctor
-    doctor_parser = subparsers.add_parser("doctor", help="Run diagnostics")
+def _build_doctor_parser(sub: argparse._SubParsersAction) -> None:
+    """Add doctor subcommand family."""
+    doctor_parser = sub.add_parser("doctor", help="Run diagnostics")
     doctor_parser.add_argument("--json", action="store_true", help="JSON output")
     doctor_parser.add_argument("--deep", action="store_true", help="Deep checks including Access create+release")
     doctor_parser.set_defaults(func=lambda opts: doctor_main(deep=opts.deep, json_output=opts.json))
 
-    # configure opencode
-    configure_parser = subparsers.add_parser("configure", help="Configure ms-access-mcp integration")
+
+def _build_configure_parser(sub: argparse._SubParsersAction) -> None:
+    """Add configure > opencode subcommand family."""
+    configure_parser = sub.add_parser("configure", help="Configure ms-access-mcp integration")
     configure_subparsers = configure_parser.add_subparsers(dest="configure_action")
 
     opencode_parser = configure_subparsers.add_parser("opencode", help="Register or remove ms-access-mcp in opencode.json")
@@ -1221,8 +1221,10 @@ def build_parser() -> argparse.ArgumentParser:
     exe_path_group.add_argument("--python-mode", action="store_true", help="Use sys.executable with -m ms_access_mcp (portable distribution)")
     opencode_parser.set_defaults(func=_cmd_configure_opencode)
 
-    # credentials subcommands
-    credentials_parser = subparsers.add_parser("credentials", help="Manage server-side database credentials")
+
+def _build_credentials_parser(sub: argparse._SubParsersAction) -> None:
+    """Add credentials subcommand family (set, list, remove, profile)."""
+    credentials_parser = sub.add_parser("credentials", help="Manage server-side database credentials")
     cred_subparsers = credentials_parser.add_subparsers(dest="credentials_action")
 
     cred_set = cred_subparsers.add_parser("set", help="Store credentials for a database")
@@ -1239,7 +1241,6 @@ def build_parser() -> argparse.ArgumentParser:
     cred_remove.add_argument("--local", action="store_true", help="Remove from <db_dir>/.ms-access-mcp.json instead of global file")
     cred_remove.set_defaults(func=_cmd_credentials_remove)
 
-    # credentials profile subcommands
     cred_profile = cred_subparsers.add_parser("profile", help="Manage named credential profiles for external databases")
     cred_profile_subparsers = cred_profile.add_subparsers(dest="credentials_profile_action")
 
@@ -1255,8 +1256,10 @@ def build_parser() -> argparse.ArgumentParser:
     cred_profile_remove.add_argument("--name", type=str, required=True, help="Profile name to remove")
     cred_profile_remove.set_defaults(func=_cmd_credentials_profile_remove)
 
-    # db subcommands
-    db_parser = subparsers.add_parser("db", help="Database connection commands")
+
+def _build_db_parser(sub: argparse._SubParsersAction) -> None:
+    """Add db subcommand family (open, close, list, active)."""
+    db_parser = sub.add_parser("db", help="Database connection commands")
     _add_global_flags(db_parser)
     db_subparsers = db_parser.add_subparsers(dest="db_action")
 
@@ -1276,36 +1279,48 @@ def build_parser() -> argparse.ArgumentParser:
     db_active.set_defaults(db_action="active", func=_with_db(_cmd_db_active))
     _add_global_flags(db_active)
 
-    # tables
-    tables_parser = subparsers.add_parser("tables", help="List tables")
+
+def _build_tables_parser(sub: argparse._SubParsersAction) -> None:
+    """Add tables subcommand family."""
+    tables_parser = sub.add_parser("tables", help="List tables")
     tables_parser.add_argument("--system", action="store_true", help="List system tables")
     _add_global_flags(tables_parser)
     tables_parser.set_defaults(func=_with_db(_cmd_tables))
 
-    # schema
-    schema_parser = subparsers.add_parser("schema", help="Get table schema")
+
+def _build_schema_parser(sub: argparse._SubParsersAction) -> None:
+    """Add schema subcommand family."""
+    schema_parser = sub.add_parser("schema", help="Get table schema")
     schema_parser.add_argument("table", type=str, help="Table name")
     _add_global_flags(schema_parser)
     schema_parser.set_defaults(func=_with_db(_cmd_schema))
 
-    # indexes
-    indexes_parser = subparsers.add_parser("indexes", help="Get table indexes")
+
+def _build_indexes_parser(sub: argparse._SubParsersAction) -> None:
+    """Add indexes subcommand family."""
+    indexes_parser = sub.add_parser("indexes", help="Get table indexes")
     indexes_parser.add_argument("table", type=str, help="Table name")
     _add_global_flags(indexes_parser)
     indexes_parser.set_defaults(func=_with_db(_cmd_indexes))
 
-    # relationships
-    rels_parser = subparsers.add_parser("relationships", help="List relationships")
+
+def _build_relationships_parser(sub: argparse._SubParsersAction) -> None:
+    """Add relationships subcommand family."""
+    rels_parser = sub.add_parser("relationships", help="List relationships")
     _add_global_flags(rels_parser)
     rels_parser.set_defaults(func=_with_db(_cmd_relationships))
 
-    # stats
-    stats_parser = subparsers.add_parser("stats", help="Get database statistics")
+
+def _build_stats_parser(sub: argparse._SubParsersAction) -> None:
+    """Add stats subcommand family."""
+    stats_parser = sub.add_parser("stats", help="Get database statistics")
     _add_global_flags(stats_parser)
     stats_parser.set_defaults(func=_with_db(_cmd_stats))
 
-    # props
-    props_parser = subparsers.add_parser("props", help="Database properties")
+
+def _build_props_parser(sub: argparse._SubParsersAction) -> None:
+    """Add props subcommand family (get, set)."""
+    props_parser = sub.add_parser("props", help="Database properties")
     props_subparsers = props_parser.add_subparsers(dest="props_action")
     props_get = props_subparsers.add_parser("get", help="Get properties")
     props_get.set_defaults(props_action="get", func=_with_db(_cmd_props))
@@ -1316,8 +1331,10 @@ def build_parser() -> argparse.ArgumentParser:
     props_set.add_argument("--value", type=str, required=True)
     _add_global_flags(props_set)
 
-    # queries
-    queries_parser = subparsers.add_parser("queries", help="Query management")
+
+def _build_queries_parser(sub: argparse._SubParsersAction) -> None:
+    """Add queries subcommand family (list, create, set, delete)."""
+    queries_parser = sub.add_parser("queries", help="Query management")
     queries_subparsers = queries_parser.add_subparsers(dest="queries_action")
     queries_list = queries_subparsers.add_parser("list", help="List queries")
     queries_list.set_defaults(queries_action="list", func=_with_db(_cmd_queries))
@@ -1337,38 +1354,48 @@ def build_parser() -> argparse.ArgumentParser:
     queries_delete.add_argument("--name", type=str, required=True)
     _add_global_flags(queries_delete)
 
-    # query
-    query_parser = subparsers.add_parser("query", help="Execute a SELECT query")
+
+def _build_query_parser(sub: argparse._SubParsersAction) -> None:
+    """Add query subcommand family."""
+    query_parser = sub.add_parser("query", help="Execute a SELECT query")
     query_parser.add_argument("sql", type=str, help="SQL SELECT statement")
     query_parser.add_argument("--param", nargs="*", help="Query parameters")
     query_parser.add_argument("--limit", type=int, help="Row limit")
     _add_global_flags(query_parser)
     query_parser.set_defaults(func=_with_db(_cmd_query))
 
-    # insert
-    insert_parser = subparsers.add_parser("insert", help="Insert data")
+
+def _build_insert_parser(sub: argparse._SubParsersAction) -> None:
+    """Add insert subcommand family."""
+    insert_parser = sub.add_parser("insert", help="Insert data")
     insert_parser.add_argument("table", type=str, help="Table name")
     insert_parser.add_argument("data", nargs="*", help="column=value pairs")
     _add_global_flags(insert_parser)
     insert_parser.set_defaults(func=_with_db(_cmd_insert))
 
-    # update
-    update_parser = subparsers.add_parser("update", help="Update data")
+
+def _build_update_parser(sub: argparse._SubParsersAction) -> None:
+    """Add update subcommand family."""
+    update_parser = sub.add_parser("update", help="Update data")
     update_parser.add_argument("table", type=str, help="Table name")
     update_parser.add_argument("data", nargs="*", help="column=value pairs")
     update_parser.add_argument("--where", type=str, help="WHERE clause")
     _add_global_flags(update_parser)
     update_parser.set_defaults(func=_with_db(_cmd_update))
 
-    # delete
-    delete_parser = subparsers.add_parser("delete", help="Delete data")
+
+def _build_delete_parser(sub: argparse._SubParsersAction) -> None:
+    """Add delete subcommand family."""
+    delete_parser = sub.add_parser("delete", help="Delete data")
     delete_parser.add_argument("table", type=str, help="Table name")
     delete_parser.add_argument("--where", type=str, help="WHERE clause")
     _add_global_flags(delete_parser)
     delete_parser.set_defaults(func=_with_db(_cmd_delete))
 
-    # ddl
-    ddl_parser = subparsers.add_parser("ddl", help="DDL operations")
+
+def _build_ddl_parser(sub: argparse._SubParsersAction) -> None:
+    """Add ddl subcommand family (create-table, alter, drop-table, create-index, drop-index, relationship)."""
+    ddl_parser = sub.add_parser("ddl", help="DDL operations")
     ddl_subparsers = ddl_parser.add_subparsers(dest="ddl_action")
     ddl_create_table = ddl_subparsers.add_parser("create-table", help="Create table")
     ddl_create_table.set_defaults(ddl_action="create-table", func=_with_db(_cmd_ddl))
@@ -1407,8 +1434,10 @@ def build_parser() -> argparse.ArgumentParser:
     ddl_relationship.add_argument("--dest-column", type=str, required=True)
     _add_global_flags(ddl_relationship)
 
-    # export
-    export_parser = subparsers.add_parser("export", help="Export data")
+
+def _build_export_parser(sub: argparse._SubParsersAction) -> None:
+    """Add export subcommand family."""
+    export_parser = sub.add_parser("export", help="Export data")
     export_group = export_parser.add_mutually_exclusive_group(required=True)
     export_group.add_argument("table", type=str, nargs="?", help="Table name")
     export_group.add_argument("--query", type=str, help="Query name")
@@ -1418,15 +1447,19 @@ def build_parser() -> argparse.ArgumentParser:
     _add_global_flags(export_parser)
     export_parser.set_defaults(func=_with_db(_cmd_export))
 
-    # links
-    links_parser = subparsers.add_parser("links", help="Linked table commands")
+
+def _build_links_parser(sub: argparse._SubParsersAction) -> None:
+    """Add links subcommand family (list)."""
+    links_parser = sub.add_parser("links", help="Linked table commands")
     links_subparsers = links_parser.add_subparsers(dest="links_action")
     links_list = links_subparsers.add_parser("list", help="List linked tables")
     links_list.set_defaults(links_action="list", func=_with_db(_cmd_links))
     _add_global_flags(links_list)
 
-    # mcp — stdio MCP server
-    mcp_parser = subparsers.add_parser("mcp", help="Run the MCP server over stdio")
+
+def _build_mcp_parser(sub: argparse._SubParsersAction) -> None:
+    """Add mcp subcommand family."""
+    mcp_parser = sub.add_parser("mcp", help="Run the MCP server over stdio")
     mcp_parser.add_argument(
         "--profile",
         type=str,
@@ -1441,8 +1474,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mcp_parser.set_defaults(command="mcp", func=lambda opts: mcp_main(["--profile", opts.profile] if opts.profile else None))
 
-    # automation subcommand group
-    automation_parser = subparsers.add_parser("automation", help="Automation commands (forms, reports, VBA, macros)")
+
+def _build_automation_parser(sub: argparse._SubParsersAction) -> None:
+    """Add automation subcommand family (forms, reports, macros, vba)."""
+    automation_parser = sub.add_parser("automation", help="Automation commands (forms, reports, VBA, macros)")
     automation_subparsers = automation_parser.add_subparsers(dest="automation_action")
     _add_global_flags(automation_parser)
 
@@ -1693,8 +1728,10 @@ def build_parser() -> argparse.ArgumentParser:
     vba_replace_procedure.add_argument("--code", type=str, required=True)
     _add_global_flags(vba_replace_procedure)
 
-    # ---- versioning sub-group ----
-    versioning_parser = subparsers.add_parser("versioning", help="Versioning commands (export, import, compare)")
+
+def _build_versioning_parser(sub: argparse._SubParsersAction) -> None:
+    """Add versioning subcommand family (export-object, export-all, import-object, import-all, compare, export-schema-ddl)."""
+    versioning_parser = sub.add_parser("versioning", help="Versioning commands (export, import, compare)")
     versioning_subparsers = versioning_parser.add_subparsers(dest="versioning_action")
     _add_global_flags(versioning_parser)
 
@@ -1732,8 +1769,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_schema_ddl.add_argument("--out-dir", type=str, required=True)
     _add_global_flags(export_schema_ddl)
 
-    # ---- maintenance sub-group ----
-    maintenance_parser = subparsers.add_parser("maintenance", help="Maintenance commands (backup, dev copy, compact/repair, diagnose, recover)")
+
+def _build_maintenance_parser(sub: argparse._SubParsersAction) -> None:
+    """Add maintenance subcommand family (backup, dev-copy-status, dev-copy-create, dev-copy-deploy, compact-repair, diagnose, recover)."""
+    maintenance_parser = sub.add_parser("maintenance", help="Maintenance commands (backup, dev copy, compact/repair, diagnose, recover)")
     maintenance_subparsers = maintenance_parser.add_subparsers(dest="maintenance_action")
     _add_global_flags(maintenance_parser)
 
@@ -1771,6 +1810,45 @@ def build_parser() -> argparse.ArgumentParser:
     m_recover = maintenance_subparsers.add_parser("recover", help="Kill Access processes and attempt recovery (destructive)")
     m_recover.set_defaults(maintenance_action="recover", func=_with_maintenance(_cmd_maintenance_recover))
     _add_global_flags(m_recover)
+
+
+# =============================================================================
+# Parser Orchestrator
+# =============================================================================
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser (no I/O, no COM/dispatcher).
+
+    Each subcommand family is built by a dedicated builder function.
+    New CLI commands should be added inside the owning family builder.
+    """
+    parser = argparse.ArgumentParser(prog="ms-access-mcp")
+    parser.add_argument("--version", action="version", version="ms-access-mcp 0.2.0")
+
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    _build_doctor_parser(subparsers)
+    _build_configure_parser(subparsers)
+    _build_credentials_parser(subparsers)
+    _build_db_parser(subparsers)
+    _build_tables_parser(subparsers)
+    _build_schema_parser(subparsers)
+    _build_indexes_parser(subparsers)
+    _build_relationships_parser(subparsers)
+    _build_stats_parser(subparsers)
+    _build_props_parser(subparsers)
+    _build_queries_parser(subparsers)
+    _build_query_parser(subparsers)
+    _build_insert_parser(subparsers)
+    _build_update_parser(subparsers)
+    _build_delete_parser(subparsers)
+    _build_ddl_parser(subparsers)
+    _build_export_parser(subparsers)
+    _build_links_parser(subparsers)
+    _build_mcp_parser(subparsers)
+    _build_automation_parser(subparsers)
+    _build_versioning_parser(subparsers)
+    _build_maintenance_parser(subparsers)
 
     return parser
 
