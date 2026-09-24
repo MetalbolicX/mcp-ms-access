@@ -182,7 +182,9 @@ def detect_orphaned_backup(db_path: str) -> dict | None:
                 # Process still alive — not an orphan
                 continue
         except Exception:
-            pass
+            # Probe failed — session liveness unverified; skip this candidate
+            # rather than reporting a false-positive orphan.
+            continue
 
         return manifest
 
