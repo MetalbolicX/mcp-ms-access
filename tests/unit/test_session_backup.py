@@ -98,6 +98,31 @@ class TestCleanupSessionBackup:
         # Second call should not raise even if file already gone
         cleanup_session_backup(str(db), os.getpid())
 
+    def test_cleanup_filters_by_database(self, tmp_path: Path) -> None:
+        """Cleanup deletes only this db's snapshot; another db's snapshot for the same PID survives."""
+        db_a = tmp_path / "alpha.accdb"
+        db_b = tmp_path / "beta.accdb"
+        db_a.write_bytes(b"AAA")
+        db_b.write_bytes(b"BBB")
+        pid = os.getpid()
+
+        result_a = create_session_backup(str(db_a))
+        result_b = create_session_backup(str(db_b))
+        assert isinstance(result_a, Ok)
+        assert isinstance(result_b, Ok)
+        backup_a = result_a.data["backup_path"]
+        backup_b = result_b.data["backup_path"]
+
+        try:
+            cleanup_session_backup(str(db_a), pid)
+
+            assert not os.path.exists(backup_a)
+            assert not os.path.exists(backup_a + ".manifest.json")
+            assert os.path.exists(backup_b), "db B snapshot must survive cleanup of db A"
+            assert os.path.exists(backup_b + ".manifest.json"), "db B manifest must survive cleanup of db A"
+        finally:
+            cleanup_session_backup(str(db_b), pid)
+
 
 class TestDetectOrphanedBackup:
     def test_no_orphan_returns_none(self, tmp_path: Path) -> None:
