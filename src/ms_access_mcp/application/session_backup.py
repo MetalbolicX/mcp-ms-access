@@ -107,10 +107,13 @@ def create_session_backup(db_path: str) -> Result:
 def cleanup_session_backup(db_path: str, pid: int | None = None) -> None:
     """Delete the auto-session snapshot (and manifest) for this session.
 
-    Best-effort: never raises. Idempotent — safe to call in finally blocks.
+    Restricted to this database's basename — one process may hold snapshots
+    for several databases. Best-effort: never raises. Idempotent — safe to
+    call in finally blocks.
     """
     target_pid = pid if pid is not None else os.getpid()
-    pattern = os.path.join(_AUTO_SESSION_DIR, f"{_FILENAME_PREFIX}_{target_pid}_*")
+    basename = os.path.basename(db_path)
+    pattern = os.path.join(_AUTO_SESSION_DIR, f"{_FILENAME_PREFIX}_{target_pid}_*_{basename}")
     for backup_path in glob.glob(pattern):
         manifest_path = backup_path + ".manifest.json"
         try:
