@@ -449,7 +449,9 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         killed_pids, errors = kill_access_processes()
 
         reconnected = False
-        assert self._adapter is not None  # noqa: S101 - recover requires an initialized adapter
+        if err := self._ensure_adapter():
+            return err
+        assert self._adapter is not None  # noqa: S101 - _ensure_adapter establishes the application invariant
         if hasattr(self._adapter, "recover"):
             try:
                 reconnected = self._adapter.recover()
