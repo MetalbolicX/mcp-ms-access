@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 from ms_access_mcp.application.session_backup import (
     _AUTO_SESSION_DIR,
@@ -198,3 +199,42 @@ class TestDetectOrphanedBackup:
 
         # Asking about db2 should find nothing
         assert detect_orphaned_backup(str(db2)) is None
+
+    def test_probe_failure_skips_candidate(self, tmp_path: Path) -> None:
+        """Tasklist probe failure (timeout/missing binary) → skip candidate, not report orphan."""
+        db = tmp_path / "test.accdb"
+        db.write_bytes(b"CONTENT")
+
+        dead_pid = 99998  # very unlikely to exist
+        backup_filename = f"autosession_{dead_pid}_20260916_test.accdb"
+        backup_path = os.path.join(_AUTO_SESSION_DIR, backup_filename)
+        manifest_path = backup_path + ".manifest.json"
+        manifest = {
+            "source_path": str(db),
+            "backup_path": backup_path,
+            "sha256": "deadbeef",
+            "size_bytes": 100,
+            "created_at": "2026-09-16T00:00:00+00:00",
+            "kind": "auto_session",
+            "session_pid": dead_pid,
+        }
+
+        os.makedirs(_AUTO_SESSION_DIR, exist_ok=True)
+        Path(backup_path).write_bytes(b"DEAD SESSION CONTENT")
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f)
+
+        try:
+            with patch("subprocess.run", side_effect=OSError("tasklist unavailable")):
+                result = detect_orphaned_backup(str(db))
+            assert result is None, f"probe failure must skip candidate, got {result!r}"
+        finally:
+            # Clean up
+            try:
+                os.remove(backup_path)
+            except Exception:
+                pass
+            try:
+                os.remove(manifest_path)
+            except Exception:
+                pass
