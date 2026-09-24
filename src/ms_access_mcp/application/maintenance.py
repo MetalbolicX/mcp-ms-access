@@ -523,7 +523,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
 
         try:
             proc = subprocess.run(
-                [exe_path, f'"{path}"', "/compact", f'"{target}"'],
+                [exe_path, path, "/compact", target],
                 capture_output=True,
                 timeout=120,
                 check=False,
