@@ -112,6 +112,26 @@ class TestLdbAwareRetry:
 
 
 # ---------------------------------------------------------------------------
+# Rung 2 — recover_access
+# ---------------------------------------------------------------------------
+
+class TestRecoverAccess:
+    def test_fresh_use_case_returns_err_not_assertion(self, tmp_path: Path) -> None:
+        """recover_access on a fresh use case (no db_path) → Err envelope, not AssertionError."""
+        mc = MaintenanceUseCases()
+
+        with patch("sys.platform", "win32"):
+            with patch(
+                "ms_access_mcp.application.maintenance.kill_access_processes",
+                return_value=([], []),
+            ):
+                result = mc.recover_access(confirm=True)
+
+        assert isinstance(result, Err), f"Expected Err, got {result!r}"
+        assert "db_path" in result.message or "adapter" in result.message.lower()
+
+
+# ---------------------------------------------------------------------------
 # Rung 3 — msaccess /compact CLI escalation
 # ---------------------------------------------------------------------------
 
