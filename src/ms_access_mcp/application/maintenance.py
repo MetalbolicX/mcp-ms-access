@@ -535,6 +535,12 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
             stderr = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
             return _err(f"msaccess.exe /compact failed (exit {proc.returncode}): {stderr}")
 
+        if not os.path.isfile(target):
+            return _err(
+                f"msaccess.exe /compact exited 0 but produced no output at {target}; "
+                "escalating (output verification failed)"
+            )
+
         return _ok(data={"original_path": path, "exe_used": exe_path, "target_path": target})
 
     # -------------------------------------------------------------------------
