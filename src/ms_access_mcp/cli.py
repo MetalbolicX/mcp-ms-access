@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from .application.automation import AutomationUseCases
 from .application.database import DatabaseUseCases, Err
@@ -29,7 +30,6 @@ from .doctor import doctor_main
 from .opencode_config import Ok as OpenCodeOk
 from .opencode_config import entry_from, register, remove
 from .safety import allowed_dirs_from_env
-from .server import main as mcp_main
 
 # =============================================================================
 # Global Flags
@@ -1457,6 +1457,12 @@ def _build_links_parser(sub: argparse._SubParsersAction) -> None:
     _add_global_flags(links_list)
 
 
+def _run_mcp(opts: Any) -> Any:
+    from .server import main as mcp_main  # lazy: keeps --version/--help import-light
+
+    return mcp_main(["--profile", opts.profile] if opts.profile else None)
+
+
 def _build_mcp_parser(sub: argparse._SubParsersAction) -> None:
     """Add mcp subcommand family."""
     mcp_parser = sub.add_parser("mcp", help="Run the MCP server over stdio")
@@ -1472,7 +1478,7 @@ def _build_mcp_parser(sub: argparse._SubParsersAction) -> None:
             "Default: core. Can also be set via ACCESS_MCP_PROFILE env var."
         ),
     )
-    mcp_parser.set_defaults(command="mcp", func=lambda opts: mcp_main(["--profile", opts.profile] if opts.profile else None))
+    mcp_parser.set_defaults(command="mcp", func=_run_mcp)
 
 
 def _build_automation_parser(sub: argparse._SubParsersAction) -> None:
