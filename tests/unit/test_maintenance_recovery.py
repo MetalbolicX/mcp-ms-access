@@ -180,6 +180,28 @@ class TestRepairWithAccessCli:
         assert isinstance(result, Err), f"Expected Err, got {result!r}"
         assert "escalating" in result.message
 
+    def test_argv_passed_unquoted(self, tmp_path: Path) -> None:
+        """subprocess.run receives raw paths — list-form quoting handles spaces."""
+        db = tmp_path / "db.accdb"
+        db.write_bytes(b"FAKE")
+
+        with patch("sys.platform", "win32"):
+            with patch("ms_access_mcp.application.maintenance.shutil.which", return_value=r"C:\Program Files\...\msaccess.exe"):
+                with patch("os.path.exists", return_value=True):
+                    with patch("os.path.isfile", return_value=True):
+                        with patch("subprocess.run") as mock_run:
+                            mock_run.return_value = MagicMock(returncode=0)
+                            mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
+                            result = mc.repair_with_access_cli(str(db), confirm=True)
+
+        assert isinstance(result, Ok), f"Expected Ok, got {result!r}"
+        argv = mock_run.call_args[0][0]
+        assert argv[0] == r"C:\Program Files\Microsoft Office\Office16\msaccess.exe"
+        assert argv[1] == str(db)
+        assert argv[2] == "/compact"
+        assert argv[3].endswith(f"repair_{db.name}")
+        assert not any('"' in arg for arg in argv), f"quoted arg in argv: {argv!r}"
+
     def test_subprocess_timeout_returns_err(self, tmp_path: Path) -> None:
         """Non-zero timeout returns Err."""
         db = tmp_path / "db.accdb"
