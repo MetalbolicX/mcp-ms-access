@@ -70,7 +70,7 @@ honor its STOP conditions, and update your row when done.
 | 047  | Crash resilience - kill-mid-write chaos harness, recovery ladder, automatic session backup | 20 | P1 | L | HIGH | @medium + strict TDD per step; harness is a direct g10 port | - | DONE (branch plan/047-crash-resilience-recovery; 9 commits incl. orchestrator verification fixes 4bf07b0/655f712 - executor initial all-green claim was FALSE: 2 broken tests in test_mcp_maintenance.py, F841 + 21x F401 lint caught by independent gate re-run, all fixed; final verified: ruff clean, 1304 passed/5 skipped, tool_budget PASS, pyright 1 pre-existing error migration.py:563 see plan 050; g13 harness 3/3 CLEAN rounds=3 seed=1; 20-round outcome matrix in docs/specs/crash-recovery.md deferred to operator Windows+ACE run) |
 | 048  | Pass the real source_table to create_relationship — fix empty Relation.Table | 20 | P1 | S | MED | Strict TDD (refresh plan-042's bug-pinning test first — plan-035 lesson) | none (bug predates 047; blame cbae99c) | DONE (branch plan/048-create-relationship-table-name; 4 commits incl. README update; 1304 passed/5 skipped unit + probe-gated roundtrip SKIPPED on non-Windows host per plan-027/028 pattern; ruff clean; pyright 1 pre-existing error migration.py:563 unchanged — cleared by plan 050; facade create_relationship now passes source_table; RED → GREEN → probe-gated integration test sequence preserved; delete-path "" left untouched per plan) |
 | 049  | Isolate the test-order pollution behind the opencode_config S2 flake | 20 | P1 | M | LOW | Reproduce-first → bisect → fix (plans 002/030 precedent); 5× stability gate | none | TODO |
-| 050  | Repo hygiene — delete stray root files (nul, pnpm-workspace.yaml), clear the last pyright error (migration.py:563) | 20 | P3 | S | LOW | Direct edit (mechanical; pyright IS the gate) | none | TODO |
+| 050  | Repo hygiene — delete stray root files (nul, pnpm-workspace.yaml), clear the last pyright error (migration.py:563) | 20 | P3 | S | LOW | Direct edit (mechanical; pyright IS the gate) | none | TODO (2026-09-24: pyright item superseded by plan 070 — 050 retains strays deletion only) |
 | 055  | Legacy .mdb support (Jet 4 first-class + Jet 3 32-bit bridge) | 20 | P1 | M | MED | @medium + strict TDD | — | DONE (merged to main as `079d756`; format sniffing JET3/JET4/ACE/UNKNOWN, Jet 4 .mdb creation via DAO dbVersion40, salvage extended to .mdb, doctor format matrix with dynamic bridge status) |
 | 056  | DEBUG-log the silent COM swallows in access.py | 21 | P1 | S | LOW | @medium + strict TDD | — | DONE (branch plan/056-access-swallow-logging; 9 commits `f250753`→`a708881`; every silent `except Exception` swallow emits DEBUG incl. 11-handler + inner-macro-loop rounds caught by grader; aggregate `skipped` pattern in hot loops; swallow semantics unchanged; 1383 passed/5 skipped, ruff clean, pyright 0; unblocks 060) |
 | 057  | Quote identifiers + harden export connection string (app-layer SQL) | 21 | P1 | S | LOW | @medium + strict TDD | 044 artifact | DONE (branch plan/057-application-sql-quoting; `fe17ab3` RED + `46c9d5e` GREEN; migration.py:616 COUNT via plan-044 `quote_ident`; db_export `_build_iisam_insert_sql` rejects `;`/`"` via `Result`; pyright 1 pre-existing error migration.py:574 owned by plan 050; 1374 passed/5 skipped) |
@@ -79,6 +79,20 @@ honor its STOP conditions, and update your row when done.
 | 060  | Decompose `AccessAdapter` (1,854 LOC) into `backends/access/` package | 21 | P2 | L | MED | characterization-first, strangler | 056 | DONE (branch plan/060-access-package-decomposition; 5 commits `da05398`→`eaf015d` stacked on 056; package: control_types 80 / dialog_killer 43 / trusted_locations 72 / vba 433 / object_kinds 196 / forms 659 / reports 503 / macros 151; facade 735 lines of pure delegation; 66 DEBUG lines preserved (floor 52); mirror+swallow pins untouched; 1390 passed/5 skipped) |
 | 061  | Split `cli.py build_parser` (~586 lines) into family builders | 21 | P3 | M | LOW | characterization → verbatim move | 041 recommended | DONE (branch plan/061-cli-parser-family-builders; `97b1362` surface pin (7 tests) + `c531e7f` 22 `_build_*_parser` builders (plan gate ≥10), `build_parser` 35 lines; parser behavior byte-identical; 1375 passed/5 skipped) |
 | 062  | Consolidate triplicated exception hierarchies + delete dead symbols | 21 | P3 | S | LOW | strict TDD | 060 | BLOCKED (safe subset landed: commit `558c39c` on branch plan/062-exception-consolidation-dead-code deletes `backend_available` + `set_active`; Steps 1–3 STOP per plan — `BackendUnavailableError`/`BackendCapabilityMismatchError` have different bases across errors.py/capabilities.py/backends (`AccessMcpError` vs `Exception`) = same-name-different-purpose; `connect_hidden` kept — live refs at tests/integration/test_access_adapter.py:37,48; 1390 passed/5 skipped) |
+| 063  | CLI startup + recovery verification hardening (lazy server import ~5s win; repair-output proof + argv quoting; `recover_access` ensure-adapter; backup cleanup db filter; orphan-probe skip) | 22 | P1 | M | LOW | @medium + strict TDD | — | TODO |
+| 064  | Toolchain pins — explicit `[tool.pyright]` (src, basic) + `mysql-connector-python>=26` floor | 22 | P2 | S | LOW | Direct edit (config-only; gates are the verification) | — | TODO |
+| 065  | Adapter `connected` contract — stop reconnect-every-call (`_ensure_adapter` probe); Quit orphaned MSACCESS.EXE on failed `AccessAdapter.connect` | 23 | P1 | M | MED | @medium + strict TDD | — (before 066/070) | TODO |
+| 066  | Honest session teardown — use-case registry wired to lifespan + real `disconnect_access` (OWNS the deferred per-call-lifecycle finding) | 23 | P1 | M | MED | @medium + strict TDD | 065 | TODO |
+| 067  | DAO recordset + salvage failure safety (finally-close recordsets; `salvage_database` envelope + fresh-adapter disconnect) | 23 | P1 | M | LOW-MED | @medium + strict TDD | — | TODO |
+| 068  | `open_database` replace guard — disconnect previous live adapter | 23 | P2 | S | LOW | @medium + strict TDD | — | TODO |
+| 069  | Migration source-adapter lifecycle — connect once per transfer, finally-disconnect (incl. `_extract_dao`/`_extract_odbc`) | 24 | P1 | M | LOW | @medium + strict TDD | — (before 070) | TODO |
+| 070  | Migration protocol adoption — fix `QueryResult.get("rows")` seam (broken on default DAO path), public `count_rows` (cursor closed, failures logged), retire the Any/`type:ignore` cluster (SUPERSEDES 050's pyright item) | 24 | P1 | M | MED | characterization + strict TDD (pyright is the gate) | 069 | TODO |
+| 071  | Backend result envelopes unified on models dataclasses — kills post-commit `asdict` TypeError on ODBC/ADO write paths (ADO Execute semantics untouched — DEBT-06 preserved) | 24 | P1 | M | MED | characterization-first + strict TDD | 070 | TODO |
+| 072  | Error scrubbing at every backend boundary — public `errors.strip_password`; odbc/dao/migration/doctor/database raw `str(e)` sites | 24 | P1 | S-M | LOW | @medium + strict TDD | 071 recommended | TODO |
+| 073  | Windows credential-file ACL hardening — owner-only DACL via shared atomic-write helper (UN-DEFERS the 2026-09-16 DACL finding) | 25 | P1 | M | MED | @medium + strict TDD | — (before 076) | TODO |
+| 074  | Export path bracket reject — `]` in xlsx IISAM `DATABASE=` path | 25 | P2 | S | LOW | @medium + strict TDD | — | TODO |
+| 075  | Typed pydantic params for migration + linked-table tools (no raw-dict trust at the boundary) | 25 | P2 | M | LOW-MED | @medium + strict TDD | 070 | TODO |
+| 076  | Spike: credential colocation policy — guard vs relocate vs document-only | 25 | P3 | S | LOW | Investigate + decision note (impl ≤50 lines only if Option A) | 073 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
@@ -453,7 +467,8 @@ Defect findings deferred (real, but below the cut for this batch — revisit aft
   empty instance → structurally a no-op; zombie MSACCESS.EXE / stale `.ldb`).
   High impact, MED fix risk — needs its own dedicated plan with live-Access
   verification, and conflicts in-flight with 045's rewrite of the same file;
-  sequence AFTER 045.
+  sequence AFTER 045. **→ NOW PLANNED as plan 066 (2026-09-24 audit; 045
+  DONE).**
 - **Nested STA dispatch in `set_control_event_procedure`** (access.py
   :1002→:1840 — guaranteed 120 s timeout freeze of all COM calls). Fix is S
   (reentrancy check or split dispatch) but touches dispatcher semantics —
@@ -479,7 +494,9 @@ Defect findings deferred (real, but below the cut for this batch — revisit aft
   UTF-16-LE temp files that `LoadFromText` expects as ANSI; temp files never
   deleted) — S-M, own plan.
 - **Windows DACL hardening for credentials files** (credentials.py applies
-  `0o600` only off-Windows) — S.
+  `0o600` only off-Windows) — S. **→ NOW PLANNED as plan 073 (2026-09-24
+  audit; audit additionally found the chmod is skipped entirely on `nt`, so
+  Windows files get zero hardening).**
 - **`pip-audit` in CI** — S; fold into 041's gate or a one-line CI step.
 - **VBA/macro write tools behind an explicit opt-in** (confirm=True is
   self-satisfied by the same caller) — S-M; deliberate default-on/off decision
@@ -522,3 +539,85 @@ Direction findings rejected (no grounding or contradicts settled decisions):
 - **Async/await rewrite of ComDispatcher** — STA serialization is a hard COM
   constraint (rejected 2026-09-14); the dispatcher findings above are about
   timeout/restart semantics, not the model.
+
+## Plans 063–076: mode rationale + audit record (deep audit, 2026-09-24)
+
+Deep improve-skill audit of `main @ a7f2edb` (six parallel category audits —
+correctness/security/performance/test/architecture-DX/direction — followed by
+a 10-claim vetting pass against live code: 9 CONFIRMED, 1 narrowed). 42 raw
+findings; the operator selected 4 clusters (COM lifecycle, broken seams,
+security hardening, quick wins) → 20 findings → **14 plans in 4 phases**.
+
+- **Strict TDD** everywhere except **064** (config-only — pyright/ruff/lock
+  gates ARE the verification, same reasoning as plans 011/012) and **076**
+  (spike — the deliverable is a decision; implementation only if Option A
+  and ≤50 lines).
+- **Phases**: 22 = quick wins (063, 064 — independent); 23 = COM/session
+  lifecycle (065 → 066; 067, 068 any order); 24 = migration/result seams
+  (**strict order 069 → 070 → 071 → 072** — same files); 25 = security
+  (073 → 076; 074 anytime; 075 after 070).
+- Cross-phase: 065 lands before 066 and 070 (the `connected` contract is
+  load-bearing for both).
+
+### Reconciliations with earlier records
+
+- **066 OWNS the deferred "per-call connection lifecycle" finding**
+  (2026-09-16 list above) — unblocked once 045 landed.
+- **070 SUPERSEDES plan 050's pyright item** (the `migration.py:574`
+  `.get("rows")` on `QueryResult` — the audit proved this is not just a
+  typing wart but a live runtime break of per-table transfer on the default
+  DAO backend, swallowed into sanitized errors). 050 retains strays
+  deletion only; the "1 acceptable pre-existing pyright error" carve-out
+  every plan since 040 has carried ENDS at 070.
+- **073 UN-DEFERS the Windows DACL finding** (2026-09-16 list) and widens
+  it: chmod is skipped entirely on `nt`, so Windows stores currently get no
+  hardening at all.
+
+### Findings from this audit considered and deferred (recorded so nobody re-audits)
+
+Defect/maintenance findings NOT selected this cycle, in rough leverage order:
+
+- **TEST-02 — CI never runs any COM/ODBC integration test** (14 files, 11×
+  `odbc_integration` + 7× `com_integration` markers gated nowhere; crash
+  durability, corrupt-DB salvage, xlsx roundtrip, jet3/jet4 all CI-blind).
+  Biggest force multiplier in the audit, but needs a self-hosted Windows
+  runner decision (operator infra call) — it would also de-risk PERF-04 and
+  DEBT-06 below. Fold with TODO plan 041's qualify-gate design.
+- **TEST-01** unit fakes re-implement domain models/DAO type maps
+  (4 of 20 DAO type codes modeled) — contract-drift risk; M.
+- **TEST-03** `dao.py:salvage_tables` (163 lines, last-resort recovery) has
+  zero unit coverage — S to characterize (extract the DDL type-map pure
+  function); cheaper and safer after 067.
+- **TEST-04** `backends/access` decomposed 5× in one day validated only
+  against fakes — run the existing integration suite once per release
+  (operator gate) until TEST-02 exists.
+- **PERF-01** N+1 `COUNT(*)` per table in `get_tables` (already on the
+  2026-09-16 deferred list); **PERF-02** linear `TableDefs` COM scans where
+  DAO supports direct item lookup; **PERF-04** `salvage_tables` double-scans
+  every table (sequence after 067). Also the known unbounded `fetchall`
+  family (odbc/db_export/migration materialization — 2026-09-16 list).
+- **DEBT-03** `convert_legacy_database` tool embeds policy in the MCP layer
+  (only layering violation found); **DEBT-04** 4-line guard preamble
+  copy-pasted across 17 `database.py` methods; **DEBT-05** ~120L residual
+  script/guard duplication across adapters; **DEBT-06** ADO
+  `Connection.Execute(sql, vals)` passes params in the RecordsAffected slot
+  + fabricates `affected: 1` — INVESTIGATE plan (reachability of AdoAdapter
+  CRUD unknown; 071 deliberately preserves the call semantics while fixing
+  envelopes); **DEBT-07** cli.py is 1,929L (not 1,531 — recon correction)
+  with automation (~660L) + credentials (~420L) extraction families ready,
+  extending the plan-038/061 patterns.
+- **DX-01** AGENTS.md (deferred since 2026-09-16 — unchanged); DX-03/DOC-01
+  subsumed by TEST-02/DIR-02.
+- **SEC-05** credential colocation → decided by plan 076's spike.
+- **DEP** posture otherwise current (mcp 1.30.0, pydantic 2.13.5, pyodbc
+  5.3.0, pywin32 312, openpyxl 3.1.5; psycopg2-vs-3 settled) — 064 takes the
+  one real drift (mysql floor).
+
+Direction findings (DIR-01..08 from the audit) remain available for a
+direction cycle after the debt phases: the meta-signal stands — execute the
+existing TODO backlog (050 → 049 → 041 → 046) before new features; DIR-01
+(prompts) IS plan 046; DIR-05 (productized `verify`) folds into 041's
+design; DIR-02 (close/archive openspec plan-024) is a verification sweep;
+DIR-03/04 (schema diff, reverse migration), DIR-06 (package-manager
+distribution), DIR-07 (multi-DB ADR) are spike-class decisions.
+
