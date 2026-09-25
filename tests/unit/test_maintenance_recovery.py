@@ -518,3 +518,29 @@ class TestSalvageDatabase:
 
         assert isinstance(result, Err)
         adapter.disconnect.assert_called_once_with()
+
+    def test_salvage_disconnects_adapter_when_create_fresh_fails(self, tmp_path: Path) -> None:
+        """The fresh adapter is disconnected even if create_database itself fails."""
+        db = tmp_path / "db.accdb"
+        db.write_bytes(b"CORRUPT CONTENT")
+
+        class _FakeDispatcher:
+            def start(self):
+                pass
+
+            def call(self, fn, engine=None):
+                return fn(engine)
+
+            def shutdown(self):
+                pass
+
+        adapter = MagicMock()
+        adapter.create_database.side_effect = RuntimeError("disk full")
+        mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
+        with patch("ms_access_mcp.backends.dispatcher.ComDispatcher", return_value=_FakeDispatcher()):
+            with patch("ms_access_mcp.backends.BackendSelector.get_adapter", return_value=adapter):
+                result = mc.salvage_database(str(db), confirm=True)
+
+        assert isinstance(result, Err)
+        assert "Cannot create fresh database" in result.message
+        adapter.disconnect.assert_called_once_with()

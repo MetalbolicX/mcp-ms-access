@@ -588,22 +588,22 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
             return _err(f"Cannot rename original file: {e}")
 
         fresh_adapter = None
-        # Create a fresh database at the original path
         try:
-            from typing import Literal, cast
+            # Create a fresh database at the original path
+            try:
+                from typing import Literal, cast
 
-            from ..backends import DATA_READ_CAPS, BackendSelector
+                from ..backends import DATA_READ_CAPS, BackendSelector
 
-            fresh_adapter = BackendSelector.get_adapter(
-                db_path=path,
-                backend=cast(Literal["odbc", "com", "dao", "auto"] | None, "dao"),
-                capabilities=DATA_READ_CAPS,
-            )
-            cast(Any, fresh_adapter).create_database(path, format=file_format)
-        except Exception as e:
-            return _err(f"Cannot create fresh database at {path}: {e}")
+                fresh_adapter = BackendSelector.get_adapter(
+                    db_path=path,
+                    backend=cast(Literal["odbc", "com", "dao", "auto"] | None, "dao"),
+                    capabilities=DATA_READ_CAPS,
+                )
+                cast(Any, fresh_adapter).create_database(path, format=file_format)
+            except Exception as e:
+                return _err(f"Cannot create fresh database at {path}: {e}")
 
-        try:
             # Salvage tables from corrupt DB using DAO backend seam
             try:
                 table_reports = cast(Any, fresh_adapter).salvage_tables(corrupt_path, path)
@@ -623,7 +623,8 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
                 "total_tables": len(table_reports),
             })
         finally:
-            try:
-                fresh_adapter.disconnect()
-            except Exception:
-                pass
+            if fresh_adapter is not None:
+                try:
+                    fresh_adapter.disconnect()
+                except Exception:
+                    pass
