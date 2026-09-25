@@ -3,10 +3,9 @@
 Plan 042 — facade↔adapter contract alignment.
 """
 
-import dataclasses
-
 from ms_access_mcp.application.database import DatabaseUseCases
 from ms_access_mcp.errors import Err
+from ms_access_mcp.models import QueryResult, WriteResult
 
 
 class SpyAdapter:
@@ -19,11 +18,14 @@ class SpyAdapter:
     def _record(self, method: str, args: tuple, kwargs: dict):
         self._calls.append((method, args, kwargs))
 
-    def _ok(self, **kw):
-        return dataclasses.asdict(dataclasses.make_dataclass("R", ["success", "error", "affected"])(success=True, error="", affected=0, **kw))
+    def _ok(self, **kw) -> WriteResult:
+        return WriteResult(success=True, affected=kw.get("affected", 0), error=kw.get("error"))
 
-    def _fail(self, msg="failure"):
-        return {"success": False, "error": msg}
+    def _fail(self, msg="failure") -> WriteResult:
+        return WriteResult(success=False, error=msg)
+
+    def execute_query(self, sql: str, params=None) -> QueryResult:
+        return QueryResult(success=True, rows=[], count=0, columns=[])
 
     def connect(self, db_path: str) -> bool:
         return True
@@ -43,55 +45,55 @@ class SpyAdapter:
     def get_database_statistics(self):
         return {}
 
-    def insert_data(self, table_name: str, data: dict) -> dict:
+    def insert_data(self, table_name: str, data: dict) -> WriteResult:
         self._record("insert_data", (table_name, data), {})
         return self._ok()
 
-    def update_data(self, table_name: str, data: dict, where_dict: str | None = None) -> dict:
+    def update_data(self, table_name: str, data: dict, where_dict: str | None = None) -> WriteResult:
         self._record("update_data", (table_name, data), {"where_dict": where_dict})
         return self._ok()
 
-    def delete_data(self, table_name: str, where_dict: str | None = None) -> dict:
+    def delete_data(self, table_name: str, where_dict: str | None = None) -> WriteResult:
         self._record("delete_data", (table_name,), {"where_dict": where_dict})
         return self._ok()
 
-    def create_query(self, name: str, sql: str) -> dict:
+    def create_query(self, name: str, sql: str) -> WriteResult:
         self._record("create_query", (name, sql), {})
         return self._ok()
 
-    def set_query_sql(self, name: str, sql: str) -> dict:
+    def set_query_sql(self, name: str, sql: str) -> WriteResult:
         self._record("set_query_sql", (name, sql), {})
         return self._ok()
 
-    def delete_query(self, name: str) -> dict:
+    def delete_query(self, name: str) -> WriteResult:
         self._record("delete_query", (name,), {})
         return self._ok()
 
-    def create_table(self, table_name: str, columns: dict) -> dict:
+    def create_table(self, table_name: str, columns: dict) -> WriteResult:
         self._record("create_table", (table_name, columns), {})
         return self._ok()
 
-    def alter_table(self, table_name: str, action: str, column_name: str | None = None, sql_type: str | None = None) -> dict:
+    def alter_table(self, table_name: str, action: str, column_name: str | None = None, sql_type: str | None = None) -> WriteResult:
         self._record("alter_table", (table_name, action), {"column_name": column_name, "sql_type": sql_type})
         return self._ok()
 
-    def delete_table(self, table_name: str) -> dict:
+    def delete_table(self, table_name: str) -> WriteResult:
         self._record("delete_table", (table_name,), {})
         return self._ok()
 
-    def create_index(self, table_name: str, index_name: str, columns: list, *, unique: bool = False) -> dict:
+    def create_index(self, table_name: str, index_name: str, columns: list, *, unique: bool = False) -> WriteResult:
         self._record("create_index", (table_name, index_name, columns), {"unique": unique})
         return self._ok()
 
-    def drop_index(self, table_name: str, index_name: str) -> dict:
+    def drop_index(self, table_name: str, index_name: str) -> WriteResult:
         self._record("drop_index", (table_name, index_name), {})
         return self._ok()
 
-    def create_relationship(self, table_name: str, relationship_name: str, columns: list, foreign_table: str, foreign_columns: list) -> dict:
+    def create_relationship(self, table_name: str, relationship_name: str, columns: list, foreign_table: str, foreign_columns: list) -> WriteResult:
         self._record("create_relationship", (table_name, relationship_name, columns, foreign_table, foreign_columns), {})
         return self._ok()
 
-    def delete_relationship(self, table_name: str, *, relationship_name: str) -> dict:
+    def delete_relationship(self, table_name: str, *, relationship_name: str) -> WriteResult:
         self._record("delete_relationship", (table_name,), {"relationship_name": relationship_name})
         return self._ok()
 
@@ -99,43 +101,43 @@ class SpyAdapter:
 class FailingSpyAdapter(SpyAdapter):
     """Spy that returns a failure result instead of success."""
 
-    def insert_data(self, table_name: str, data: dict) -> dict:
+    def insert_data(self, table_name: str, data: dict) -> WriteResult:
         return self._fail("insert failed")
 
-    def update_data(self, table_name: str, data: dict, where_dict: str | None = None) -> dict:
+    def update_data(self, table_name: str, data: dict, where_dict: str | None = None) -> WriteResult:
         return self._fail("update failed")
 
-    def delete_data(self, table_name: str, where_dict: str | None = None) -> dict:
+    def delete_data(self, table_name: str, where_dict: str | None = None) -> WriteResult:
         return self._fail("delete failed")
 
-    def create_query(self, name: str, sql: str) -> dict:
+    def create_query(self, name: str, sql: str) -> WriteResult:
         return self._fail("create_query failed")
 
-    def set_query_sql(self, name: str, sql: str) -> dict:
+    def set_query_sql(self, name: str, sql: str) -> WriteResult:
         return self._fail("set_query_sql failed")
 
-    def delete_query(self, name: str) -> dict:
+    def delete_query(self, name: str) -> WriteResult:
         return self._fail("delete_query failed")
 
-    def create_table(self, table_name: str, columns: dict) -> dict:
+    def create_table(self, table_name: str, columns: dict) -> WriteResult:
         return self._fail("create_table failed")
 
-    def alter_table(self, table_name: str, action: str, column_name: str | None = None, sql_type: str | None = None) -> dict:
+    def alter_table(self, table_name: str, action: str, column_name: str | None = None, sql_type: str | None = None) -> WriteResult:
         return self._fail("alter_table failed")
 
-    def delete_table(self, table_name: str) -> dict:
+    def delete_table(self, table_name: str) -> WriteResult:
         return self._fail("delete_table failed")
 
-    def create_index(self, table_name: str, index_name: str, columns: list, *, unique: bool = False) -> dict:
+    def create_index(self, table_name: str, index_name: str, columns: list, *, unique: bool = False) -> WriteResult:
         return self._fail("create_index failed")
 
-    def drop_index(self, table_name: str, index_name: str) -> dict:
+    def drop_index(self, table_name: str, index_name: str) -> WriteResult:
         return self._fail("drop_index failed")
 
-    def create_relationship(self, table_name: str, relationship_name: str, columns: list, foreign_table: str, foreign_columns: list) -> dict:
+    def create_relationship(self, table_name: str, relationship_name: str, columns: list, foreign_table: str, foreign_columns: list) -> WriteResult:
         return self._fail("create_relationship failed")
 
-    def delete_relationship(self, table_name: str, *, relationship_name: str) -> dict:
+    def delete_relationship(self, table_name: str, *, relationship_name: str) -> WriteResult:
         return self._fail("delete_relationship failed")
 
 
