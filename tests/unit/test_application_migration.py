@@ -17,7 +17,7 @@ from ms_access_mcp.application.migration import (
 from ms_access_mcp.backends.migration import CONNECTOR_FACTORIES
 from ms_access_mcp.backends.migration.connectors import BaseConnector
 from ms_access_mcp.errors import Err, Ok
-from ms_access_mcp.models import ColumnSchema, TableSchema
+from ms_access_mcp.models import ColumnSchema, QueryResult, TableSchema
 from ms_access_mcp.models.migration import (
     ExtractedSchema,
     MigrationJob,
@@ -618,6 +618,46 @@ class TestBaseConnectorRepr:
 
 
 class TestSourceAdapterLifecycle:
+    def test_transfer_data_accepts_query_result_dataclass(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import ms_access_mcp.application.migration as migration_module
+
+        adapter = MagicMock()
+        adapter.execute_query.return_value = QueryResult(
+            success=True,
+            rows=[{"id": 7}],
+            count=1,
+            columns=["id"],
+        )
+        monkeypatch.setattr(
+            migration_module.BackendSelector, "get_adapter", MagicMock(return_value=adapter)
+        )
+        connector = FakeConnector("Driver={ODBC};Database=test.db")
+        use_cases = MigrationUseCases()
+        monkeypatch.setattr(use_cases, "_get_connector", lambda *_: Ok(data=connector))
+        schema = ExtractedSchema(
+            source="source.accdb",
+            tables=[
+                TableSchema(
+                    name="Customers",
+                    columns=[ColumnSchema(name="id", source_type="Long Integer")],
+                    primary_key=[],
+                    foreign_keys=[],
+                    indexes=[],
+                )
+            ],
+        )
+
+        response = use_cases.transfer_data(
+            "fake", "connection", "source.accdb", schema.model_dump(), confirm=True
+        )
+
+        assert isinstance(response, Ok)
+        job = migration_module._JOBS[response.data["job_id"]]
+        assert job.results[0].success is True
+        assert job.results[0].rows_transferred == 1
+
     def test_transfer_data_connects_one_source_adapter_for_all_tables(self, monkeypatch):
         from unittest.mock import MagicMock
 
