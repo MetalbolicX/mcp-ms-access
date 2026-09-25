@@ -587,6 +587,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         except Exception as e:
             return _err(f"Cannot rename original file: {e}")
 
+        fresh_adapter = None
         # Create a fresh database at the original path
         try:
             from typing import Literal, cast
@@ -602,14 +603,27 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         except Exception as e:
             return _err(f"Cannot create fresh database at {path}: {e}")
 
-        # Salvage tables from corrupt DB using DAO backend seam
-        table_reports = cast(Any, fresh_adapter).salvage_tables(corrupt_path, path)
+        try:
+            # Salvage tables from corrupt DB using DAO backend seam
+            try:
+                table_reports = cast(Any, fresh_adapter).salvage_tables(corrupt_path, path)
+            except Exception as e:
+                return _err(
+                    f"Salvage failed after the corrupt database was renamed to {corrupt_path!r} "
+                    f"and an empty database was created at {path!r}: {e}. "
+                    "Your data is in the .corrupt file — do not re-run salvage against the empty DB."
+                )
 
-        lost_tables = [r for r in table_reports if r["error"] is not None]
-        return _ok(data={
-            "renamed_path": corrupt_path,
-            "new_path": path,
-            "tables": table_reports,
-            "lost_table_count": len(lost_tables),
-            "total_tables": len(table_reports),
-        })
+            lost_tables = [r for r in table_reports if r["error"] is not None]
+            return _ok(data={
+                "renamed_path": corrupt_path,
+                "new_path": path,
+                "tables": table_reports,
+                "lost_table_count": len(lost_tables),
+                "total_tables": len(table_reports),
+            })
+        finally:
+            try:
+                fresh_adapter.disconnect()
+            except Exception:
+                pass
