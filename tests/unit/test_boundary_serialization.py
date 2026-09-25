@@ -60,8 +60,8 @@ class _FakeOdbcConnection:
 
 
 @pytest.mark.parametrize("adapter_type", [OdbcAdapter, AdoAdapter])
-def test_backend_crud_dict_serialization_characterization(adapter_type) -> None:
-    """Pin current backend CRUD dict payloads before envelope unification."""
+def test_backend_crud_model_serialization_contract(adapter_type) -> None:
+    """Pin the intentional dataclass envelope contract after unification."""
     adapter = adapter_type("test.accdb")
     adapter._conn = _FakeOdbcConnection() if adapter_type is OdbcAdapter else _FakeAdoConnection()
     adapter._connected = True
@@ -69,8 +69,16 @@ def test_backend_crud_dict_serialization_characterization(adapter_type) -> None:
     query = adapter.execute_query("SELECT id FROM Users")
     write = adapter.insert_data("Users", {"id": 1})
 
-    assert query == {"success": True, "rows": [{"id": 1}] if adapter_type is OdbcAdapter else [], "count": 1 if adapter_type is OdbcAdapter else 0, "columns": ["id"] if adapter_type is OdbcAdapter else []}
-    assert write == {"success": True, "affected": 1}
+    assert isinstance(query, QueryResult)
+    assert (query.success, query.rows, query.count, query.columns, query.error) == (
+        True,
+        [{"id": 1}] if adapter_type is OdbcAdapter else [],
+        1 if adapter_type is OdbcAdapter else 0,
+        ["id"] if adapter_type is OdbcAdapter else [],
+        None,
+    )
+    assert isinstance(write, WriteResult)
+    assert (write.success, write.affected, write.error) == (True, 1, None)
 
 
 @pytest.mark.parametrize("adapter_type", [OdbcAdapter, AdoAdapter])
