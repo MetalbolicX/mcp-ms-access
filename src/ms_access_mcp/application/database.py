@@ -122,6 +122,15 @@ class DatabaseUseCases:
         if not is_path_allowed(db_path, self._allowed_dirs):
             return _err(f"Path not allowed: {db_path}")
 
+        # Plan 068: never silently replace a live connection — the old handle
+        # would leak and keep the previous file locked.
+        previous = self._connections.get(self._active_connection)
+        if previous is not None:
+            try:
+                previous.disconnect()
+            except Exception:
+                pass  # best-effort: stale handle, proceed with the new open
+
         # Resolve server-side credentials (never from MCP tool params)
         from ..credentials import resolve_password
 

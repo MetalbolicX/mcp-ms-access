@@ -197,6 +197,30 @@ class TestConnectionManagement:
         assert second_connect_saw_first_disconnected == [True]
         assert db._connections["default"] is second
 
+    def test_open_database_continues_when_previous_disconnect_raises(self, tmp_path):
+        """A stale adapter must not prevent opening the replacement database."""
+        db = DatabaseUseCases(backend="auto", allowed_dirs=[tmp_path])
+        first = FakeAdapter()
+        second = FakeAdapter()
+        first_path = tmp_path / "first.accdb"
+        second_path = tmp_path / "second.accdb"
+        first_path.touch()
+        second_path.touch()
+        adapters = iter([first, second])
+
+        def disconnect_raising() -> None:
+            raise RuntimeError("stale adapter")
+
+        first.disconnect = disconnect_raising
+        with (
+            patch("ms_access_mcp.backends.BackendSelector.get_adapter", side_effect=lambda **_: next(adapters)),
+            patch("ms_access_mcp.credentials.resolve_password", return_value=None),
+        ):
+            assert isinstance(db.open_database(str(first_path)), Ok)
+            assert isinstance(db.open_database(str(second_path)), Ok)
+
+        assert db._connections["default"] is second
+
     def test_open_database_with_fake_adapter(self):
         """open_database connects with adapter."""
         db = DatabaseUseCases(backend="auto", allowed_dirs=[Path(".")])
