@@ -836,6 +836,8 @@ class TestDoctor:
 
 class TestMcp:
     def test_mcp_exits_0(self):
-        with patch.object(cli, "mcp_main", return_value=0):
+        # _run_mcp imports the server lazily at call time, so patch the seam
+        # it resolves (ms_access_mcp.server.main), not a module attribute of cli.
+        with patch("ms_access_mcp.server.main", return_value=0):
             result = _run_cli(["mcp"])
         assert result == 0
