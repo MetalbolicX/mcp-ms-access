@@ -1,9 +1,13 @@
 """Tests for access.py — AccessAdapter with dispatcher-fake for TDD."""
 
 import logging
+import sys
 import threading
+import types
 from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 from ms_access_mcp.backends.access import AccessAdapter
 
@@ -216,6 +220,37 @@ class TestAccessAdapterConstruction:
     def test_dispatcher_is_accessible(self):
         adapter = AccessAdapter("test.accdb")
         assert hasattr(adapter, "_dispatcher")
+
+
+class TestAccessAdapterConnectFailure:
+    def test_failed_open_quits_dispatched_application(self, monkeypatch):
+        class FakeAccessApp:
+            def __init__(self) -> None:
+                self.quit_calls = 0
+                self.Visible = True
+
+            def OpenCurrentDatabase(self, target, exclusive, password):
+                raise RuntimeError("file already in use")
+
+            def Quit(self) -> None:
+                self.quit_calls += 1
+
+        app = FakeAccessApp()
+        client = types.ModuleType("win32com.client")
+        client.__dict__["Dispatch"] = MagicMock(return_value=app)
+        win32com = types.ModuleType("win32com")
+        win32com.__dict__["client"] = client
+        monkeypatch.setitem(sys.modules, "win32com", win32com)
+        monkeypatch.setitem(sys.modules, "win32com.client", client)
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._dispatcher = FakeDispatcher()
+
+        with pytest.raises(RuntimeError, match="file already in use"):
+            adapter.connect()
+
+        assert app.quit_calls == 1
+        assert adapter.connected is False
 
 
 # -------------------------------------------------------------------------- #
