@@ -12,6 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from .application.database import DatabaseUseCases
 from .backends.dispatcher import ComDispatcher
 from .mcp_tools._session_registry import close_all_sessions
+from .mcp_tools.prompts import register_prompts
 from .profiles import load_profile, resolve_profile
 from .safety import allowed_dirs_from_env
 
@@ -88,6 +89,7 @@ def build_server(profile: str = "core") -> FastMCP:
         Configured FastMCP instance (not yet started)
     """
     mcp = FastMCP("ms-access", lifespan=lifespan)
+    register_prompts(mcp)
 
     # Load and register tools for the profile
     for module_name in load_profile(profile):
