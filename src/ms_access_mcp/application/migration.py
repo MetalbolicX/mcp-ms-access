@@ -320,8 +320,6 @@ class MigrationUseCases:
                     )
                 )
 
-            adapter.disconnect()
-
             # ODBC cannot verify completeness of these aspects
             unknown_flags = UnknownMetadata(
                 primary_keys=True,
@@ -333,11 +331,6 @@ class MigrationUseCases:
             return tables, unknown_flags
 
         except Exception:
-            if adapter is not None:
-                try:
-                    adapter.disconnect()
-                except Exception:
-                    pass
             return [], UnknownMetadata(
                 primary_keys=True,
                 foreign_keys=True,
@@ -345,6 +338,12 @@ class MigrationUseCases:
                 indexes=True,
                 autoincrement=True,
             )
+        finally:
+            if adapter is not None:
+                try:
+                    adapter.disconnect()
+                except Exception:
+                    pass
 
     # -------------------------------------------------------------------------
     # upload_schema
