@@ -182,9 +182,14 @@ class DaoAdapter:
                 cause=e,
             ) from e
 
+    @property
+    def connected(self) -> bool:
+        """Return the lifecycle protocol connection state."""
+        return self._connected
+
     def is_connected(self) -> bool:
         """Return True if this adapter holds an open DAO handle."""
-        return self._connected
+        return self.connected
 
     # -------------------------------------------------------------------------- #
     # Schema read surface — delegated to SchemaInspector (lazy init)

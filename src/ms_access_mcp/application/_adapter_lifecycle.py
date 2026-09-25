@@ -39,7 +39,7 @@ class AdapterLifecycle(Generic[_AdapterT]):
         Returns ``None`` on success or an ``Err`` envelope on failure.
         """
         if self._adapter is not None:
-            if not getattr(self._adapter, "connected", False):
+            if not self._adapter.connected:
                 self._adapter.connect(self._db_path)
             return None
 

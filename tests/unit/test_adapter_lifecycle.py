@@ -4,11 +4,14 @@ from ms_access_mcp.application._adapter_lifecycle import AdapterLifecycle
 class DaoLikeFake:
     def __init__(self) -> None:
         self._connected = False
+        # Before 065, adapters lacked connected and getattr defaulted False, reconnecting each call.
+        self.connected = False
         self.connect_calls = 0
 
     def connect(self, db_path: str | None = None, /) -> None:
         self.connect_calls += 1
         self._connected = True
+        self.connected = self._connected
 
     def is_connected(self) -> bool:
         return self._connected

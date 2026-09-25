@@ -59,9 +59,14 @@ class AdoAdapter:
             self._conn = None
         self._connected = False
 
+    @property
+    def connected(self) -> bool:
+        """Return the lifecycle protocol connection state."""
+        return self._connected
+
     def is_connected(self) -> bool:
         """Return whether the ADO connection is open."""
-        return self._connected
+        return self.connected
 
     def execute_script(self, sql_script: str) -> dict:
         """Execute a SQL script containing multiple statements.

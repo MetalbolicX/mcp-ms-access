@@ -63,9 +63,14 @@ class OdbcAdapter:
             self._conn = None
         self._connected = False
 
+    @property
+    def connected(self) -> bool:
+        """Return the lifecycle protocol connection state."""
+        return self._connected
+
     def is_connected(self) -> bool:
         """Return whether the ODBC connection is open."""
-        return self._connected
+        return self.connected
 
     def compact_repair(self, path: str, mode: str) -> dict[str, Any]:
         """Reject compact and repair because ODBC does not provide DAO support."""
