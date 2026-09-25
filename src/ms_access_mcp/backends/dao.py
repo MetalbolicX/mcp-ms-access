@@ -385,7 +385,7 @@ class DaoAdapter:
                     rows=[],
                     count=0,
                     columns=[],
-                    error=str(e),
+                    error=_strip_password(str(e)),
                 )
             finally:
                 if rs is not None:

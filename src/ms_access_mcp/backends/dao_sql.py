@@ -148,26 +148,9 @@ def _strip_password(connect_string: str) -> str:
         The connect string with any credential token removed.
 
     """
-    import re
+    from ..errors import strip_password
 
-    # Case-insensitive patterns for each credential form.
-    # Each pattern matches a complete ;-delimited token containing the credential.
-    # Values may be double-quoted ("..."), single-quoted ('...'), or unquoted.
-    # Quoted values consume everything through the matching closing quote, so
-    # embedded semicolons are handled correctly. Unquoted values stop at the next ;.
-    # The surrounding semicolons are NOT consumed so the string structure is preserved.
-    patterns = [
-        re.compile(r"(?i)(?:^|;)PWD=(?:\"[^\"]*\"|'[^']*'|[^;]*)(?=[;:]|$)", re.IGNORECASE),
-        re.compile(r"(?i)(?:^|;)Password=(?:\"[^\"]*\"|'[^']*'|[^;]*)(?=[;:]|$)", re.IGNORECASE),
-        re.compile(r"(?i)(?:^|;)Jet OLEDB:Database Password=(?:\"[^\"]*\"|'[^']*'|[^;]*)(?=[;:]|$)", re.IGNORECASE),
-    ]
-
-    result = connect_string
-    for pattern in patterns:
-        result = pattern.sub("", result)
-
-    # Clean up leading/trailing semicolons
-    return result.strip(";")
+    return strip_password(connect_string)
 
 
 def quote_ident(name: str) -> str:

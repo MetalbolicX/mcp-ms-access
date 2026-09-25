@@ -11,7 +11,7 @@ from typing import Any
 
 import pyodbc
 
-from ..errors import BackendCapabilityMismatchError
+from ..errors import BackendCapabilityMismatchError, strip_password
 from ..models import IndexInfo, QueryResult, WriteResult
 from .crud_sql import build_delete, build_insert, build_update
 from .odbc_schema_reader import OdbcSchemaReader
@@ -98,7 +98,7 @@ class OdbcAdapter:
             cursor.close()
             return QueryResult(success=True, rows=results, count=len(results), columns=columns)
         except Exception as e:
-            return QueryResult(success=False, rows=[], count=0, columns=[], error=str(e))
+            return QueryResult(success=False, rows=[], count=0, columns=[], error=strip_password(str(e)))
 
     def insert_data(self, table_name: str, data: dict | list[dict]) -> WriteResult:
         """Insert rows with ? parameter binding."""
@@ -118,7 +118,7 @@ class OdbcAdapter:
             return WriteResult(success=True, affected=total)
         except Exception as e:
             self._conn.rollback()
-            return WriteResult(success=False, error=str(e), affected=0)
+            return WriteResult(success=False, error=strip_password(str(e)), affected=0)
 
     def update_data(
         self,
@@ -140,7 +140,7 @@ class OdbcAdapter:
             return WriteResult(success=True, affected=affected)
         except Exception as e:
             self._conn.rollback()
-            return WriteResult(success=False, error=str(e), affected=0)
+            return WriteResult(success=False, error=strip_password(str(e)), affected=0)
 
     def delete_data(self, table_name: str, where_dict: dict | None = None) -> WriteResult:
         """Delete rows with ? parameter binding."""
@@ -157,7 +157,7 @@ class OdbcAdapter:
             return WriteResult(success=True, affected=affected)
         except Exception as e:
             self._conn.rollback()
-            return WriteResult(success=False, error=str(e), affected=0)
+            return WriteResult(success=False, error=strip_password(str(e)), affected=0)
 
     # ------------------------------------------------------------------ #
     # Schema introspection via SQLTables/SQLColumns

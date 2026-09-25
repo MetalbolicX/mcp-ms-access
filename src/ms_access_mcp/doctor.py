@@ -12,6 +12,8 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 
+from .errors import strip_password
+
 
 @dataclass
 class Check:
@@ -84,8 +86,8 @@ def _check_access_com_probe() -> Check:
         return Check(
             name="access_com",
             passed=False,
-            message=f"Access COM activation failed: {e}",
-            details={"error": str(e)},
+            message=f"Access COM activation failed: {strip_password(str(e))}",
+            details={"error": strip_password(str(e))},
         )
 
 
@@ -122,8 +124,8 @@ def _check_ace_provider() -> Check:
         return Check(
             name="ace_provider",
             passed=False,
-            message=f"ACE OLE DB provider unavailable: {e}",
-            details={"error": str(e)},
+            message=f"ACE OLE DB provider unavailable: {strip_password(str(e))}",
+            details={"error": strip_password(str(e))},
         )
 
 
@@ -156,8 +158,8 @@ def _check_dao_engine() -> Check:
         return Check(
             name="dao_engine",
             passed=False,
-            message=f"DAO.DBEngine.120 unavailable: {e}",
-            details={"error": str(e)},
+            message=f"DAO.DBEngine.120 unavailable: {strip_password(str(e))}",
+            details={"error": strip_password(str(e))},
         )
 
 
@@ -183,8 +185,8 @@ def _check_odbc_driver() -> Check:
         return Check(
             name="odbc_driver",
             passed=False,
-            message=f"ODBC driver check failed: {e}",
-            details={"error": str(e)},
+            message=f"ODBC driver check failed: {strip_password(str(e))}",
+            details={"error": strip_password(str(e))},
         )
 
 
@@ -263,8 +265,8 @@ def _check_deep_access() -> Check:
         return Check(
             name="deep_access",
             passed=False,
-            message=f"Deep Access check failed: {e}",
-            details={"error": str(e)},
+            message=f"Deep Access check failed: {strip_password(str(e))}",
+            details={"error": strip_password(str(e))},
         )
 
 
@@ -283,8 +285,8 @@ def _check_temp_dir_writable() -> Check:
         return Check(
             name="temp_dir",
             passed=False,
-            message=f"Temp directory not writable: {e}",
-            details={"error": str(e)},
+            message=f"Temp directory not writable: {strip_password(str(e))}",
+            details={"error": strip_password(str(e))},
         )
 
 

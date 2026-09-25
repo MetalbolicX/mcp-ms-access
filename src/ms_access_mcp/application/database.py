@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 from ..backends import DATA_READ_CAPS, BackendSelector
 from ..backends.format_detector import AccessFormat, detect_access_format
 from ..credentials import contains_credential, resolve_profile
-from ..errors import Err, Ok, Result, err, ok  # noqa: F401 — re-exported for backward compatibility
+from ..errors import Err, Ok, Result, err, ok, strip_password  # noqa: F401 — re-exported for backward compatibility
 from ..models import QueryResult, WriteResult
 from ..safety import WritePolicy, is_path_allowed
 from . import session_backup as _session_backup
@@ -1068,7 +1068,7 @@ class DatabaseUseCases:
                 return _err(raw_error)
             return _ok(rowcount=1)
         except Exception as e:
-            raw = str(e)
+            raw = strip_password(str(e))
             if resolved and resolved in raw:
                 raw = raw.replace(resolved, "***")
             return _err(raw)
@@ -1115,7 +1115,7 @@ class DatabaseUseCases:
                 return _err(raw_error)
             return _ok(rowcount=1)
         except Exception as e:
-            raw = str(e)
+            raw = strip_password(str(e))
             if resolved and resolved in raw:
                 raw = raw.replace(resolved, "***")
             return _err(raw)
@@ -1195,7 +1195,7 @@ class DatabaseUseCases:
                 return _err(raw_error)
             return _ok(rowcount=1)
         except Exception as e:
-            raw = str(e)
+            raw = strip_password(str(e))
             if resolved and resolved in raw:
                 raw = raw.replace(resolved, "***")
             return _err(raw)

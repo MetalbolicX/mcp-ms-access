@@ -18,7 +18,6 @@ from ms_access_mcp.doctor import (
     _check_odbc_driver,
     _check_temp_dir_writable,
 )
-from ms_access_mcp.models import WriteResult
 from ms_access_mcp.safety import WritePolicy
 
 MARKERS = ["PWD=sekret;DATABASE=x", "Password=sekret"]
@@ -108,7 +107,6 @@ def test_migration_connector_scrubs_error(monkeypatch, marker, error_type):
 ])
 @pytest.mark.parametrize("marker", MARKERS)
 def test_doctor_scrubs_error(monkeypatch, check, attribute, marker):
-    import sys
     import ms_access_mcp.doctor as doctor
 
     monkeypatch.setattr(doctor.sys, "platform", "win32")
@@ -124,6 +122,8 @@ def test_doctor_scrubs_error(monkeypatch, check, attribute, marker):
         monkeypatch.setattr(pythoncom, "CoUninitialize", lambda: None)
         monkeypatch.setattr(win32com.client, attribute, lambda *_: (_ for _ in ()).throw(RuntimeError(marker)))
     result = check()
+    assert "sekret" not in result.message
+    assert "PWD=" not in result.message and "Password=" not in result.message
     assert "sekret" not in result.details["error"]
     assert "PWD=" not in result.details["error"] and "Password=" not in result.details["error"]
 

@@ -645,7 +645,7 @@ class MigrationUseCases:
             connector = get_connector(target_type, connection_string)
             return _ok(data=connector)
         except ImportError as e:
-            return _err(str(e))
+            return _err(_sanitize_error(str(e), "connection"))
         except Exception as e:
             return _err(_sanitize_error(str(e), "connection"))
 
