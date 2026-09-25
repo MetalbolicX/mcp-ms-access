@@ -18,24 +18,26 @@ class TestOdbcAdapterBasics:
     def test_insert_data_raises_when_not_connected(self):
         adapter = OdbcAdapter("test.accdb")
         result = adapter.insert_data("tbl", {"col": "val"})
-        assert result["success"] is False
-        assert "Not connected" in result["error"]
+        assert result.success is False
+        assert result.error is not None
+        assert "Not connected" in result.error
 
     def test_update_data_raises_when_not_connected(self):
         adapter = OdbcAdapter("test.accdb")
         result = adapter.update_data("tbl", {"col": "val"})
-        assert result["success"] is False
+        assert result.success is False
 
     def test_delete_data_raises_when_not_connected(self):
         adapter = OdbcAdapter("test.accdb")
         result = adapter.delete_data("tbl")
-        assert result["success"] is False
+        assert result.success is False
 
     def test_execute_query_raises_when_not_connected(self):
         adapter = OdbcAdapter("test.accdb")
         result = adapter.execute_query("SELECT 1")
-        assert result["success"] is False
-        assert "Not connected" in result["error"]
+        assert result.success is False
+        assert result.error is not None
+        assert "Not connected" in result.error
 
     def test_get_tables_raises_when_not_connected(self):
         adapter = OdbcAdapter("test.accdb")

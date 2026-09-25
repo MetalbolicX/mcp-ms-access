@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ..models import QueryResult, WriteResult
 from .crud_sql import build_delete, build_insert, build_update
 from .dao_sql import _strip_password
 from .script import parse_script_lines
@@ -100,16 +101,16 @@ class AdoAdapter:
             "errors": errors,
         }
 
-    def execute_query(self, sql: str, params: list | None = None) -> dict:
+    def execute_query(self, sql: str, params: list | None = None) -> QueryResult:
         """Execute a SELECT query and return results."""
         if not self._connected or self._conn is None:
-            return {"success": False, "rows": [], "count": 0, "columns": [], "error": "Not connected"}
+            return QueryResult(success=False, rows=[], count=0, columns=[], error="Not connected")
 
         try:
             rs = self._conn.Execute(sql)[0]
             if rs.EOF:
                 rs.Close()
-                return {"success": True, "rows": [], "count": 0, "columns": []}
+                return QueryResult(success=True, rows=[], count=0, columns=[])
 
             columns = [f.Name for f in rs.Fields]
             rows = []
@@ -119,14 +120,14 @@ class AdoAdapter:
                 rs.MoveNext()
 
             rs.Close()
-            return {"success": True, "rows": rows, "count": len(rows), "columns": columns}
+            return QueryResult(success=True, rows=rows, count=len(rows), columns=columns)
         except Exception as e:
-            return {"success": False, "rows": [], "count": 0, "columns": [], "error": _strip_password(str(e))}
+            return QueryResult(success=False, rows=[], count=0, columns=[], error=_strip_password(str(e)))
 
-    def insert_data(self, table_name: str, data: dict | list[dict]) -> dict:
+    def insert_data(self, table_name: str, data: dict | list[dict]) -> WriteResult:
         """Insert rows via ADO."""
         if not self._connected or self._conn is None:
-            return {"success": False, "error": "Not connected", "affected": 0}
+            return WriteResult(success=False, error="Not connected", affected=0)
 
         rows = data if isinstance(data, list) else [data]
         total = 0
@@ -135,30 +136,30 @@ class AdoAdapter:
                 sql, vals = build_insert(table_name, row)
                 self._conn.Execute(sql, vals)
                 total += 1
-            return {"success": True, "affected": total}
+            return WriteResult(success=True, affected=total)
         except Exception as e:
-            return {"success": False, "error": _strip_password(str(e)), "affected": 0}
+            return WriteResult(success=False, error=_strip_password(str(e)), affected=0)
 
-    def update_data(self, table_name: str, set_dict: dict, where_dict: dict | None = None) -> dict:
+    def update_data(self, table_name: str, set_dict: dict, where_dict: dict | None = None) -> WriteResult:
         """Update rows via ADO."""
         if not self._connected or self._conn is None:
-            return {"success": False, "error": "Not connected", "affected": 0}
+            return WriteResult(success=False, error="Not connected", affected=0)
 
         try:
             sql, vals = build_update(table_name, set_dict, where_dict)
             self._conn.Execute(sql, vals)
-            return {"success": True, "affected": 1}
+            return WriteResult(success=True, affected=1)
         except Exception as e:
-            return {"success": False, "error": _strip_password(str(e)), "affected": 0}
+            return WriteResult(success=False, error=_strip_password(str(e)), affected=0)
 
-    def delete_data(self, table_name: str, where_dict: dict | None = None) -> dict:
+    def delete_data(self, table_name: str, where_dict: dict | None = None) -> WriteResult:
         """Delete rows via ADO."""
         if not self._connected or self._conn is None:
-            return {"success": False, "error": "Not connected", "affected": 0}
+            return WriteResult(success=False, error="Not connected", affected=0)
 
         try:
             sql, vals = build_delete(table_name, where_dict)
             self._conn.Execute(sql, vals)
-            return {"success": True, "affected": 1}
+            return WriteResult(success=True, affected=1)
         except Exception as e:
-            return {"success": False, "error": _strip_password(str(e)), "affected": 0}
+            return WriteResult(success=False, error=_strip_password(str(e)), affected=0)

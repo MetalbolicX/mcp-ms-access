@@ -12,7 +12,7 @@ from typing import Any
 import pyodbc
 
 from ..errors import BackendCapabilityMismatchError
-from ..models import IndexInfo
+from ..models import IndexInfo, QueryResult, WriteResult
 from .crud_sql import build_delete, build_insert, build_update
 from .odbc_schema_reader import OdbcSchemaReader
 
@@ -84,10 +84,10 @@ class OdbcAdapter:
     # Parameterized CRUD
     # ------------------------------------------------------------------ #
 
-    def execute_query(self, sql: str, params: Any = None) -> dict:
+    def execute_query(self, sql: str, params: Any = None) -> QueryResult:
         """Execute a SELECT with parameter binding."""
         if not self._connected or self._conn is None:
-            return {"success": False, "rows": [], "count": 0, "columns": [], "error": "Not connected"}
+            return QueryResult(success=False, rows=[], count=0, columns=[], error="Not connected")
 
         try:
             cursor = self._conn.cursor()
@@ -96,14 +96,14 @@ class OdbcAdapter:
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
             results = [dict(zip(columns, row)) for row in rows]
             cursor.close()
-            return {"success": True, "rows": results, "count": len(results), "columns": columns}
+            return QueryResult(success=True, rows=results, count=len(results), columns=columns)
         except Exception as e:
-            return {"success": False, "rows": [], "count": 0, "columns": [], "error": str(e)}
+            return QueryResult(success=False, rows=[], count=0, columns=[], error=str(e))
 
-    def insert_data(self, table_name: str, data: dict | list[dict]) -> dict:
+    def insert_data(self, table_name: str, data: dict | list[dict]) -> WriteResult:
         """Insert rows with ? parameter binding."""
         if not self._connected or self._conn is None:
-            return {"success": False, "error": "Not connected", "affected": 0}
+            return WriteResult(success=False, error="Not connected", affected=0)
 
         try:
             cursor = self._conn.cursor()
@@ -115,20 +115,20 @@ class OdbcAdapter:
                 total += cursor.rowcount
             self._conn.commit()
             cursor.close()
-            return {"success": True, "affected": total}
+            return WriteResult(success=True, affected=total)
         except Exception as e:
             self._conn.rollback()
-            return {"success": False, "error": str(e), "affected": 0}
+            return WriteResult(success=False, error=str(e), affected=0)
 
     def update_data(
         self,
         table_name: str,
         set_dict: dict,
         where_dict: dict | None = None,
-    ) -> dict:
+    ) -> WriteResult:
         """Update rows with ? parameter binding."""
         if not self._connected or self._conn is None:
-            return {"success": False, "error": "Not connected", "affected": 0}
+            return WriteResult(success=False, error="Not connected", affected=0)
 
         try:
             sql, vals = build_update(table_name, set_dict, where_dict)
@@ -137,15 +137,15 @@ class OdbcAdapter:
             self._conn.commit()
             affected = cursor.rowcount
             cursor.close()
-            return {"success": True, "affected": affected}
+            return WriteResult(success=True, affected=affected)
         except Exception as e:
             self._conn.rollback()
-            return {"success": False, "error": str(e), "affected": 0}
+            return WriteResult(success=False, error=str(e), affected=0)
 
-    def delete_data(self, table_name: str, where_dict: dict | None = None) -> dict:
+    def delete_data(self, table_name: str, where_dict: dict | None = None) -> WriteResult:
         """Delete rows with ? parameter binding."""
         if not self._connected or self._conn is None:
-            return {"success": False, "error": "Not connected", "affected": 0}
+            return WriteResult(success=False, error="Not connected", affected=0)
 
         try:
             sql, vals = build_delete(table_name, where_dict)
@@ -154,10 +154,10 @@ class OdbcAdapter:
             self._conn.commit()
             affected = cursor.rowcount
             cursor.close()
-            return {"success": True, "affected": affected}
+            return WriteResult(success=True, affected=affected)
         except Exception as e:
             self._conn.rollback()
-            return {"success": False, "error": str(e), "affected": 0}
+            return WriteResult(success=False, error=str(e), affected=0)
 
     # ------------------------------------------------------------------ #
     # Schema introspection via SQLTables/SQLColumns
