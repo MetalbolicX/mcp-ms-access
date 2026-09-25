@@ -373,7 +373,7 @@ xlsx = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", specifier = ">=1.27,<2.0" },
-    { name = "mysql-connector-python", marker = "extra == 'migrate'", specifier = ">=8.0.0" },
+    { name = "mysql-connector-python", marker = "extra == 'migrate'", specifier = ">=26.7.0" },
     { name = "openpyxl", marker = "extra == 'xlsx'", specifier = ">=3.1.0" },
     { name = "psycopg2-binary", marker = "extra == 'migrate'", specifier = ">=2.9.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
