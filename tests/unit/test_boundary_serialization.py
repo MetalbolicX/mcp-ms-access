@@ -16,8 +16,61 @@ import sys
 import pytest
 
 from ms_access_mcp.application.database import DatabaseUseCases
+from ms_access_mcp.backends.ado import AdoAdapter
+from ms_access_mcp.backends.odbc import OdbcAdapter
 from ms_access_mcp.errors import Err, Ok
 from ms_access_mcp.models import ObjectMetadata, WriteResult
+
+
+class _FakeRecordset:
+    EOF = True
+
+    def Close(self) -> None:
+        pass
+
+
+class _FakeAdoConnection:
+    def Execute(self, sql: str, params=None):
+        return (_FakeRecordset(),)
+
+
+class _FakeCursor:
+    rowcount = 1
+    description = [("id",)]
+
+    def execute(self, sql: str, params=None) -> None:
+        pass
+
+    def fetchall(self):
+        return [(1,)]
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeOdbcConnection:
+    def cursor(self):
+        return _FakeCursor()
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize("adapter_type", [OdbcAdapter, AdoAdapter])
+def test_backend_crud_dict_serialization_characterization(adapter_type) -> None:
+    """Pin current backend CRUD dict payloads before envelope unification."""
+    adapter = adapter_type("test.accdb")
+    adapter._conn = _FakeOdbcConnection() if adapter_type is OdbcAdapter else _FakeAdoConnection()
+    adapter._connected = True
+
+    query = adapter.execute_query("SELECT id FROM Users")
+    write = adapter.insert_data("Users", {"id": 1})
+
+    assert query == {"success": True, "rows": [{"id": 1}] if adapter_type is OdbcAdapter else [], "count": 1 if adapter_type is OdbcAdapter else 0, "columns": ["id"] if adapter_type is OdbcAdapter else []}
+    assert write == {"success": True, "affected": 1}
 
 # ---------------------------------------------------------------------------
 # Fake adapters for connection-pool substitution
