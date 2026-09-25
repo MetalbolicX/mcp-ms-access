@@ -14,6 +14,7 @@ from mcp.types import CallToolResult
 from ..application.migration import MigrationUseCases
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
+from ._session_registry import registry
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "_TOOLS"]
@@ -21,7 +22,7 @@ __all__ = ["register", "_TOOLS"]
 
 def _new_migration() -> MigrationUseCases:
     """Construct a MigrationUseCases instance."""
-    return MigrationUseCases(allowed_dirs=allowed_dirs_from_env())
+    return registry.track(MigrationUseCases(allowed_dirs=allowed_dirs_from_env()))
 
 
 # =============================================================================

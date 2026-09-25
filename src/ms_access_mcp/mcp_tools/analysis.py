@@ -11,6 +11,7 @@ from ..application.analysis import QueryAnalyzerService
 from ..application.database import DatabaseUseCases
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
+from ._session_registry import registry
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "_TOOLS"]
@@ -18,7 +19,7 @@ __all__ = ["register", "_TOOLS"]
 
 def _new_db(readonly: bool = True) -> DatabaseUseCases:
     """Construct a DatabaseUseCases honoring ACCESS_MCP_ALLOWED_DIRS."""
-    return DatabaseUseCases(readonly=readonly, allowed_dirs=allowed_dirs_from_env())
+    return registry.track(DatabaseUseCases(readonly=readonly, allowed_dirs=allowed_dirs_from_env()))
 
 
 # =============================================================================

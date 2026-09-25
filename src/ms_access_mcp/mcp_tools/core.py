@@ -19,6 +19,7 @@ from mcp.types import CallToolResult, TextContent
 from ..application.database import DatabaseUseCases, Err, Ok
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
+from ._session_registry import registry
 
 __all__ = ["register", "to_mcp_result"]
 
@@ -64,7 +65,7 @@ def _result_to_dict(result: Ok | Err) -> dict[str, Any]:
 
 def _new_db(readonly: bool = True) -> DatabaseUseCases:
     """Construct a DatabaseUseCases honoring ACCESS_MCP_ALLOWED_DIRS."""
-    return DatabaseUseCases(readonly=readonly, allowed_dirs=allowed_dirs_from_env())
+    return registry.track(DatabaseUseCases(readonly=readonly, allowed_dirs=allowed_dirs_from_env()))
 
 
 def _open_or_err(db: DatabaseUseCases, path: str) -> CallToolResult | None:
@@ -98,10 +99,11 @@ def connect_access(path: str) -> CallToolResult:
 
 
 def disconnect_access() -> CallToolResult:
-    """Disconnect from an Access database and close all connections."""
-    db = _new_db(readonly=True)
-    result = db.close_database()
-    return to_mcp_result(_result_to_dict(result))
+    """Close all tracked sessions; this tool has no path to filter by."""
+    from ._session_registry import close_all_sessions
+
+    close_all_sessions()
+    return to_mcp_result({"success": True})
 
 
 def list_connections() -> CallToolResult:

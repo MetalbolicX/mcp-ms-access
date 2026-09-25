@@ -14,13 +14,14 @@ from mcp.types import CallToolResult
 from ..application.maintenance import MaintenanceUseCases
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
+from ._session_registry import registry
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "to_mcp_result", "_TOOLS"]
 
 
 def _new_maintenance(readonly: bool = True) -> MaintenanceUseCases:
-    return MaintenanceUseCases(readonly=readonly, db_path=None, allowed_dirs=allowed_dirs_from_env())
+    return registry.track(MaintenanceUseCases(readonly=readonly, db_path=None, allowed_dirs=allowed_dirs_from_env()))
 
 
 def maintenance_backup(

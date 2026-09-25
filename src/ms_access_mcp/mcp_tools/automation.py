@@ -9,6 +9,7 @@ from mcp.types import CallToolResult
 
 from ..application.automation import AutomationUseCases
 from ._registry import ToolRegistry, register_tools
+from ._session_registry import registry
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "to_mcp_result", "_TOOLS"]
@@ -17,7 +18,7 @@ _MODULE_TYPES = {"standard": 1, "class": 2}
 
 
 def _new_automation(readonly: bool = True) -> AutomationUseCases:
-    return AutomationUseCases(readonly=readonly, db_path=None)
+    return registry.track(AutomationUseCases(readonly=readonly, db_path=None))
 
 
 # =============================================================================
