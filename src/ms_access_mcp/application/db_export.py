@@ -55,13 +55,13 @@ def _build_iisam_insert_sql(table_or_query: str, output_path: str, sheet_name: s
 
     Returns: INSERT INTO [Excel 12.0;HDR=YES;DATABASE=<abs>].[<sheet>$] <select>
 
-    Raises ValueError if output_path contains ';' or '"' — both are ODBC connection
-    string injection vectors in the DATABASE= segment.
+    Returns Err if output_path contains ';', '"', or ']' — connection-string
+    injection and bracket-escape vectors in the DATABASE= segment.
     """
-    if ";" in output_path or '"' in output_path:
+    if any(ch in output_path for ch in (';', '"', "]")):
         return _err(
-            f"Output path must not contain ';' or '\"' characters (ODBC connection-string "
-            f"injection vector). Got: {output_path!r}"
+            f"Output path must not contain ';', '\"' or ']' characters "
+            f"(connection-string / bracket-escape vectors in the DATABASE= segment). Got: {output_path!r}"
         )
     abs_path = str(Path(output_path).absolute())
     select_clause = build_select(table_or_query, None, None, None)
