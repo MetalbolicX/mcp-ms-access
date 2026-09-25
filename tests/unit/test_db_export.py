@@ -45,3 +45,12 @@ class TestBuildIisamInsertSqlConnectionStringHardening:
         assert r"C:\exports\data.xlsx" in sql
         assert "INSERT INTO" in sql
         assert "[Sheet1$]" in sql
+
+    def test_closing_bracket_in_path_is_rejected(self):
+        result = _build_iisam_insert_sql("t", r"C:\tmp\we]ird\out.xlsx", "Sheet1")
+        assert isinstance(result, Err)
+
+    def test_spaced_apostrophe_path_is_accepted(self):
+        result = _build_iisam_insert_sql("t", r"C:\my dir\it's out.xlsx", "Sheet1")
+        assert isinstance(result, Ok)
+        assert r"DATABASE=C:\my dir\it's out.xlsx" in result.data
