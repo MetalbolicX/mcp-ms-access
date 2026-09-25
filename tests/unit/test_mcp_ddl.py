@@ -2,8 +2,25 @@
 
 from __future__ import annotations
 
+from ms_access_mcp.errors import Err
 from ms_access_mcp.mcp_tools import ddl
 from ms_access_mcp.profiles import PROFILES, load_profile
+
+
+def _fake_ddl_uc(monkeypatch) -> dict:
+    """Replace _new_db with a recorder; any use-case call returns Err('reached uc')."""
+    captured: dict = {}
+
+    class _Recorder:
+        def __getattr__(self, name: str):
+            def _call(*args, **kwargs):
+                captured[name] = {"args": args, "kwargs": kwargs}
+                return Err("reached uc")
+
+            return _call
+
+    monkeypatch.setattr(ddl, "_new_db", lambda readonly=True: _Recorder())
+    return captured
 
 
 class TestToolNames:
@@ -178,3 +195,167 @@ class TestProfileWiring:
         """The 'full' profile includes all ddl tools."""
         modules = load_profile("full")
         assert "ms_access_mcp.mcp_tools.ddl" in modules
+
+
+class TestTypedParamValidation:
+    """Linked-table params are pydantic-validated at the boundary.
+
+    The recorder's Err('reached uc') text must NEVER appear — its presence
+    means raw junk flowed past the boundary into the use case.
+    """
+
+    def test_create_linked_table_rejects_none_name(self, monkeypatch):
+        """create_linked_table with name=None gets the typed envelope."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["create_linked_table"]
+        result = fn(path="dummy.mdb", params={"name": None, "source_table": "tbl"}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "name" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_create_linked_table_rejects_list_connect_string(self, monkeypatch):
+        """create_linked_table with connect_string=['evil'] gets the typed envelope."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["create_linked_table"]
+        result = fn(
+            path="dummy.mdb",
+            params={
+                "name": "remote_tbl",
+                "source_table": "tbl",
+                "connect_string": ["evil"],
+            },
+            confirm=True,
+        )
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "connect_string" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_create_linked_table_rejects_int_source_table(self, monkeypatch):
+        """create_linked_table with source_table=42 gets the typed envelope."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["create_linked_table"]
+        result = fn(path="dummy.mdb", params={"name": "remote_tbl", "source_table": 42}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "source_table" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_refresh_linked_table_rejects_none_name(self, monkeypatch):
+        """refresh_linked_table with name=None gets the typed envelope."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["refresh_linked_table"]
+        result = fn(path="dummy.mdb", params={"name": None}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "name" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_refresh_linked_table_rejects_int_connect_string(self, monkeypatch):
+        """refresh_linked_table connect_string is str|None — int gets the typed envelope."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["refresh_linked_table"]
+        result = fn(path="dummy.mdb", params={"name": "remote_tbl", "connect_string": 99}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "connect_string" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_unlink_table_rejects_none_name(self, monkeypatch):
+        """unlink_table with name=None gets the typed envelope."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["unlink_table"]
+        result = fn(path="dummy.mdb", params={"name": None}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "name" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_unlink_table_rejects_list_connection_name(self, monkeypatch):
+        """unlink_table with connection_name=['x'] gets the typed envelope."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["unlink_table"]
+        result = fn(path="dummy.mdb", params={"name": "remote_tbl", "connection_name": ["x"]}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "connection_name" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_upsert_linked_table_rejects_int_connect_ref(self, monkeypatch):
+        """upsert_linked_table with connect_ref=77 gets the typed envelope."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["upsert_linked_table"]
+        result = fn(
+            path="dummy.mdb",
+            params={"name": "remote_tbl", "source_table": "tbl", "connect_ref": 77},
+            confirm=True,
+        )
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "connect_ref" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_upsert_linked_table_rejects_none_name(self, monkeypatch):
+        """upsert_linked_table with name=None gets the typed envelope."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["upsert_linked_table"]
+        result = fn(path="dummy.mdb", params={"name": None, "source_table": "tbl"}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "name" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+
+class TestParsedParamForwarding:
+    """Positive controls — valid linked-table params forward with live defaults."""
+
+    def test_create_linked_table_valid_params_forward_defaults(self, monkeypatch):
+        """create_linked_table forwards ''/''/'default' defaults for absent keys."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["create_linked_table"]
+        fn(path="dummy.mdb", params={"name": "remote_tbl", "source_table": "tbl"}, confirm=True)
+        kwargs = captured["create_linked_table"]["kwargs"]
+        assert kwargs["name"] == "remote_tbl"
+        assert kwargs["source_table"] == "tbl"
+        assert kwargs["connect_string"] == ""
+        assert kwargs["connect_ref"] == ""
+        assert kwargs["connection_name"] == "default"
+        assert kwargs["confirm"] is True
+
+    def test_refresh_linked_table_absent_connect_string_forwards_none(self, monkeypatch):
+        """refresh_linked_table forwards connect_string=None when the key is absent."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["refresh_linked_table"]
+        fn(path="dummy.mdb", params={"name": "remote_tbl"}, confirm=True)
+        kwargs = captured["refresh_linked_table"]["kwargs"]
+        assert kwargs["name"] == "remote_tbl"
+        assert kwargs["connect_string"] is None
+        assert kwargs["connection_name"] == "default"
+
+    def test_unlink_table_valid_params_forward_defaults(self, monkeypatch):
+        """unlink_table forwards name and the 'default' connection_name."""
+        captured = _fake_ddl_uc(monkeypatch)
+        fn, _desc = ddl._TOOLS["unlink_table"]
+        fn(path="dummy.mdb", params={"name": "remote_tbl"}, confirm=True)
+        kwargs = captured["unlink_table"]["kwargs"]
+        assert kwargs["name"] == "remote_tbl"
+        assert kwargs["connection_name"] == "default"

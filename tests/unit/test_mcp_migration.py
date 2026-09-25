@@ -2,8 +2,25 @@
 
 from __future__ import annotations
 
+from ms_access_mcp.errors import Err
 from ms_access_mcp.mcp_tools import migration
 from ms_access_mcp.profiles import PROFILES, load_profile
+
+
+def _fake_migration_uc(monkeypatch) -> dict:
+    """Replace _new_migration with a recorder; any use-case call returns Err('reached uc')."""
+    captured: dict = {}
+
+    class _Recorder:
+        def __getattr__(self, name: str):
+            def _call(*args, **kwargs):
+                captured[name] = {"args": args, "kwargs": kwargs}
+                return Err("reached uc")
+
+            return _call
+
+    monkeypatch.setattr(migration, "_new_migration", lambda: _Recorder())
+    return captured
 
 
 class TestToolNames:
@@ -66,13 +83,13 @@ class TestParamValidation:
 
     def test_upload_schema_rejects_non_string_target_type(self):
         fn, _desc = migration._TOOLS["upload_schema"]
-        result = fn(path="dummy.mdb", params={"target_type": 123, "connection_string": "x"})
+        result = fn(path="dummy.mdb", params={"target_type": 123, "connection_string": "x"}, confirm=True)
         assert result.isError is True
         assert "target_type" in result.content[0].text
 
     def test_transfer_data_rejects_non_string_connection_string(self):
         fn, _desc = migration._TOOLS["transfer_data"]
-        result = fn(path="dummy.mdb", params={"target_type": "sqlite", "connection_string": ["evil"]})
+        result = fn(path="dummy.mdb", params={"target_type": "sqlite", "connection_string": ["evil"]}, confirm=True)
         assert result.isError is True
         assert "connection_string" in result.content[0].text
 
@@ -225,3 +242,162 @@ class TestProfileWiring:
         """The 'full' profile includes migration tools."""
         modules = load_profile("full")
         assert "ms_access_mcp.mcp_tools.migration" in modules
+
+
+class TestTypedParamValidation:
+    """Pydantic param models reject type-confused params at the boundary.
+
+    The recorder's Err('reached uc') text must NEVER appear — its presence
+    means raw junk flowed past the boundary into the use case.
+    """
+
+    def test_extract_schema_rejects_non_string_target_type(self, monkeypatch):
+        """extract_schema with target_type=123 gets the typed envelope."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["extract_schema"]
+        result = fn(path="dummy.mdb", params={"target_type": 123})
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "target_type" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_extract_schema_rejects_none_target_type(self, monkeypatch):
+        """extract_schema with target_type=None gets the typed envelope, not the business one."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["extract_schema"]
+        result = fn(path="dummy.mdb", params={"target_type": None})
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_upload_schema_rejects_list_connection_string(self, monkeypatch):
+        """upload_schema with connection_string=['evil'] gets the typed envelope."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["upload_schema"]
+        result = fn(
+            path="dummy.mdb",
+            params={"target_type": "sqlite", "connection_string": ["evil"]},
+            confirm=True,
+        )
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "connection_string" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_upload_schema_typed_envelope_precedes_business_check(self, monkeypatch):
+        """Non-string target_type yields the typed envelope BEFORE 'connection_string is required'."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["upload_schema"]
+        result = fn(path="dummy.mdb", params={"target_type": 123}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "connection_string is required" not in text
+        assert captured == {}
+
+    def test_upload_schema_type_valid_missing_connection_keeps_business_check(self, monkeypatch):
+        """Type-valid params missing connection_string still get the business envelope."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["upload_schema"]
+        result = fn(path="dummy.mdb", params={"target_type": "sqlite"}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "connection_string is required" in text
+        assert "Invalid params" not in text
+        assert captured == {}
+
+    def test_transfer_data_typed_envelope_precedes_business_check(self, monkeypatch):
+        """Non-string target_type yields the typed envelope BEFORE 'connection_string is required'."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["transfer_data"]
+        result = fn(path="dummy.mdb", params={"target_type": 123}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "connection_string is required" not in text
+        assert captured == {}
+
+    def test_transfer_data_type_valid_missing_connection_keeps_business_check(self, monkeypatch):
+        """Type-valid params missing connection_string still get the business envelope."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["transfer_data"]
+        result = fn(path="dummy.mdb", params={"target_type": "sqlite"}, confirm=True)
+        assert result.isError is True
+        text = result.content[0].text
+        assert "connection_string is required" in text
+        assert "Invalid params" not in text
+        assert captured == {}
+
+    def test_transfer_data_rejects_non_dict_schema_json(self, monkeypatch):
+        """transfer_data with schema_json as a list gets the typed envelope."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["transfer_data"]
+        result = fn(
+            path="dummy.mdb",
+            params={
+                "target_type": "sqlite",
+                "connection_string": "x",
+                "schema_json": ["not", "a", "dict"],
+            },
+            confirm=True,
+        )
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "schema_json" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+    def test_get_migration_status_rejects_non_string_job_id(self, monkeypatch):
+        """get_migration_status with job_id=12345 gets the typed envelope."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["get_migration_status"]
+        result = fn(path="dummy.mdb", params={"job_id": 12345})
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Invalid params" in text
+        assert "job_id" in text
+        assert "reached uc" not in text
+        assert captured == {}
+
+
+class TestParsedParamForwarding:
+    """Positive controls — valid params reach the use case with live defaults preserved."""
+
+    def test_upload_schema_minimal_valid_params_forward_defaults(self, monkeypatch):
+        """upload_schema forwards empty-string/connection_ref and schema_json={} defaults."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["upload_schema"]
+        fn(path="dummy.mdb", params={"target_type": "sqlite", "connection_ref": "dw"}, confirm=True)
+        kwargs = captured["upload_schema"]["kwargs"]
+        assert kwargs["target_type"] == "sqlite"
+        assert kwargs["connection_string"] == ""
+        assert kwargs["connection_ref"] == "dw"
+        assert kwargs["schema_json"] == {}
+        assert kwargs["confirm"] is True
+
+    def test_transfer_data_minimal_valid_params_forward_live_defaults(self, monkeypatch):
+        """transfer_data forwards live defaults: schema_json=None, auto/full, overrides=None."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["transfer_data"]
+        fn(path="dummy.mdb", params={"target_type": "sqlite", "connection_ref": "dw"}, confirm=True)
+        kwargs = captured["transfer_data"]["kwargs"]
+        assert kwargs["target_type"] == "sqlite"
+        assert kwargs["schema_json"] is None
+        assert kwargs["transfer_mode"] == "auto"
+        assert kwargs["verification_mode"] == "full"
+        assert kwargs["table_overrides"] is None
+        assert kwargs["database_path"] == "dummy.mdb"
+
+    def test_get_migration_status_valid_job_id_forwards(self, monkeypatch):
+        """get_migration_status forwards a valid job_id positionally."""
+        captured = _fake_migration_uc(monkeypatch)
+        fn, _desc = migration._TOOLS["get_migration_status"]
+        fn(path="dummy.mdb", params={"job_id": "abcd1234"})
+        assert captured["get_migration_status"]["args"] == ("abcd1234",)
