@@ -617,6 +617,44 @@ class TestBaseConnectorRepr:
         assert "[redacted]" in repr_str
 
 
+class TestSourceAdapterLifecycle:
+    def test_transfer_data_connects_one_source_adapter_for_all_tables(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import ms_access_mcp.application.migration as migration_module
+
+        adapter = MagicMock()
+        adapter.execute_query.return_value = {"rows": []}
+        adapter_factory = MagicMock(return_value=adapter)
+        monkeypatch.setattr(migration_module.BackendSelector, "get_adapter", adapter_factory)
+
+        connector = FakeConnector("Driver={ODBC};Database=test.db")
+        use_cases = MigrationUseCases()
+        monkeypatch.setattr(use_cases, "_get_connector", lambda *_: Ok(data=connector))
+        schema = ExtractedSchema(
+            source="source.accdb",
+            tables=[
+                TableSchema(
+                    name=name,
+                    columns=[ColumnSchema(name="id", source_type="Long Integer")],
+                    primary_key=[],
+                    foreign_keys=[],
+                    indexes=[],
+                )
+                for name in ("First", "Second")
+            ],
+        )
+
+        result = use_cases.transfer_data(
+            "fake", "connection", "source.accdb", schema.model_dump(),
+            verification_mode="count-only", confirm=True,
+        )
+
+        assert isinstance(result, Ok)
+        adapter_factory.assert_called_once_with("source.accdb")
+        adapter.connect.assert_called_once_with("source.accdb")
+
+
 class SpyCursor:
     """Spy cursor that captures execute() SQL for testing."""
 
