@@ -443,3 +443,78 @@ class TestSalvageDatabase:
         good = next((t for t in tables if t["table_name"] == "good_table"), None)
         assert good is not None
         assert good["error"] is None
+
+    def test_salvage_failure_returns_error_with_corrupt_path(self, tmp_path: Path) -> None:
+        db = tmp_path / "db.accdb"
+        db.write_bytes(b"CORRUPT CONTENT")
+
+        class _FakeDispatcher:
+            def start(self):
+                pass
+
+            def call(self, fn, engine=None):
+                return fn(engine)
+
+            def shutdown(self):
+                pass
+
+        adapter = MagicMock()
+        adapter.salvage_tables.side_effect = RuntimeError("COM failure")
+        mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
+        with patch("ms_access_mcp.backends.dispatcher.ComDispatcher", return_value=_FakeDispatcher()):
+            with patch("ms_access_mcp.backends.BackendSelector.get_adapter", return_value=adapter):
+                result = mc.salvage_database(str(db), confirm=True)
+
+        assert isinstance(result, Err)
+        corrupt_path = next(tmp_path.glob("db.corrupt-*.accdb"))
+        assert str(corrupt_path).replace("\\", "\\\\") in result.message
+        assert "do not re-run salvage" in result.message
+        adapter.disconnect.assert_called_once_with()
+
+    def test_salvage_disconnects_adapter_after_success(self, tmp_path: Path) -> None:
+        db = tmp_path / "db.accdb"
+        db.write_bytes(b"CORRUPT CONTENT")
+
+        class _FakeDispatcher:
+            def start(self):
+                pass
+
+            def call(self, fn, engine=None):
+                return fn(engine)
+
+            def shutdown(self):
+                pass
+
+        adapter = MagicMock()
+        adapter.salvage_tables.return_value = []
+        mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
+        with patch("ms_access_mcp.backends.dispatcher.ComDispatcher", return_value=_FakeDispatcher()):
+            with patch("ms_access_mcp.backends.BackendSelector.get_adapter", return_value=adapter):
+                result = mc.salvage_database(str(db), confirm=True)
+
+        assert isinstance(result, Ok)
+        adapter.disconnect.assert_called_once_with()
+
+    def test_salvage_disconnects_adapter_after_failure(self, tmp_path: Path) -> None:
+        db = tmp_path / "db.accdb"
+        db.write_bytes(b"CORRUPT CONTENT")
+
+        class _FakeDispatcher:
+            def start(self):
+                pass
+
+            def call(self, fn, engine=None):
+                return fn(engine)
+
+            def shutdown(self):
+                pass
+
+        adapter = MagicMock()
+        adapter.salvage_tables.side_effect = RuntimeError("COM failure")
+        mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
+        with patch("ms_access_mcp.backends.dispatcher.ComDispatcher", return_value=_FakeDispatcher()):
+            with patch("ms_access_mcp.backends.BackendSelector.get_adapter", return_value=adapter):
+                result = mc.salvage_database(str(db), confirm=True)
+
+        assert isinstance(result, Err)
+        adapter.disconnect.assert_called_once_with()
