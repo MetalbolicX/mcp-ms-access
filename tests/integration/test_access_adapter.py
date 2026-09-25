@@ -132,14 +132,12 @@ class TestAccessAdapterHidden:
             adapter2.disconnect()
 
         # Teardown returns to zero within 10s (mirrors the orphan test)
-        orphan_lines: list[str] = []
         for _ in range(20):
             time.sleep(0.5)
-            orphan_lines_count = _count_msaccess()
-            if orphan_lines_count == 0:
+            if _count_msaccess() == 0:
                 break
         else:
-            pytest.fail(f"MSACCESS.EXE orphans still present after 10s: count={orphan_lines_count}")
+            pytest.fail(f"MSACCESS.EXE orphans still present after 10s: count={_count_msaccess()}")
         # Fallback cleanup: never leave MSACCESS.EXE behind
         subprocess.run(
             ["taskkill", "/F", "/IM", "MSACCESS.EXE"],
