@@ -19,6 +19,13 @@ import pytest
 from ms_access_mcp.application.database import Err, Ok
 
 
+@pytest.fixture(autouse=True)
+def isolate_maintenance_temp_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for variable in ("TMP", "TEMP", "TMPDIR"):
+        monkeypatch.setenv(variable, str(tmp_path))
+    monkeypatch.setattr(tempfile, "tempdir", None)
+
+
 class FakeMaintenanceAdapter:
     """Fake adapter for testing MaintenanceUseCases."""
 
