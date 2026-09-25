@@ -91,7 +91,14 @@ class AccessAdapter:
 
             app = win32com.client.Dispatch("Access.Application")
             app.Visible = False
-            app.OpenCurrentDatabase(target, False, password)
+            try:
+                app.OpenCurrentDatabase(target, False, password)
+            except Exception:
+                try:
+                    app.Quit()
+                except Exception:
+                    pass
+                raise
             self._dispatcher._access_app = app
             self._dispatcher.capture_access_pid()  # plan 030: record PID for post-shutdown kill
             self._dispatcher._current_db = app.CurrentDb()
