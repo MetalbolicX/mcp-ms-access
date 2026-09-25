@@ -20,6 +20,18 @@ from pathlib import Path
 from ms_access_mcp import credentials
 from ms_access_mcp.errors import Err, Ok
 
+
+def test_synced_store_warning_detects_injected_root(tmp_path: Path):
+    root = tmp_path / "sync"
+    store = root / "project" / ".ms-access-mcp.json"
+    assert credentials.synced_store_warning(store, (root,)) is not None
+
+
+def test_synced_store_warning_is_silent_outside_injected_root(tmp_path: Path):
+    root = tmp_path / "sync"
+    store = tmp_path / "project" / ".ms-access-mcp.json"
+    assert credentials.synced_store_warning(store, (root,)) is None
+
 # =============================================================================
 # Helpers
 # =============================================================================
