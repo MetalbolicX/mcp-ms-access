@@ -49,6 +49,60 @@ class _CredentialsDict(TypedDict):
     profiles: dict[str, str]
 
 
+def _harden_nt(target: Path) -> None:
+    """Restrict a credential store DACL to its owner and Windows administrators."""
+    import win32security  # type: ignore[import-not-found]
+
+    descriptor = win32security.GetNamedSecurityInfo(
+        str(target), win32security.SE_FILE_OBJECT, win32security.OWNER_SECURITY_INFORMATION
+    )
+    owner = descriptor.GetSecurityDescriptorOwner()
+    dacl = win32security.ACL()
+    for sid in (
+        owner,
+        win32security.ConvertStringSidToSid("S-1-5-18"),
+        win32security.ConvertStringSidToSid("S-1-5-32-544"),
+    ):
+        dacl.AddAccessAllowedAce(win32security.ACL_REVISION, 2032127, sid)
+    win32security.SetNamedSecurityInfo(
+        str(target),
+        win32security.SE_FILE_OBJECT,
+        win32security.DACL_SECURITY_INFORMATION
+        | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+        None,
+        None,
+        dacl,
+        None,
+    )
+
+
+def _atomic_write_store(target: Path, payload: _CredentialsDict) -> None:
+    """Atomically write the JSON store with platform-appropriate hardening."""
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        dir=str(target.parent),
+        suffix=".tmp",
+        prefix=".ms-access-mcp-",
+    )
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path_str, str(target))
+
+        # Restrict POSIX permissions or apply an owner-only Windows DACL.
+        if os.name != "nt":
+            os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
+        else:
+            _harden_nt(target)
+    except BaseException:
+        try:
+            os.unlink(tmp_path_str)
+        except OSError:
+            pass
+        raise
+
+
 # Compiled regex set for credential token detection (case-insensitive).
 # Each pattern matches a ;-delimited token containing a credential form.
 _CRED_PATTERNS = [
@@ -240,30 +294,7 @@ def write_entry(db_path: str, password: str, *, local: bool = False) -> None:
 
     data["credentials"][normalized] = password
 
-    # Atomic write: write to a .tmp file in the same directory, then replace
-    tmp_fd, tmp_path_str = tempfile.mkstemp(
-        dir=str(target.parent),
-        suffix=".tmp",
-        prefix=".ms-access-mcp-",
-    )
-    try:
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, ensure_ascii=False)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path_str, str(target))
-
-        # Set POSIX permissions to 0o600 (owner read/write only)
-        if os.name != "nt":
-            os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
-
-    except BaseException:
-        # Clean up the temp file on failure
-        try:
-            os.unlink(tmp_path_str)
-        except OSError:
-            pass
-        raise
+    _atomic_write_store(target, data)
 
 
 def remove_entry(db_path: str, *, local: bool = False) -> bool:
@@ -297,26 +328,7 @@ def remove_entry(db_path: str, *, local: bool = False) -> bool:
         except OSError:
             pass
     else:
-        # Rewrite atomically
-        tmp_fd, tmp_path_str = tempfile.mkstemp(
-            dir=str(target.parent),
-            suffix=".tmp",
-            prefix=".ms-access-mcp-",
-        )
-        try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-                json.dump(existing, fh, indent=2, ensure_ascii=False)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp_path_str, str(target))
-            if os.name != "nt":
-                os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
-        except BaseException:
-            try:
-                os.unlink(tmp_path_str)
-            except OSError:
-                pass
-            raise
+        _atomic_write_store(target, existing)
 
     return True
 
@@ -432,26 +444,7 @@ def write_profile(name: str, connection_string: str) -> None:
 
     data["profiles"][name] = connection_string
 
-    # Atomic write
-    tmp_fd, tmp_path_str = tempfile.mkstemp(
-        dir=str(target.parent),
-        suffix=".tmp",
-        prefix=".ms-access-mcp-",
-    )
-    try:
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, ensure_ascii=False)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path_str, str(target))
-        if os.name != "nt":
-            os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
-    except BaseException:
-        try:
-            os.unlink(tmp_path_str)
-        except OSError:
-            pass
-        raise
+    _atomic_write_store(target, data)
 
 
 def remove_profile(name: str) -> bool:
@@ -477,26 +470,7 @@ def remove_profile(name: str) -> bool:
     # Preserve all other sections; only remove from profiles
     existing["profiles"].pop(name, None)
 
-    # Atomic write
-    tmp_fd, tmp_path_str = tempfile.mkstemp(
-        dir=str(target.parent),
-        suffix=".tmp",
-        prefix=".ms-access-mcp-",
-    )
-    try:
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-            json.dump(existing, fh, indent=2, ensure_ascii=False)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path_str, str(target))
-        if os.name != "nt":
-            os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
-    except BaseException:
-        try:
-            os.unlink(tmp_path_str)
-        except OSError:
-            pass
-        raise
+    _atomic_write_store(target, existing)
 
     return True
 

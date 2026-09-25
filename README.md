@@ -60,7 +60,7 @@ Paths are stored as normalized absolute paths. The global file location can be o
 ### Security notes
 
 - **Forbidden characters**: passwords containing ``;``, ``{``, or ``}`` are rejected by the CLI because ODBC connection strings use these as delimiters. Edit the JSON file directly if you must store such a password (at your own risk).
-- **File permissions**: on POSIX systems the global credentials file is created with mode ``0o600`` (owner read/write only). On Windows, use NTFS ACLs to restrict access.
+- **File permissions**: credential files are created with mode ``0o600`` (owner read/write only) on POSIX and a protected owner-only DACL on Windows (owner, SYSTEM, and Administrators). Files written before this hardening retain their old ACL; re-run ``ms-access-mcp credentials set`` once to re-harden them.
 - **The MCP/LLM layer never sees passwords**: credentials are resolved inside the server process and passed directly to the database adapter; they never appear in tool-call results or error messages exposed to the LLM.
 
 ## External database credentials
