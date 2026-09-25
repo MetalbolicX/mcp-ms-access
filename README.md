@@ -44,6 +44,8 @@ ms-access-mcp credentials remove --db C:\path\to\database.accdb
 
 A local entry shadows a global entry for the same database.
 
+Local credential files are stored beside the database and can travel with folders that are backed up, shared, or synchronized. Prefer the global store unless local placement is intentional; ``ms-access-mcp doctor`` warns when its current working directory's local store falls beneath a recognized OneDrive or Dropbox root. Detection is heuristic and is not a guarantee that a store is outside synchronized storage.
+
 ### File format
 
 ```json
