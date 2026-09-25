@@ -5,8 +5,8 @@ Module-level job tracker with uuid4().hex[:8] keys.
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -30,15 +30,14 @@ from ..credentials import contains_credential, resolve_profile
 from ..errors import Err, Result
 from ..errors import err as _err
 from ..errors import ok as _ok
+from ..models import QueryResult
 from ..models.migration import (
     ExtractedSchema,
     MigrationJob,
     TableResult,
     TableTransferConfig,
 )
-from ..models import QueryResult
 from ..safety import is_path_allowed
-from .protocols import MigrationAdapterProtocol, MigrationConnectorProtocol
 
 _log = logging.getLogger(__name__)
 

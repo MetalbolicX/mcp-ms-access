@@ -763,6 +763,7 @@ class SpyCursor:
 
     def __init__(self):
         self._captured_sql: list[str] = []
+        self.closed = False
 
     def execute(self, sql: str, *args, **kwargs):
         self._captured_sql.append(sql)
@@ -770,6 +771,9 @@ class SpyCursor:
 
     def fetchone(self):
         return (0,)
+
+    def close(self):
+        self.closed = True
 
 
 class SpyConnection:
@@ -843,3 +847,34 @@ class TestCountTargetRowsQuoting:
         assert "[x]]" in captured, (
             f"Embedded bracket must be doubled, got: {captured!r}"
         )
+
+
+class TestCountRowsProtocol:
+    def test_count_target_rows_delegates_to_public_connector_method(self, monkeypatch):
+        connector = FakeConnector("connection")
+        calls: list[str] = []
+        monkeypatch.setattr(connector, "count_rows", lambda table: calls.append(table) or 12)
+
+        assert MigrationUseCases()._count_target_rows(connector, "Customers") == 12
+        assert calls == ["Customers"]
+
+    def test_default_count_rows_closes_cursor(self):
+        connector = FakeConnector("connection")
+        connection = SpyConnection()
+        connector._conn = connection
+
+        assert connector.count_rows("Customers") == 0
+        assert connection._cursor.closed is True
+
+    def test_count_target_rows_logs_failure_and_returns_minus_one(self, caplog, monkeypatch):
+        connector = FakeConnector("connection")
+
+        def fail_count(table: str) -> int:
+            raise RuntimeError("count failed")
+
+        monkeypatch.setattr(connector, "count_rows", fail_count)
+        with caplog.at_level("WARNING", logger="ms_access_mcp.application.migration"):
+            count = MigrationUseCases()._count_target_rows(connector, "Customers")
+
+        assert count == -1
+        assert "Row-count verification failed for Customers" in caplog.text
