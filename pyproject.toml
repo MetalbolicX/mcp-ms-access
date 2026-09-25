@@ -13,7 +13,7 @@ dependencies = [
 [project.optional-dependencies]
 xlsx = ["openpyxl>=3.1.0"]
 dev = ["pytest>=8.0.0", "ruff>=0.5.0", "pyright>=1.1.300"]
-migrate = ["psycopg2-binary>=2.9.0", "mysql-connector-python>=8.0.0"]
+migrate = ["psycopg2-binary>=2.9.0", "mysql-connector-python>=26.7.0"]
 
 [project.scripts]
 ms-access-mcp = "ms_access_mcp.cli:main"
@@ -100,3 +100,7 @@ ignore = [
 # EM/TRY003: backend raise mechanics are fixed in plan 020; scripts are deferred.
 "scripts/**" = ["D", "EM", "TRY003"]
 
+[tool.pyright]
+# Freeze the G2 CI gate's meaning; src-only scope (tests/scripts are not the gate's subject).
+include = ["src"]
+typeCheckingMode = "basic"
