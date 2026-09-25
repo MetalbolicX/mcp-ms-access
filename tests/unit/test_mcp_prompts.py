@@ -5,7 +5,6 @@ import re
 
 from ms_access_mcp.server import build_server
 
-
 EXPECTED = {
     "analyze_database": {"get_tables", "get_table_schema", "get_relationships", "get_indexes", "get_database_statistics", "get_er_diagram", "analyze_query"},
     "develop_new_database": {"create_access_database", "create_table", "execute_sql_script", "create_index", "create_relationship", "export_data", "maintenance_backup"},
