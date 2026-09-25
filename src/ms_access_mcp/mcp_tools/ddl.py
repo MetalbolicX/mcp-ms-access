@@ -6,8 +6,15 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
+from pydantic import ValidationError
 
 from ..application.database import DatabaseUseCases
+from ..models.linked_tables import (
+    CreateLinkedTableParams,
+    RefreshLinkedTableParams,
+    UnlinkTableParams,
+    UpsertLinkedTableParams,
+)
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
 from ._session_registry import registry
@@ -122,19 +129,17 @@ def create_linked_table(path: str, params: dict[str, Any] | None = None, confirm
         ``ms-access-mcp credentials profile set --name <name>`` — never
         request or transmit the connection string.
     """
-    p = params or {}
-    name = p.get("name", "")
-    source_table = p.get("source_table", "")
-    connect_string = p.get("connect_string", "")
-    connect_ref = p.get("connect_ref", "")
-    connection_name = p.get("connection_name", "default")
+    try:
+        parsed = CreateLinkedTableParams.model_validate(params or {})
+    except ValidationError as e:
+        return to_mcp_result({"success": False, "error": f"Invalid params: {e}"})
     uc = _new_db(readonly=False)
     result = uc.create_linked_table(
-        name=name,
-        source_table=source_table,
-        connect_string=connect_string,
-        connect_ref=connect_ref,
-        connection_name=connection_name,
+        name=parsed.name,
+        source_table=parsed.source_table,
+        connect_string=parsed.connect_string,
+        connect_ref=parsed.connect_ref,
+        connection_name=parsed.connection_name,
         confirm=confirm,
     )
     return to_mcp_result(_result_to_dict(result))
@@ -149,17 +154,16 @@ def refresh_linked_table(path: str, params: dict[str, Any] | None = None, confir
         ``ms-access-mcp credentials profile set --name <name>`` — never
         request or transmit the connection string.
     """
-    p = params or {}
-    name = p.get("name", "")
-    connect_string = p.get("connect_string")
-    connect_ref = p.get("connect_ref", "")
-    connection_name = p.get("connection_name", "default")
+    try:
+        parsed = RefreshLinkedTableParams.model_validate(params or {})
+    except ValidationError as e:
+        return to_mcp_result({"success": False, "error": f"Invalid params: {e}"})
     uc = _new_db(readonly=False)
     result = uc.refresh_linked_table(
-        name=name,
-        connect_string=connect_string,
-        connect_ref=connect_ref,
-        connection_name=connection_name,
+        name=parsed.name,
+        connect_string=parsed.connect_string,
+        connect_ref=parsed.connect_ref,
+        connection_name=parsed.connection_name,
         confirm=confirm,
     )
     return to_mcp_result(_result_to_dict(result))
@@ -167,11 +171,12 @@ def refresh_linked_table(path: str, params: dict[str, Any] | None = None, confir
 
 def unlink_table(path: str, params: dict[str, Any] | None = None, confirm: bool = False) -> CallToolResult:
     """Remove a linked table without deleting the remote source table."""
-    p = params or {}
-    name = p.get("name", "")
-    connection_name = p.get("connection_name", "default")
+    try:
+        parsed = UnlinkTableParams.model_validate(params or {})
+    except ValidationError as e:
+        return to_mcp_result({"success": False, "error": f"Invalid params: {e}"})
     uc = _new_db(readonly=False)
-    result = uc.unlink_table(name=name, connection_name=connection_name, confirm=confirm)
+    result = uc.unlink_table(name=parsed.name, connection_name=parsed.connection_name, confirm=confirm)
     return to_mcp_result(_result_to_dict(result))
 
 
@@ -184,19 +189,17 @@ def upsert_linked_table(path: str, params: dict[str, Any] | None = None, confirm
         ``ms-access-mcp credentials profile set --name <name>`` — never
         request or transmit the connection string.
     """
-    p = params or {}
-    name = p.get("name", "")
-    source_table = p.get("source_table", "")
-    connect_string = p.get("connect_string", "")
-    connect_ref = p.get("connect_ref", "")
-    connection_name = p.get("connection_name", "default")
+    try:
+        parsed = UpsertLinkedTableParams.model_validate(params or {})
+    except ValidationError as e:
+        return to_mcp_result({"success": False, "error": f"Invalid params: {e}"})
     uc = _new_db(readonly=False)
     result = uc.upsert_linked_table(
-        name=name,
-        source_table=source_table,
-        connect_string=connect_string,
-        connect_ref=connect_ref,
-        connection_name=connection_name,
+        name=parsed.name,
+        source_table=parsed.source_table,
+        connect_string=parsed.connect_string,
+        connect_ref=parsed.connect_ref,
+        connection_name=parsed.connection_name,
         confirm=confirm,
     )
     return to_mcp_result(_result_to_dict(result))

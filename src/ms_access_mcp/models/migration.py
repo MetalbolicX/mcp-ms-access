@@ -20,11 +20,73 @@ from ..models import (
 )
 
 __all__ = [
+    "ExtractSchemaParams",
     "ExtractedSchema",
+    "GetMigrationStatusParams",
     "MigrationJob",
     "TableResult",
     "TableTransferConfig",
+    "TransferDataParams",
+    "UploadSchemaParams",
 ]
+
+
+class ExtractSchemaParams(BaseModel):
+    """Params for the extract_schema tool boundary.
+
+    Attributes:
+        target_type: Target dialect (postgres, mysql, sqlite, sqlserver).
+    """
+
+    target_type: str = ""
+
+
+class UploadSchemaParams(BaseModel):
+    """Params for the upload_schema tool boundary.
+
+    Attributes:
+        target_type: Target dialect.
+        connection_string: Literal connection string (or empty to use connection_ref).
+        connection_ref: Named credential profile reference.
+        schema_json: Extracted schema payload to upload.
+    """
+
+    target_type: str = ""
+    connection_string: str = ""
+    connection_ref: str = ""
+    schema_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class TransferDataParams(BaseModel):
+    """Params for the transfer_data tool boundary.
+
+    Attributes:
+        target_type: Target dialect.
+        connection_string: Literal connection string (or empty to use connection_ref).
+        connection_ref: Named credential profile reference.
+        schema_json: Extracted schema payload; None means extract at transfer time.
+        transfer_mode: Transfer strategy override (default "auto").
+        verification_mode: Verification level (default "full").
+        table_overrides: Per-table transfer configuration overrides; None = no overrides.
+    """
+
+    target_type: str = ""
+    connection_string: str = ""
+    connection_ref: str = ""
+    schema_json: dict[str, Any] | None = None
+    transfer_mode: str = "auto"
+    verification_mode: str = "full"
+    table_overrides: dict[str, Any] | None = None
+
+
+class GetMigrationStatusParams(BaseModel):
+    """Params for the get_migration_status tool boundary.
+
+    Attributes:
+        job_id: Short migration job identifier.
+    """
+
+    job_id: str = ""
 
 
 class ExtractedSchema(BaseModel):

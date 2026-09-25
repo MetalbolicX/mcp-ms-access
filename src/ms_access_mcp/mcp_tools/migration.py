@@ -10,8 +10,15 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
+from pydantic import ValidationError
 
 from ..application.migration import MigrationUseCases
+from ..models.migration import (
+    ExtractSchemaParams,
+    GetMigrationStatusParams,
+    TransferDataParams,
+    UploadSchemaParams,
+)
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
 from ._session_registry import registry
@@ -50,14 +57,16 @@ def extract_schema(
         are never echoed to output.
     """
     uc = _new_migration()
-    p = params or {}
-    target_type = p.get("target_type", "")
+    try:
+        parsed = ExtractSchemaParams.model_validate(params or {})
+    except ValidationError as e:
+        return to_mcp_result({"success": False, "error": f"Invalid params: {e}"})
 
-    if not target_type:
+    if not parsed.target_type:
         dict_result = {"success": False, "error": "target_type is required"}
         return to_mcp_result(dict_result)
 
-    result = uc.extract_schema(path, target_type)
+    result = uc.extract_schema(path, parsed.target_type)
     dict_result = _result_to_dict(result)
     return to_mcp_result(dict_result)
 
@@ -86,24 +95,23 @@ def upload_schema(
         request or transmit the connection string.
     """
     uc = _new_migration()
-    p = params or {}
-    target_type = p.get("target_type", "")
-    connection_string = p.get("connection_string", "")
-    connection_ref = p.get("connection_ref", "")
-    schema_json = p.get("schema_json", {})
+    try:
+        parsed = UploadSchemaParams.model_validate(params or {})
+    except ValidationError as e:
+        return to_mcp_result({"success": False, "error": f"Invalid params: {e}"})
 
-    if not target_type:
+    if not parsed.target_type:
         dict_result = {"success": False, "error": "target_type is required"}
         return to_mcp_result(dict_result)
-    if not connection_string and not connection_ref:
+    if not parsed.connection_string and not parsed.connection_ref:
         dict_result = {"success": False, "error": "connection_string is required"}
         return to_mcp_result(dict_result)
 
     result = uc.upload_schema(
-        target_type=target_type,
-        connection_string=connection_string,
-        connection_ref=connection_ref,
-        schema_json=schema_json,
+        target_type=parsed.target_type,
+        connection_string=parsed.connection_string,
+        connection_ref=parsed.connection_ref,
+        schema_json=parsed.schema_json,
         confirm=confirm,
     )
     dict_result = _result_to_dict(result)
@@ -133,31 +141,27 @@ def transfer_data(
         request or transmit the connection string.
     """
     uc = _new_migration()
-    p = params or {}
-    target_type = p.get("target_type", "")
-    connection_string = p.get("connection_string", "")
-    connection_ref = p.get("connection_ref", "")
-    schema_json = p.get("schema_json")
-    transfer_mode = p.get("transfer_mode", "auto")
-    verification_mode = p.get("verification_mode", "full")
-    table_overrides = p.get("table_overrides")
+    try:
+        parsed = TransferDataParams.model_validate(params or {})
+    except ValidationError as e:
+        return to_mcp_result({"success": False, "error": f"Invalid params: {e}"})
 
-    if not target_type:
+    if not parsed.target_type:
         dict_result = {"success": False, "error": "target_type is required"}
         return to_mcp_result(dict_result)
-    if not connection_string and not connection_ref:
+    if not parsed.connection_string and not parsed.connection_ref:
         dict_result = {"success": False, "error": "connection_string is required"}
         return to_mcp_result(dict_result)
 
     result = uc.transfer_data(
-        target_type=target_type,
-        connection_string=connection_string,
-        connection_ref=connection_ref,
+        target_type=parsed.target_type,
+        connection_string=parsed.connection_string,
+        connection_ref=parsed.connection_ref,
         database_path=path,
-        schema_json=schema_json,
-        transfer_mode=transfer_mode,
-        verification_mode=verification_mode,
-        table_overrides=table_overrides,
+        schema_json=parsed.schema_json,
+        transfer_mode=parsed.transfer_mode,
+        verification_mode=parsed.verification_mode,
+        table_overrides=parsed.table_overrides,
         confirm=confirm,
     )
     dict_result = _result_to_dict(result)
@@ -180,14 +184,16 @@ def get_migration_status(
         CallToolResult with MigrationJob dict on success.
     """
     uc = _new_migration()
-    p = params or {}
-    job_id = p.get("job_id", "")
+    try:
+        parsed = GetMigrationStatusParams.model_validate(params or {})
+    except ValidationError as e:
+        return to_mcp_result({"success": False, "error": f"Invalid params: {e}"})
 
-    if not job_id:
+    if not parsed.job_id:
         dict_result = {"success": False, "error": "job_id is required"}
         return to_mcp_result(dict_result)
 
-    result = uc.get_migration_status(job_id)
+    result = uc.get_migration_status(parsed.job_id)
     dict_result = _result_to_dict(result)
     return to_mcp_result(dict_result)
 
