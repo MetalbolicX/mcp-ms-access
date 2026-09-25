@@ -55,10 +55,6 @@ def _write_failed(result: Any) -> str | None:
         if d.get("success") is False:
             return str(d.get("error", "write failed"))
         return None
-    if isinstance(result, dict):
-        if result.get("success") is False:
-            return str(result.get("error", "write failed"))
-        return None
     return None
 
 
@@ -563,7 +559,7 @@ class DatabaseUseCases:
                 kwargs["limit"] = limit
             result = method(sql, **kwargs)
             if isinstance(result, QueryResult):
-                result = dataclasses.asdict(result)
+                return _ok(data=result.rows, rowcount=result.count)
             if isinstance(result, dict):
                 if "rows" in result:
                     return _ok(data=result.get("rows", []), rowcount=result.get("count", 0))
@@ -607,7 +603,7 @@ class DatabaseUseCases:
             result = adapter.insert_data(table_name, data)
             if failed := _write_failed(result):
                 return _err(failed)
-            rowcount = dataclasses.asdict(result)["affected"]
+            rowcount = result.affected
             return _ok(rowcount=rowcount)
         except Exception as e:
             return _err(str(e))
@@ -643,7 +639,7 @@ class DatabaseUseCases:
             result = adapter.update_data(table_name, data, where_dict=where)
             if failed := _write_failed(result):
                 return _err(failed)
-            rowcount = dataclasses.asdict(result)["affected"]
+            rowcount = result.affected
             return _ok(rowcount=rowcount)
         except Exception as e:
             return _err(str(e))
@@ -677,7 +673,7 @@ class DatabaseUseCases:
             result = adapter.delete_data(table_name, where_dict=where)
             if failed := _write_failed(result):
                 return _err(failed)
-            rowcount = dataclasses.asdict(result)["affected"]
+            rowcount = result.affected
             return _ok(rowcount=rowcount)
         except Exception as e:
             return _err(str(e))

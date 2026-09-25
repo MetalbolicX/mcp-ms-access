@@ -102,9 +102,9 @@ def test_backend_query_returns_query_result(adapter_type) -> None:
 class _FakeOdbcShapedAdapter:
     committed = False
 
-    def insert_data(self, table_name: str, data: dict | list[dict]) -> dict:
+    def insert_data(self, table_name: str, data: dict | list[dict]) -> WriteResult:
         self.committed = True
-        return {"success": True, "affected": 3}
+        return WriteResult(success=True, affected=3)
 
 
 def test_insert_data_accepts_odbc_result_without_post_commit_type_error() -> None:
