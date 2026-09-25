@@ -15,13 +15,20 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from ms_access_mcp.application import session_backup
 from ms_access_mcp.application.session_backup import (
-    _AUTO_SESSION_DIR,
     cleanup_session_backup,
     create_session_backup,
     detect_orphaned_backup,
 )
 from ms_access_mcp.errors import Err, Ok
+
+
+@pytest.fixture(autouse=True)
+def isolate_autosession_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_backup, "_AUTO_SESSION_DIR", str(tmp_path / "autosession"))
 
 
 class TestCreateSessionBackup:
@@ -140,7 +147,7 @@ class TestDetectOrphanedBackup:
         # Simulate: write a manifest for a dead PID, using the SAME _AUTO_SESSION_DIR
         dead_pid = 99999  # very unlikely to exist
         backup_filename = f"autosession_{dead_pid}_20260916_test.accdb"
-        backup_path = os.path.join(_AUTO_SESSION_DIR, backup_filename)
+        backup_path = os.path.join(session_backup._AUTO_SESSION_DIR, backup_filename)
         manifest_path = backup_path + ".manifest.json"
         manifest = {
             "source_path": str(db),
@@ -152,7 +159,7 @@ class TestDetectOrphanedBackup:
             "session_pid": dead_pid,
         }
 
-        os.makedirs(_AUTO_SESSION_DIR, exist_ok=True)
+        os.makedirs(session_backup._AUTO_SESSION_DIR, exist_ok=True)
         Path(backup_path).write_bytes(b"DEAD SESSION CONTENT")
         with open(manifest_path, "w") as f:
             json.dump(manifest, f)
@@ -207,7 +214,7 @@ class TestDetectOrphanedBackup:
 
         dead_pid = 99998  # very unlikely to exist
         backup_filename = f"autosession_{dead_pid}_20260916_test.accdb"
-        backup_path = os.path.join(_AUTO_SESSION_DIR, backup_filename)
+        backup_path = os.path.join(session_backup._AUTO_SESSION_DIR, backup_filename)
         manifest_path = backup_path + ".manifest.json"
         manifest = {
             "source_path": str(db),
@@ -219,7 +226,7 @@ class TestDetectOrphanedBackup:
             "session_pid": dead_pid,
         }
 
-        os.makedirs(_AUTO_SESSION_DIR, exist_ok=True)
+        os.makedirs(session_backup._AUTO_SESSION_DIR, exist_ok=True)
         Path(backup_path).write_bytes(b"DEAD SESSION CONTENT")
         with open(manifest_path, "w") as f:
             json.dump(manifest, f)
