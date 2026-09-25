@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .application.database import DatabaseUseCases
 from .backends.dispatcher import ComDispatcher
+from .mcp_tools._session_registry import close_all_sessions
 from .profiles import load_profile, resolve_profile
 from .safety import allowed_dirs_from_env
 
@@ -68,6 +69,7 @@ async def lifespan(server: FastMCP):
                 state.dispatcher.shutdown()
             except Exception as exc:
                 _log.warning("Error shutting down dispatcher: %s", exc)
+        close_all_sessions()
         _log.debug("Server lifespan: complete")
 
 
