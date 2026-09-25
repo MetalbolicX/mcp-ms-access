@@ -435,7 +435,7 @@ class TestEnsureAdapter:
     def test_ensure_adapter_returns_err_on_backend_unavailable(self, monkeypatch):
         """BackendUnavailableError returns Err."""
         from ms_access_mcp.application.automation import AutomationUseCases
-        from ms_access_mcp.capabilities import BackendUnavailableError
+        from ms_access_mcp.errors import BackendUnavailableError
 
         def raise_unavailable(*a, **kw):
             raise BackendUnavailableError("COM not available")
@@ -452,7 +452,7 @@ class TestEnsureAdapter:
     def test_ensure_adapter_returns_err_on_capability_mismatch(self, monkeypatch):
         """BackendCapabilityMismatchError returns Err."""
         from ms_access_mcp.application.automation import AutomationUseCases
-        from ms_access_mcp.capabilities import BackendCapabilityMismatchError
+        from ms_access_mcp.errors import BackendCapabilityMismatchError
 
         def raise_mismatch(*a, **kw):
             raise BackendCapabilityMismatchError("ODBC can't do VBA")

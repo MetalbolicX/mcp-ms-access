@@ -7,6 +7,8 @@ import sys
 from enum import Flag, auto
 from typing import Literal
 
+from .errors import BackendCapabilityMismatchError, BackendUnavailableError
+
 
 class BackendCapabilities(Flag):
     """Flags describing what operations a backend must support."""
@@ -34,24 +36,6 @@ DATA_WRITE_CAPS = (
     | BackendCapabilities.CAN_INTROSPECT_SCHEMA
 )
 VBA_CAPS = BackendCapabilities.CAN_HANDLE_VBA | BackendCapabilities.CAN_INTROSPECT_SCHEMA
-
-
-class BackendCapabilityMismatchError(Exception):
-    """Raised when requested capabilities require a backend that is unavailable.
-
-    REQ-3, REQ-23, REQ-24.
-    """
-
-    pass
-
-
-class BackendUnavailableError(Exception):
-    """Raised when a backend is explicitly requested but unavailable on the platform.
-
-    REQ-6, REQ-19.
-    """
-
-    pass
 
 
 # Capabilities that require the COM backend.

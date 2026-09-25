@@ -7,6 +7,8 @@ from enum import Flag, auto
 from functools import cache
 from typing import Literal, cast
 
+from ..errors import BackendCapabilityMismatchError, BackendUnavailableError
+
 _logger = logging.getLogger(__name__)
 
 
@@ -45,16 +47,6 @@ DATA_WRITE_CAPS = (
     | BackendCapabilities.CAN_INTROSPECT_SCHEMA
 )
 VBA_CAPS = BackendCapabilities.CAN_HANDLE_VBA | BackendCapabilities.CAN_INTROSPECT_SCHEMA
-
-
-class BackendCapabilityMismatchError(Exception):
-    """Raised when requested capabilities require a backend that is unavailable."""
-
-
-
-class BackendUnavailableError(Exception):
-    """Raised when a backend is explicitly requested but unavailable on the platform."""
-
 
 
 _VALID_BACKEND_VALUES = frozenset({"auto", "odbc", "com", "dao"})

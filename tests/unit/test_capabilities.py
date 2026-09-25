@@ -11,10 +11,9 @@ from ms_access_mcp.capabilities import (
     SCHEMA_CAPS,
     VBA_CAPS,
     BackendCapabilities,
-    BackendCapabilityMismatchError,
-    BackendUnavailableError,
     resolve_backend,
 )
+from ms_access_mcp.errors import BackendCapabilityMismatchError, BackendUnavailableError
 
 
 class TestBackendCapabilities:

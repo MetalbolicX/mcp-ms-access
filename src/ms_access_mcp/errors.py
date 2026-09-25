@@ -92,11 +92,11 @@ class AccessMcpError(Exception):
 
 
 class BackendUnavailableError(AccessMcpError):
-    """Raised when a required backend (COM/ODBC) is not available."""
+    """Raised when an explicitly requested backend is unavailable (REQ-6, REQ-19)."""
 
 
 class BackendCapabilityMismatchError(AccessMcpError):
-    """Raised when a backend lacks a required capability."""
+    """Raised when backend capabilities conflict (REQ-3, REQ-23, REQ-24)."""
 
 
 class DaoOperationError(AccessMcpError):

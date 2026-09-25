@@ -47,7 +47,7 @@ class AdapterLifecycle(Generic[_AdapterT]):
             return _err(self._not_connected_error)
 
         from .. import backends
-        from ..capabilities import BackendCapabilityMismatchError, BackendUnavailableError
+        from ..errors import BackendCapabilityMismatchError, BackendUnavailableError
 
         try:
             self._adapter = cast(
