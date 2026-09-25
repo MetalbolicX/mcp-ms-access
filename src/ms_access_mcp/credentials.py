@@ -152,6 +152,22 @@ def _local_credentials_path(db_path: str | Path) -> Path:
     return Path(db_path).resolve().parent / ".ms-access-mcp.json"
 
 
+def synced_store_warning(store_path: str | Path, sync_roots: tuple[str | Path, ...] | None = None) -> str | None:
+    """Warn when a local credential store is beneath a known sync root."""
+    if sync_roots is None:
+        sync_roots = tuple(
+            root for root in (os.environ.get("OneDrive"), os.environ.get("Dropbox")) if root
+        )
+    store = Path(store_path).resolve()
+    for root in sync_roots:
+        try:
+            store.relative_to(Path(root).resolve())
+            return f"Local credential store is in a synced directory: {store}"
+        except ValueError:
+            continue
+    return None
+
+
 def _normalize_path(db_path: str) -> str:
     """Normalize a database path for consistent lookup.
 

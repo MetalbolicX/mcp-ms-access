@@ -292,6 +292,8 @@ def _check_temp_dir_writable() -> Check:
 
 def run_checks(deep: bool = False) -> list[Check]:
     """Run all doctor checks."""
+    from .credentials import _local_credentials_path, synced_store_warning
+
     checks = [
         _is_windows_x64(),
         _check_package_versions(),
@@ -300,6 +302,11 @@ def run_checks(deep: bool = False) -> list[Check]:
         _check_dao_engine(),
         _check_odbc_driver(),
     ]
+    local_store = _local_credentials_path(os.getcwd())
+    if local_store.exists():
+        warning = synced_store_warning(local_store)
+        if warning:
+            checks.append(Check(name="credentials", passed=True, message=f"WARNING: {warning}"))
     if deep:
         checks.append(_check_deep_access())
         checks.append(_check_temp_dir_writable())

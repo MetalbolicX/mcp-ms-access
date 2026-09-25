@@ -165,3 +165,42 @@ credentials section.
   this spike's decision should note that sequencing explicitly.
 - If Option B ever lands, plan 073's `_atomic_write_store` is the single
   write choke point the migration will use — noted for that future plan.
+
+## Outcome
+
+**Chosen: Option A — keep colocation, add a heuristic warning.** The local
+credential path remains an explicit feature, documented and tested; changing
+its default would require migration behavior and is not justified by this
+inventory. The warning is best-effort, WARN-only, and doctor checks the local
+store beside its current working directory; it does not claim to find stores
+for unrelated database paths. The guard is under 50 added source lines.
+
+| Travel/friction surface | Evidence | Finding |
+|---|---|---|
+| Automatic session backup | `src/ms_access_mcp/application/session_backup.py:87-104` | `shutil.copy2(db_path, backup_path)` copies only the DB file; destination is the temp autosession directory (`:26`, `:38-42`). Sibling credential file does not travel. |
+| Data export | `src/ms_access_mcp/application/db_export.py:97-124, 165-178` | Writes CSV/JSON to caller-provided `output_path`; XLSX delegates to adapter (`:134-154`). No directory/sibling copy. |
+| Doctor hook | `src/ms_access_mcp/doctor.py:293-306` | Existing `run_checks` has platform/dependency/driver checks, no credential reporting. Added optional credentials warning check for a local store in cwd. |
+| User-facing promise and friction | `README.md:18-45, 58-64` | Global is the documented default (`:19-20`); `--local` is explicitly documented, local shadows global, security notes describe at-rest permissions but not sync/backup exposure. |
+| Contract surface | `tests/unit/test_credentials.py:38-40`; `tests/unit/test_cli_credentials.py:236` | Tests assert the colocated file path and explicit `--local` write behavior; local placement is a supported contract, not deprecated. |
+| Original rationale | `plans/039-server-side-db-credentials.md:302, 315-329` | 039 established explicit local set/remove and documented path/lookup semantics; no deprecation or replacement appears in the current contract. |
+| Named profiles | `plans/040-named-credential-profiles.md:50-51, 68-69, 73-90`; `README.md:102` | Profiles extend global credentials storage, rather than redefining local DB-password storage. |
+
+The local store is owner-restricted at rest (`credentials.py:52-77, 79-103`),
+but ACLs do not prevent the file from traveling in a synced/copied folder.
+`credentials.py:142-152` confirms the current resolved parent-directory
+placement; its current implementation differs from the plan's stale excerpt
+only in surrounding hardening changes (073 is present). No claim is made that
+the heuristic catches every sync client or configured sync path.
+
+**Long-term sequencing:** DPAPI-at-rest remains the strongest Windows answer;
+global-by-default is a separate later decision, after the protection and
+migration story are ready. Do not relocate stores in this spike. If relocation
+is selected later, create a migration plan using `_atomic_write_store` as the
+single write choke point.
+
+**README paragraph for a follow-up doc change:** Local credential files are
+stored beside the database and can travel with folders that are backed up,
+shared, or synchronized. Prefer the global store unless local placement is
+intentional; `doctor` warns when its current working directory's local store
+falls beneath a recognized OneDrive or Dropbox root. Detection is heuristic
+and is not a guarantee that a store is outside synchronized storage.
