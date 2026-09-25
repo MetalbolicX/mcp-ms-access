@@ -9,6 +9,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from ...dao_sql import quote_ident
+
 __all__ = ["BaseConnector", "_register_factory", "_CONNECTOR_FACTORIES"]
 
 _CONNECTOR_FACTORIES: dict[str, Any] = {}
@@ -43,6 +45,19 @@ class BaseConnector(ABC):
             connection_string: Dialect-specific connection string.
         """
         self.connection_string = connection_string
+        self._conn: Any
+
+    def count_rows(self, table: str) -> int:
+        """Count rows in *table* (used by migration verification)."""
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(f"SELECT COUNT(*) FROM {quote_ident(table)}")
+            return int(cursor.fetchone()[0])
+        finally:
+            try:
+                cursor.close()
+            except Exception:
+                pass
 
     @abstractmethod
     def connect(self) -> None:

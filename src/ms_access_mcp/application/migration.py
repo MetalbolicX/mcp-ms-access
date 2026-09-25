@@ -6,13 +6,13 @@ Module-level job tracker with uuid4().hex[:8] keys.
 from __future__ import annotations
 
 import os
+import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ..backends import BackendSelector
-from ..backends.dao_sql import quote_ident
 from ..backends.migration import (
     get_connector,
     render_schema_ddl,
@@ -36,7 +36,11 @@ from ..models.migration import (
     TableResult,
     TableTransferConfig,
 )
+from ..models import QueryResult
 from ..safety import is_path_allowed
+from .protocols import MigrationAdapterProtocol, MigrationConnectorProtocol
+
+_log = logging.getLogger(__name__)
 
 __all__ = ["MigrationUseCases"]
 
@@ -585,7 +589,12 @@ class MigrationUseCases:
                 query += f" ORDER BY {', '.join(order_by)}"
 
             query_result = adapter.execute_query(query)  # type: ignore[attr-defined]
-            rows = query_result.get("rows", []) if query_result else []
+            if isinstance(query_result, QueryResult):
+                rows = query_result.rows
+            elif isinstance(query_result, dict):
+                rows = query_result.get("rows", [])
+            else:
+                rows = []
 
             result.source_rows = len(rows)
 
@@ -624,12 +633,9 @@ class MigrationUseCases:
     def _count_target_rows(self, connector: Any, table: str) -> int:
         """Count rows in target table (for verification)."""
         try:
-            # Access the underlying connection cursor
-            cursor = connector._conn.cursor()  # noqa: SLF001
-            cursor.execute(f"SELECT COUNT(*) FROM {quote_ident(table)}")
-            count = cursor.fetchone()[0]
-            return count
-        except Exception:
+            return connector.count_rows(table)
+        except Exception as e:
+            _log.warning("Row-count verification failed for %s: %s", table, e)
             return -1
 
     def _get_connector(
