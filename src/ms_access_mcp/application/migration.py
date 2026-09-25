@@ -231,15 +231,21 @@ class MigrationUseCases:
 
         Returns (tables, UnknownMetadata) on success, (None, None) if DAO unavailable.
         """
+        adapter = None
         try:
             # Import here to avoid hard dependency when DAO is not available
             adapter = BackendSelector.get_adapter(database_path, backend="dao")  # type: ignore[assignment]
             adapter.connect(database_path)
             tables, unknown_flags = adapter.get_table_schema_plan()  # type: ignore[attr-defined]
-            adapter.disconnect()
             return tables, unknown_flags
         except Exception:
             return None, None
+        finally:
+            if adapter is not None:
+                try:
+                    adapter.disconnect()
+                except Exception:
+                    pass
 
     def _extract_odbc(
         self, database_path: str
@@ -250,6 +256,7 @@ class MigrationUseCases:
         get_relationships) per design §6.  The get_table_schema_plan()
         sentinel is never called.
         """
+        adapter = None
         try:
             adapter = BackendSelector.get_adapter(database_path, backend="odbc")  # type: ignore[assignment]
             adapter.connect(database_path)
@@ -491,10 +498,13 @@ class MigrationUseCases:
             return connector_result
 
         connector = connector_result.data  # type: ignore[assignment]
+        adapter = None
         total_tables = len(schema.tables)
         results: list[TableResult] = []
 
         try:
+            adapter = BackendSelector.get_adapter(database_path)  # type: ignore[assignment]
+            adapter.connect(database_path)
             for i, table in enumerate(schema.tables):
                 job.current_table = table.name
                 job.progress = int((i / total_tables) * 100)
@@ -510,7 +520,7 @@ class MigrationUseCases:
 
                 # Transfer table
                 table_result = self._transfer_table(
-                    connector, database_path, table, config, verification_mode
+                    connector, database_path, table, config, verification_mode, adapter
                 )
                 results.append(table_result)
 
@@ -539,7 +549,11 @@ class MigrationUseCases:
             register_job(job)
             return _err(_sanitize_error(str(e), "transfer_data"))
         finally:
-            connector.disconnect()
+            try:
+                connector.disconnect()
+            finally:
+                if adapter is not None:
+                    adapter.disconnect()
 
     def _transfer_table(
         self,
@@ -548,16 +562,13 @@ class MigrationUseCases:
         table: TableSchema,
         config: TableTransferConfig | None,
         verification_mode: str,
+        adapter: Any,
     ) -> TableResult:
         """Transfer a single table with per-table failure isolation."""
         start_time = datetime.utcnow()
         result = TableResult(table=table.name)
 
         try:
-            # Get source data via backend adapter
-            adapter = BackendSelector.get_adapter(database_path)  # type: ignore[assignment]
-            adapter.connect(database_path)
-
             # Build query with optional overrides
             columns = config.columns if config and config.columns else [c.name for c in table.columns]
             where = config.where if config and config.where else None
@@ -598,7 +609,6 @@ class MigrationUseCases:
                 result.verification = {"mode": "count-only"}
 
             result.success = True
-            adapter.disconnect()
 
         except Exception as e:
             result.success = False
