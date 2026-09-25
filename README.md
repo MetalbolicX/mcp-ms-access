@@ -9,6 +9,11 @@ uv sync --extra dev
 uv run ms-access-mcp --version
 ```
 
+## Development
+
+Fast local gate (mirrors CI): `uv run python scripts/qualify.py`.
+Full 13-gate qualification (requires local MS Access): `uv run python scripts/step5_qualify.py`.
+
 ## Password-protected databases
 
 The server resolves database passwords **server-side** so they never appear as MCP tool arguments or reach the LLM. Register a password once via the CLI, and all subsequent connections use it automatically.
