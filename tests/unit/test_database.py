@@ -169,6 +169,34 @@ class TestResultEnvelopes:
 class TestConnectionManagement:
     """Test connection management use cases."""
 
+    def test_open_database_disconnects_previous_adapter_before_replacing(self, tmp_path):
+        """Opening another database disconnects the currently stored adapter first."""
+        db = DatabaseUseCases(backend="auto", allowed_dirs=[tmp_path])
+        first = FakeAdapter()
+        second = FakeAdapter()
+        first_path = tmp_path / "first.accdb"
+        second_path = tmp_path / "second.accdb"
+        first_path.touch()
+        second_path.touch()
+        adapters = iter([first, second])
+        second_connect_saw_first_disconnected = []
+
+        def connect_second(db_path: str) -> bool:
+            second_connect_saw_first_disconnected.append(not first.connected)
+            second.connected = True
+            return True
+
+        second.connect = connect_second
+        with (
+            patch("ms_access_mcp.backends.BackendSelector.get_adapter", side_effect=lambda **_: next(adapters)),
+            patch("ms_access_mcp.credentials.resolve_password", return_value=None),
+        ):
+            assert isinstance(db.open_database(str(first_path)), Ok)
+            assert isinstance(db.open_database(str(second_path)), Ok)
+
+        assert second_connect_saw_first_disconnected == [True]
+        assert db._connections["default"] is second
+
     def test_open_database_with_fake_adapter(self):
         """open_database connects with adapter."""
         db = DatabaseUseCases(backend="auto", allowed_dirs=[Path(".")])
