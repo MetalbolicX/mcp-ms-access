@@ -71,4 +71,13 @@ _PROMPTS: dict[str, tuple[str, PromptFn, list[PromptArgument]]] = {
 def register_prompts(mcp: FastMCP) -> None:
     """Register all workflow prompts, independent of the selected tool profile."""
     for name, (description, fn, arguments) in _PROMPTS.items():
-        mcp.add_prompt(Prompt(name=name, description=description, fn=fn, arguments=arguments))
+        mcp.add_prompt(
+            Prompt(
+                name=name,
+                title=None,
+                description=description,
+                fn=fn,
+                arguments=arguments,
+                context_kwarg=None,
+            )
+        )
