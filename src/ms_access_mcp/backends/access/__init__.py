@@ -109,9 +109,14 @@ class AccessAdapter:
         self._dispatcher.shutdown()
         self._connected = False
 
+    @property
+    def connected(self) -> bool:
+        """Return the lifecycle protocol connection state."""
+        return self._connected
+
     def is_connected(self) -> bool:
         """Return whether the Access application is connected."""
-        return self._connected
+        return self.connected
 
     # ------------------------------------------------------------------ #
     # Access object model accessors
