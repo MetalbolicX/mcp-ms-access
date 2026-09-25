@@ -119,3 +119,22 @@ class TestExecuteRawSqlGate:
         result = execute_raw_sql("", sql="SELECT 1", confirm=False)
         content = json.loads(_text(result))
         assert "write policy" in content["error"].lower()
+
+
+def test_disconnect_access_closes_tracked_sessions():
+    from ms_access_mcp.mcp_tools._session_registry import registry
+    from ms_access_mcp.mcp_tools.core import disconnect_access
+
+    class FakeUseCase:
+        closed = False
+
+        def close_database(self):
+            self.closed = True
+
+    use_case = FakeUseCase()
+    registry.track(use_case)
+
+    result = disconnect_access()
+
+    assert result.isError is False
+    assert use_case.closed

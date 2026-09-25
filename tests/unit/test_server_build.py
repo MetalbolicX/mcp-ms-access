@@ -83,3 +83,26 @@ class TestLifespan:
                 assert isinstance(state, _ServerState)
 
         asyncio.run(_test())
+
+    def test_lifespan_closes_tracked_use_cases(self):
+        import asyncio
+        from typing import Any, cast
+
+        from ms_access_mcp.mcp_tools._session_registry import registry
+
+        class FakeUseCase:
+            closed = False
+
+            def close_database(self):
+                self.closed = True
+
+        use_case = FakeUseCase()
+        registry.track(use_case)
+        server = cast(Any, type("MockServer", (), {})())
+
+        async def _test():
+            async with lifespan(server):
+                pass
+
+        asyncio.run(_test())
+        assert use_case.closed
