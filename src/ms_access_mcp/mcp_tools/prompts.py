@@ -39,7 +39,7 @@ def _migrate_database(path: str, target: str) -> str:
     return f"""Migrate the Access database at `{path}` to {target}.
 
 1. Extract the source model with `extract_schema` (migration profile; `--profile migration`), providing the source path and any supported schema filters.
-2. Review and adjust the schema model before transfer. The typed migration parameters use schema_json, transfer_mode, verification_mode, and table_overrides as applicable; inspect the tool schema and pass the validated shape.
+2. Review and adjust the schema model before transfer. The typed migration parameters support connection_string or connection_ref, schema_json, transfer_mode, verification_mode, and table_overrides as applicable; inspect each tool schema and pass its validated shape. Prefer a configured connection_ref and never supply plaintext passwords.
 3. Upload the reviewed model with `upload_schema`, then transfer rows with `transfer_data`.
 4. Poll `get_migration_status` and verify the reported counts and errors against the source.
 
