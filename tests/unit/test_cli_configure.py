@@ -34,6 +34,12 @@ def _resolve_opencode_user_config() -> Path:
     return Path.home() / ".config" / "opencode" / "opencode.json"
 
 
+def _isolate_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep user-level config tests inside their per-test temporary directory."""
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+
 class FakeValidator:
     """A validator that always succeeds when called."""
 
@@ -81,6 +87,7 @@ class TestConfigureOpencodeS5CwdDefault:
     def test_no_flag_leaves_user_config_untouched(self, tmp_path, monkeypatch):
         """configure opencode without --global does NOT touch user config."""
         monkeypatch.chdir(tmp_path)
+        _isolate_user_config(tmp_path, monkeypatch)
 
         fake_exe = tmp_path / "ms-access-mcp.exe"
         fake_exe.touch()
@@ -110,6 +117,7 @@ class TestConfigureOpencodeS5Global:
     def test_global_flag_writes_user_config(self, tmp_path, monkeypatch):
         """configure opencode --global writes %USERPROFILE%/.config/opencode/opencode.json."""
         monkeypatch.chdir(tmp_path)
+        _isolate_user_config(tmp_path, monkeypatch)
 
         fake_exe = tmp_path / "ms-access-mcp.exe"
         fake_exe.touch()
@@ -140,6 +148,7 @@ class TestConfigureOpencodeS5Global:
     def test_global_flag_leaves_cwd_untouched(self, tmp_path, monkeypatch):
         """configure opencode --global does NOT write ./opencode.json in CWD."""
         monkeypatch.chdir(tmp_path)
+        _isolate_user_config(tmp_path, monkeypatch)
 
         fake_exe = tmp_path / "ms-access-mcp.exe"
         fake_exe.touch()
@@ -408,6 +417,7 @@ class TestRunValidatorSandbox:
 
     def test_validator_does_not_touch_real_user_config(self, tmp_path, monkeypatch):
         """Sandboxed validator never reads or writes the real ~/.config/opencode/opencode.json."""
+        _isolate_user_config(tmp_path, monkeypatch)
         fake_opencode = tmp_path / "opencode.cmd"
         fake_opencode.touch()
 
@@ -441,8 +451,7 @@ class TestRunValidatorSandbox:
         monkeypatch.setattr(subprocess, "run", fake_run)
 
         # Run from a temp CWD that has no opencode.json so it falls back to user config.
-        import tempfile as tmp_mod
-        other_tmp = Path(tmp_mod.gettempdir()) / "opencode_test_cwd"
+        other_tmp = tmp_path / "opencode_test_cwd"
         other_tmp.mkdir(exist_ok=True)
         monkeypatch.chdir(other_tmp)
 
@@ -461,6 +470,9 @@ class TestRunValidatorSandbox:
 
     def test_sandbox_is_cleaned_up_after_success(self, tmp_path, monkeypatch):
         """Sandbox directory is removed after _run_validator returns 'ok'."""
+        for variable in ("TMP", "TEMP", "TMPDIR"):
+            monkeypatch.setenv(variable, str(tmp_path))
+        monkeypatch.setattr(tempfile, "tempdir", None)
         fake_opencode = tmp_path / "opencode.cmd"
         fake_opencode.touch()
         preexisting_sandboxes = set(Path(tempfile.gettempdir()).iterdir())
@@ -490,6 +502,9 @@ class TestRunValidatorSandbox:
 
     def test_sandbox_is_cleaned_up_when_subprocess_raises(self, tmp_path, monkeypatch):
         """Sandbox directory is removed even when subprocess.run throws an exception."""
+        for variable in ("TMP", "TEMP", "TMPDIR"):
+            monkeypatch.setenv(variable, str(tmp_path))
+        monkeypatch.setattr(tempfile, "tempdir", None)
         fake_opencode = tmp_path / "opencode.cmd"
         fake_opencode.touch()
         preexisting_sandboxes = set(Path(tempfile.gettempdir()).iterdir())
