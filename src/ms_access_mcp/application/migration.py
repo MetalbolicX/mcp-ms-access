@@ -333,6 +333,11 @@ class MigrationUseCases:
             return tables, unknown_flags
 
         except Exception:
+            if adapter is not None:
+                try:
+                    adapter.disconnect()
+                except Exception:
+                    pass
             return [], UnknownMetadata(
                 primary_keys=True,
                 foreign_keys=True,
@@ -520,7 +525,7 @@ class MigrationUseCases:
 
                 # Transfer table
                 table_result = self._transfer_table(
-                    connector, database_path, table, config, verification_mode, adapter
+                    connector, table, config, verification_mode, adapter
                 )
                 results.append(table_result)
 
@@ -558,7 +563,6 @@ class MigrationUseCases:
     def _transfer_table(
         self,
         connector: Any,
-        database_path: str,
         table: TableSchema,
         config: TableTransferConfig | None,
         verification_mode: str,
