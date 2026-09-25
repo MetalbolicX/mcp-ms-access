@@ -654,6 +654,44 @@ class TestSourceAdapterLifecycle:
         adapter_factory.assert_called_once_with("source.accdb")
         adapter.connect.assert_called_once_with("source.accdb")
 
+    def test_transfer_data_disconnects_source_after_table_failure(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import ms_access_mcp.application.migration as migration_module
+
+        adapter = MagicMock()
+        adapter.execute_query.side_effect = [{"rows": []}, RuntimeError("query failed")]
+        monkeypatch.setattr(
+            migration_module.BackendSelector, "get_adapter", MagicMock(return_value=adapter)
+        )
+        connector = FakeConnector("Driver={ODBC};Database=test.db")
+        use_cases = MigrationUseCases()
+        monkeypatch.setattr(use_cases, "_get_connector", lambda *_: Ok(data=connector))
+        schema = ExtractedSchema(
+            source="source.accdb",
+            tables=[
+                TableSchema(
+                    name=name,
+                    columns=[ColumnSchema(name="id", source_type="Long Integer")],
+                    primary_key=[],
+                    foreign_keys=[],
+                    indexes=[],
+                )
+                for name in ("First", "Second")
+            ],
+        )
+
+        result = use_cases.transfer_data(
+            "fake", "connection", "source.accdb", schema.model_dump(),
+            verification_mode="count-only", confirm=True,
+        )
+
+        assert isinstance(result, Ok)
+        job = migration_module._JOBS[result.data["job_id"]]
+        assert job.status == "failed"
+        assert job.results[1].success is False
+        adapter.disconnect.assert_called_once()
+
 
 class SpyCursor:
     """Spy cursor that captures execute() SQL for testing."""
