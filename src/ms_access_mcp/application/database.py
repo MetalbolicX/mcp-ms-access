@@ -17,7 +17,7 @@ from ..backends import DATA_READ_CAPS, BackendSelector
 from ..backends.format_detector import AccessFormat, detect_access_format
 from ..credentials import contains_credential, resolve_profile
 from ..errors import Err, Ok, Result, err, ok  # noqa: F401 — re-exported for backward compatibility
-from ..models import QueryResult
+from ..models import QueryResult, WriteResult
 from ..safety import WritePolicy, is_path_allowed
 from . import session_backup as _session_backup
 from .db_admin import create_access_database as _create_db
@@ -50,10 +50,9 @@ def _get_lock_file(db_path: str) -> str | None:
 
 def _write_failed(result: Any) -> str | None:
     """Return error message string if a write result reports failure, else None."""
-    if dataclasses.is_dataclass(result):
-        d = dataclasses.asdict(result)  # type: ignore[arg-type]
-        if d.get("success") is False:
-            return str(d.get("error", "write failed"))
+    if isinstance(result, WriteResult):
+        if result.success is False:
+            return str(result.error or "write failed")
         return None
     return None
 
