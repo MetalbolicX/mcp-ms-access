@@ -64,6 +64,18 @@ class TestParamValidation:
         assert result.isError is True
         assert "target_type is required" in result.content[0].text
 
+    def test_upload_schema_rejects_non_string_target_type(self):
+        fn, _desc = migration._TOOLS["upload_schema"]
+        result = fn(path="dummy.mdb", params={"target_type": 123, "connection_string": "x"})
+        assert result.isError is True
+        assert "target_type" in result.content[0].text
+
+    def test_transfer_data_rejects_non_string_connection_string(self):
+        fn, _desc = migration._TOOLS["transfer_data"]
+        result = fn(path="dummy.mdb", params={"target_type": "sqlite", "connection_string": ["evil"]})
+        assert result.isError is True
+        assert "connection_string" in result.content[0].text
+
     def test_get_migration_status_rejects_empty_params(self):
         """get_migration_status with {} returns 'job_id is required'."""
         fn, _desc = migration._TOOLS["get_migration_status"]
