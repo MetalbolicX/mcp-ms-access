@@ -692,6 +692,31 @@ class TestSourceAdapterLifecycle:
         assert job.results[1].success is False
         adapter.disconnect.assert_called_once()
 
+    @pytest.mark.parametrize("backend", ["dao", "odbc"])
+    def test_extract_disconnects_adapter_after_metadata_failure(self, monkeypatch, backend):
+        from unittest.mock import MagicMock
+
+        import ms_access_mcp.application.migration as migration_module
+
+        adapter = MagicMock()
+        if backend == "dao":
+            adapter.get_table_schema_plan.side_effect = RuntimeError("metadata failed")
+        else:
+            adapter.get_tables.side_effect = RuntimeError("metadata failed")
+        monkeypatch.setattr(
+            migration_module.BackendSelector, "get_adapter", MagicMock(return_value=adapter)
+        )
+
+        use_cases = MigrationUseCases()
+        result = (
+            use_cases._extract_dao("source.accdb")
+            if backend == "dao"
+            else use_cases._extract_odbc("source.accdb")
+        )
+
+        assert result[0] is None if backend == "dao" else result[0] == []
+        adapter.disconnect.assert_called_once()
+
 
 class SpyCursor:
     """Spy cursor that captures execute() SQL for testing."""
