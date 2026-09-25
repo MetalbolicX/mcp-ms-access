@@ -351,11 +351,11 @@ class DaoAdapter:
             )
 
         def _do() -> QueryResult:
+            rs = None
             try:
                 db = self._dispatcher.current_db
                 rs = db.OpenRecordset(sql)
                 if rs.EOF:
-                    rs.Close()
                     return QueryResult(success=True, rows=[], count=0, columns=[])
 
                 columns = [rs.Fields(i).Name for i in range(rs.Fields.Count)]
@@ -373,7 +373,6 @@ class DaoAdapter:
                     results.append(row)
                     rs.MoveNext()
 
-                rs.Close()
                 return QueryResult(
                     success=True,
                     rows=results,
@@ -388,6 +387,12 @@ class DaoAdapter:
                     columns=[],
                     error=str(e),
                 )
+            finally:
+                if rs is not None:
+                    try:
+                        rs.Close()
+                    except Exception:
+                        pass
 
         return self._dispatcher.call(_do)
 
@@ -903,6 +908,9 @@ class DaoAdapter:
                     tname = table_def.Name
                     if tname.startswith("MSys"):
                         continue
+                    src_rs = None
+                    src_rs2 = None
+                    dst_rs = None
                     try:
                         # Read source rows via recordset
                         src_rs = corrupt_db.OpenRecordset(f"SELECT * FROM [{tname}]", 2)
@@ -911,7 +919,6 @@ class DaoAdapter:
                         while not src_rs.EOF:
                             rows.append([src_rs.Fields(i).Value for i in range(field_count)])
                             src_rs.MoveNext()
-                        src_rs.Close()
 
                         if not rows:
                             table_reports.append({
@@ -961,7 +968,6 @@ class DaoAdapter:
                             else:
                                 col_ddl = f"{fname} MEMO"
                             ddl_parts.append(col_ddl)
-                        src_rs2.Close()
 
                         create_sql = f"CREATE TABLE [{tname}] ({', '.join(ddl_parts)})"
                         try:
@@ -991,7 +997,6 @@ class DaoAdapter:
                                     dst_rs.CancelUpdate()
                                 except Exception:
                                     pass
-                        dst_rs.Close()
 
                         err_msg = "; ".join(insert_errors[:3]) if insert_errors else None
                         table_reports.append({
@@ -1005,6 +1010,13 @@ class DaoAdapter:
                             "salvaged_rows": 0,
                             "error": str(table_err),
                         })
+                    finally:
+                        for recordset in (src_rs, src_rs2, dst_rs):
+                            if recordset is not None:
+                                try:
+                                    recordset.Close()
+                                except Exception:
+                                    pass
             finally:
                 try:
                     corrupt_db.Close()
