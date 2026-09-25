@@ -19,7 +19,7 @@ from ms_access_mcp.application.database import DatabaseUseCases
 from ms_access_mcp.backends.ado import AdoAdapter
 from ms_access_mcp.backends.odbc import OdbcAdapter
 from ms_access_mcp.errors import Err, Ok
-from ms_access_mcp.models import ObjectMetadata, WriteResult
+from ms_access_mcp.models import ObjectMetadata, QueryResult, WriteResult
 
 
 class _FakeRecordset:
@@ -71,6 +71,47 @@ def test_backend_crud_dict_serialization_characterization(adapter_type) -> None:
 
     assert query == {"success": True, "rows": [{"id": 1}] if adapter_type is OdbcAdapter else [], "count": 1 if adapter_type is OdbcAdapter else 0, "columns": ["id"] if adapter_type is OdbcAdapter else []}
     assert write == {"success": True, "affected": 1}
+
+
+@pytest.mark.parametrize("adapter_type", [OdbcAdapter, AdoAdapter])
+def test_backend_insert_returns_write_result(adapter_type) -> None:
+    adapter = adapter_type("test.accdb")
+    adapter._conn = _FakeOdbcConnection() if adapter_type is OdbcAdapter else _FakeAdoConnection()
+    adapter._connected = True
+
+    assert isinstance(adapter.insert_data("Users", {"id": 1}), WriteResult)
+
+
+@pytest.mark.parametrize("adapter_type", [OdbcAdapter, AdoAdapter])
+def test_backend_query_returns_query_result(adapter_type) -> None:
+    adapter = adapter_type("test.accdb")
+    adapter._conn = _FakeOdbcConnection() if adapter_type is OdbcAdapter else _FakeAdoConnection()
+    adapter._connected = True
+
+    assert isinstance(adapter.execute_query("SELECT id FROM Users"), QueryResult)
+
+
+class _FakeOdbcShapedAdapter:
+    committed = False
+
+    def insert_data(self, table_name: str, data: dict | list[dict]) -> dict:
+        self.committed = True
+        return {"success": True, "affected": 3}
+
+
+def test_insert_data_accepts_odbc_result_without_post_commit_type_error() -> None:
+    from ms_access_mcp.safety import WritePolicy
+
+    adapter = _FakeOdbcShapedAdapter()
+    uc = DatabaseUseCases()
+    uc._connections["default"] = adapter  # type: ignore[attr-defined]
+    uc._policy = WritePolicy(readonly=False)  # type: ignore[attr-defined]
+
+    result = uc.insert_data("Users", {"id": 1}, confirm=True)
+
+    assert adapter.committed
+    assert isinstance(result, Ok)
+    assert result.rowcount == 3
 
 # ---------------------------------------------------------------------------
 # Fake adapters for connection-pool substitution
