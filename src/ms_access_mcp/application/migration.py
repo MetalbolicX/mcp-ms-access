@@ -10,7 +10,7 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeGuard
 
 from ..backends import BackendSelector
 from ..backends.migration import (
@@ -27,7 +27,7 @@ from ..backends.schema_inspector import (
     UnknownMetadata,
 )
 from ..credentials import contains_credential, resolve_profile
-from ..errors import Err, Result
+from ..errors import BackendUnavailableError, Err, Result
 from ..errors import err as _err
 from ..errors import ok as _ok
 from ..models import QueryResult
@@ -38,8 +38,50 @@ from ..models.migration import (
     TableTransferConfig,
 )
 from ..safety import is_path_allowed
+from .protocols import MigrationAdapterProtocol, MigrationConnectorProtocol
 
 _log = logging.getLogger(__name__)
+
+
+def _is_migration_adapter(value: object) -> TypeGuard[MigrationAdapterProtocol]:
+    """Narrow a selected adapter only after verifying its required surface."""
+    required = (
+        "connect", "disconnect", "connected", "get_table_schema_plan", "get_tables",
+        "get_columns", "get_indexes", "get_relationships", "execute_query",
+    )
+    missing = [name for name in required if not hasattr(value, name)]
+    if missing:
+        raise BackendUnavailableError(
+            f"Selected backend does not support migration; missing: {', '.join(missing)}"
+        )
+    return True
+
+
+def _select_migration_adapter(
+    db_path: str, backend: Literal["odbc", "com", "dao", "auto"] | None = None
+) -> MigrationAdapterProtocol:
+    """Select an adapter after checking it implements the migration surface."""
+    if backend is None:
+        adapter = BackendSelector.get_adapter(db_path)
+    else:
+        adapter = BackendSelector.get_adapter(db_path, backend=backend)
+    if not _is_migration_adapter(adapter):
+        raise BackendUnavailableError("Selected backend does not support migration")
+    return adapter
+
+
+def _is_migration_connector(value: object) -> TypeGuard[MigrationConnectorProtocol]:
+    """Narrow a connector after verifying every migration-used operation."""
+    required = (
+        "table_exists", "create_table", "insert_batch", "rollback_table",
+        "disconnect", "count_rows",
+    )
+    missing = [name for name in required if not hasattr(value, name)]
+    if missing:
+        raise BackendUnavailableError(
+            f"Selected connector does not support migration; missing: {', '.join(missing)}"
+        )
+    return True
 
 __all__ = ["MigrationUseCases"]
 
@@ -234,12 +276,12 @@ class MigrationUseCases:
 
         Returns (tables, UnknownMetadata) on success, (None, None) if DAO unavailable.
         """
-        adapter = None
+        adapter: MigrationAdapterProtocol | None = None
         try:
             # Import here to avoid hard dependency when DAO is not available
-            adapter = BackendSelector.get_adapter(database_path, backend="dao")  # type: ignore[assignment]
+            adapter = _select_migration_adapter(database_path, backend="dao")
             adapter.connect(database_path)
-            tables, unknown_flags = adapter.get_table_schema_plan()  # type: ignore[attr-defined]
+            tables, unknown_flags = adapter.get_table_schema_plan()
             return tables, unknown_flags
         except Exception:
             return None, None
@@ -259,20 +301,20 @@ class MigrationUseCases:
         get_relationships) per design §6.  The get_table_schema_plan()
         sentinel is never called.
         """
-        adapter = None
+        adapter: MigrationAdapterProtocol | None = None
         try:
-            adapter = BackendSelector.get_adapter(database_path, backend="odbc")  # type: ignore[assignment]
+            adapter = _select_migration_adapter(database_path, backend="odbc")
             adapter.connect(database_path)
 
             # Granular getter sequence — per design §6
-            table_info_list = adapter.get_tables()  # type: ignore[attr-defined]
-            all_relationships = adapter.get_relationships()  # type: ignore[attr-defined]
+            table_info_list = adapter.get_tables()
+            all_relationships = adapter.get_relationships()
 
             tables: list[TableSchema] = []
             for t_info in table_info_list:
                 table_name = t_info.name
-                cols = adapter.get_columns(table_name)  # type: ignore[attr-defined]
-                indexes = adapter.get_indexes(table_name)  # type: ignore[attr-defined]
+                cols = adapter.get_columns(table_name)
+                indexes = adapter.get_indexes(table_name)
 
                 # Build ColumnSchema list
                 columns = [
@@ -395,7 +437,9 @@ class MigrationUseCases:
         if isinstance(connector_result, Err):
             return connector_result
 
-        connector = connector_result.data  # type: ignore[assignment]
+        if not _is_migration_connector(connector_result.data):
+            raise BackendUnavailableError("Selected connector does not support migration")
+        connector = connector_result.data
 
         tables_created: list[str] = []
         tables_failed: list[str] = []
@@ -403,18 +447,18 @@ class MigrationUseCases:
         try:
             for table in schema.tables:
                 try:
-                    if connector.table_exists(table.name):  # type: ignore[attr-defined]
+                    if connector.table_exists(table.name):
                         tables_failed.append(table.name)
                         continue
                     ddl = render_schema_ddl(target_type, [table])[0]
-                    connector.create_table(ddl)  # type: ignore[attr-defined]
+                    connector.create_table(ddl)
                     tables_created.append(table.name)
                 except Exception:
                     tables_failed.append(table.name)
 
             return _ok(data={"tables_created": tables_created, "tables_failed": tables_failed})
         finally:
-            connector.disconnect()  # type: ignore[attr-defined]
+            connector.disconnect()
 
     # -------------------------------------------------------------------------
     # transfer_data
@@ -504,13 +548,15 @@ class MigrationUseCases:
             register_job(job)
             return connector_result
 
-        connector = connector_result.data  # type: ignore[assignment]
-        adapter = None
+        if not _is_migration_connector(connector_result.data):
+            raise BackendUnavailableError("Selected connector does not support migration")
+        connector = connector_result.data
+        adapter: MigrationAdapterProtocol | None = None
         total_tables = len(schema.tables)
         results: list[TableResult] = []
 
         try:
-            adapter = BackendSelector.get_adapter(database_path)  # type: ignore[assignment]
+            adapter = _select_migration_adapter(database_path)
             adapter.connect(database_path)
             for i, table in enumerate(schema.tables):
                 job.current_table = table.name
@@ -564,11 +610,11 @@ class MigrationUseCases:
 
     def _transfer_table(
         self,
-        connector: Any,
+        connector: MigrationConnectorProtocol,
         table: TableSchema,
         config: TableTransferConfig | None,
         verification_mode: str,
-        adapter: Any,
+        adapter: MigrationAdapterProtocol,
     ) -> TableResult:
         """Transfer a single table with per-table failure isolation."""
         start_time = datetime.utcnow()
@@ -587,7 +633,7 @@ class MigrationUseCases:
             if order_by:
                 query += f" ORDER BY {', '.join(order_by)}"
 
-            query_result = adapter.execute_query(query)  # type: ignore[attr-defined]
+            query_result = adapter.execute_query(query)
             if isinstance(query_result, QueryResult):
                 rows = query_result.rows
             elif isinstance(query_result, dict):
@@ -629,7 +675,7 @@ class MigrationUseCases:
         result.duration_ms = int((end_time - start_time).total_seconds() * 1000)
         return result
 
-    def _count_target_rows(self, connector: Any, table: str) -> int:
+    def _count_target_rows(self, connector: MigrationConnectorProtocol, table: str) -> int:
         """Count rows in target table (for verification)."""
         try:
             return connector.count_rows(table)
