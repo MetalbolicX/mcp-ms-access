@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -378,7 +379,7 @@ class TestSilentSwallows:
             def NewCurrentDatabase(self, path: str) -> None:
                 # Simulate Access creating the file so unlink succeeds and
                 # rmdir is reached (then scripted to fail).
-                with open(path, "w") as f:
+                with Path(path).open("w") as f:
                     f.write("probe")
 
             def CloseCurrentDatabase(self) -> None:

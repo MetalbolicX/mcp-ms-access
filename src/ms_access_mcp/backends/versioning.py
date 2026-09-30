@@ -69,7 +69,7 @@ class VersioningBackend:
 
             self._dispatcher.call(_do)
 
-            with open(temp_path, "rb") as f:
+            with Path(temp_path).open("rb") as f:
                 raw = f.read()
             return raw.decode("utf-16-le", errors="replace").lstrip("\ufeff")
         except Exception:
@@ -77,7 +77,7 @@ class VersioningBackend:
         finally:
             if temp_path:
                 try:
-                    os.unlink(temp_path)
+                    Path(temp_path).unlink()
                 except Exception:
                     pass
 
@@ -91,7 +91,7 @@ class VersioningBackend:
         try:
             fd, temp_path = tempfile.mkstemp(suffix=".txt", prefix="mcp_imp_")
             os.close(fd)
-            with open(temp_path, "wb") as f:
+            with Path(temp_path).open("wb") as f:
                 f.write(b"\xff\xfe")
                 f.write(text_data.encode("utf-16-le"))
 
@@ -105,7 +105,7 @@ class VersioningBackend:
         finally:
             if temp_path:
                 try:
-                    os.unlink(temp_path)
+                    Path(temp_path).unlink()
                 except Exception:
                     pass
 
@@ -233,7 +233,7 @@ class VersioningBackend:
     def _make_temp_path(self, text_data: str) -> str:
         fd, path = tempfile.mkstemp(suffix=".txt", prefix="mcp_mod_")
         os.close(fd)
-        with open(path, "w", encoding="utf-16-le") as f:
+        with Path(path).open("w", encoding="utf-16-le") as f:
             f.write(text_data)
         return path
 
@@ -296,7 +296,7 @@ class VersioningBackend:
                 incoming_bom = b"\xff\xfe" + incoming
                 if existing == incoming_bom:
                     return False
-            with open(file_path, "wb") as f:
+            with file_path.open("wb") as f:
                 f.write(b"\xff\xfe")
                 f.write(content.encode("utf-16-le"))
             file_count += 1
@@ -431,7 +431,7 @@ class VersioningBackend:
 
     @staticmethod
     def _decode_file(path: Path) -> str:
-        with open(path, "rb") as f:
+        with path.open("rb") as f:
             raw = f.read()
         if raw.startswith(b"\xff\xfe"):
             return raw[2:].decode("utf-16-le", errors="replace")

@@ -169,7 +169,7 @@ class DatabaseUseCases:
                     is_lock_error = any(p in error_msg for p in lock_patterns)
                     is_last_attempt = attempt >= 3
 
-                    if is_last_attempt or not (is_lock_error and lock_file and os.path.exists(lock_file)):  # type: ignore[arg-type]
+                    if is_last_attempt or not (is_lock_error and lock_file and Path(lock_file).exists()):  # type: ignore[arg-type]
                         # Non-lock error, or lock but exhausted retries
                         raise
 

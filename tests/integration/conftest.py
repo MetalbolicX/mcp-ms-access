@@ -138,7 +138,7 @@ def jet4_mdb_fixture():
         pytest.skip("Requires pywin32")
 
     tmpdir = tempfile.mkdtemp(prefix="jet4_mdb_")
-    mdb_path = os.path.join(tmpdir, "test_jet4.mdb")
+    mdb_path = str(Path(tmpdir) / "test_jet4.mdb")
 
     try:
         pythoncom.CoInitialize()

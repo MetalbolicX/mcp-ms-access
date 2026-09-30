@@ -5,6 +5,7 @@ Ported behaviors from oracle src/ms_access_mcp/adapters/schema_inspector.py.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from ..models import (
@@ -466,7 +467,7 @@ class SchemaInspector:
             # Write to output path
             try:
                 content = "\n".join(statements) + "\n"
-                with open(output_path, "w", encoding="utf-8") as f:
+                with Path(output_path).open("w", encoding="utf-8") as f:
                     f.write(content)
             except Exception as e:
                 return GenerateSqlResult(success=False, error=str(e))
@@ -499,8 +500,6 @@ class SchemaInspector:
 
         def _do() -> DatabaseStatistics:
             db = self._dispatcher.current_db
-            import os
-
             com_available = True
             try:
                 access_app = self._dispatcher.access_app
@@ -523,8 +522,8 @@ class SchemaInspector:
             file_info: dict[str, Any] = {"name": "", "size_bytes": 0, "modified": ""}
             try:
                 db_path = db.Name
-                if db_path and os.path.exists(db_path):
-                    stat = os.stat(db_path)
+                if db_path and Path(db_path).exists():
+                    stat = Path(db_path).stat()
                     file_info = {
                         "name": db_path,
                         "size_bytes": stat.st_size,

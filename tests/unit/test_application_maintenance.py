@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -93,8 +92,8 @@ class TestBackup:
 
         assert isinstance(result, Ok)
         manifest_path = result.data["manifest_path"]
-        assert os.path.exists(manifest_path)
-        with open(manifest_path) as f:
+        assert Path(manifest_path).exists()
+        with Path(manifest_path).open() as f:
             manifest = json.load(f)
         assert manifest["kind"] == "backup"
         assert manifest["source_path"] == str(source)
@@ -148,7 +147,7 @@ class TestCreateDevCopy:
         assert "dev_path" in result.data
         assert "manifest_path" in result.data
         assert result.data["production_path"] == str(source)
-        assert os.path.exists(result.data["dev_path"])
+        assert Path(result.data["dev_path"]).exists()
 
     def test_create_dev_copy_manifest_written(self, tmp_path):
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
@@ -162,8 +161,8 @@ class TestCreateDevCopy:
 
         assert isinstance(result, Ok)
         manifest_path = result.data["manifest_path"]
-        assert os.path.exists(manifest_path)
-        with open(manifest_path) as f:
+        assert Path(manifest_path).exists()
+        with Path(manifest_path).open() as f:
             manifest = json.load(f)
         assert manifest["production_path"] == str(source)
         assert manifest["deployed_at"] is None
@@ -241,8 +240,8 @@ class TestDeployDevCopy:
 
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
-        dev_dir = os.path.join(tempfile.gettempdir(), "ms_access_dev")
-        if os.path.exists(dev_dir):
+        dev_dir = str(Path(tempfile.gettempdir()) / "ms_access_dev")
+        if Path(dev_dir).exists():
             shutil.rmtree(dev_dir)
 
         source = tmp_path / "prod.accdb"
@@ -267,7 +266,7 @@ class TestDeployDevCopy:
         )
         assert isinstance(deploy_result, Ok)
 
-        assert not os.path.exists(manifest_path)
+        assert not Path(manifest_path).exists()
 
     def test_deploy_dev_copy_no_confirm(self, tmp_path):
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
@@ -321,8 +320,8 @@ class TestDevCopyStatus:
 
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
-        dev_dir = os.path.join(tempfile.gettempdir(), "ms_access_dev")
-        if os.path.exists(dev_dir):
+        dev_dir = str(Path(tempfile.gettempdir()) / "ms_access_dev")
+        if Path(dev_dir).exists():
             shutil.rmtree(dev_dir)
 
         adapter = FakeMaintenanceAdapter()
@@ -337,8 +336,8 @@ class TestDevCopyStatus:
 
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
-        dev_dir = os.path.join(tempfile.gettempdir(), "ms_access_dev")
-        if os.path.exists(dev_dir):
+        dev_dir = str(Path(tempfile.gettempdir()) / "ms_access_dev")
+        if Path(dev_dir).exists():
             shutil.rmtree(dev_dir)
 
         source = tmp_path / "prod.accdb"
@@ -443,8 +442,8 @@ class TestCompactRepair:
         from ms_access_mcp.application.maintenance import MaintenanceUseCases
 
         disposable_dir = tempfile.mkdtemp(prefix="ms_access_")
-        target = os.path.join(disposable_dir, "test.accdb")
-        with open(target, "wb") as f:
+        target = Path(disposable_dir) / "test.accdb"
+        with Path(target).open("wb") as f:
             f.write(b"db content")
 
         try:
@@ -643,7 +642,7 @@ class TestPreflightBackup:
 
         assert isinstance(result, Ok)
         bak_path = result.data["backup_path"]
-        assert os.path.exists(bak_path)
+        assert Path(bak_path).exists()
 
     def test_preflight_backup_missing_source(self, tmp_path):
         from ms_access_mcp.application.maintenance import MaintenanceUseCases

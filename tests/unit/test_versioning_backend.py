@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -208,20 +207,20 @@ class TestExportImportRoundTrip:
 
         def fake_load(kind: int, name: str, path: str) -> None:
             disp._load_calls.append((kind, name, path))
-            if os.path.exists(path):
-                with open(path, "rb") as f:
+            if Path(path).exists():
+                with Path(path).open("rb") as f:
                     disp._temp_files[path] = f.read()
 
         self.dispatcher.access_app.SaveAsText = fake_save
         self.dispatcher.access_app.LoadFromText = fake_load
 
     def _write_bom_text(self, path: str, content: str) -> None:
-        with open(path, "wb") as f:
+        with Path(path).open("wb") as f:
             f.write(b"\xff\xfe")
             f.write(content.encode("utf-16-le"))
 
     def _read_bom_text(self, path: str) -> str:
-        with open(path, "rb") as f:
+        with Path(path).open("rb") as f:
             raw = f.read()
         if raw.startswith(b"\xff\xfe"):
             return raw[2:].decode("utf-16-le")
@@ -347,10 +346,11 @@ class TestExportAllDedup:
         self._written_files: dict[str, bytes] = {}
 
     def _write_bom_text(self, path: str, content: str) -> None:
-        with open(path, "wb") as f:
+        with Path(path).open("wb") as f:
             f.write(b"\xff\xfe")
             f.write(content.encode("utf-16-le"))
-        self._written_files[path] = open(path, "rb").read()
+        with Path(path).open("rb") as f:
+            self._written_files[path] = f.read()
 
     def _install_save_mock(self, content: str):
         def save_side_effect(kind, name, path):
@@ -439,7 +439,7 @@ class TestExportAllQueriesSubdir:
         self.backend = VersioningBackend(self.dispatcher)
 
     def _write_bom_text(self, path: str, content: str) -> None:
-        with open(path, "wb") as f:
+        with Path(path).open("wb") as f:
             f.write(b"\xff\xfe")
             f.write(content.encode("utf-16-le"))
 
@@ -474,10 +474,11 @@ class TestImportAllOrder:
         self._written_files: dict[str, bytes] = {}
 
     def _write_bom_text(self, path: str, content: str) -> None:
-        with open(path, "wb") as f:
+        with Path(path).open("wb") as f:
             f.write(b"\xff\xfe")
             f.write(content.encode("utf-16-le"))
-        self._written_files[path] = open(path, "rb").read()
+        with Path(path).open("rb") as f:
+            self._written_files[path] = f.read()
 
     def _install_mocks(self):
         def save_side_effect(kind, name, path):
@@ -517,7 +518,7 @@ class TestImportAllOrder:
             sub = self.tmpdir / kind
             sub.mkdir(parents=True, exist_ok=True)
             path = sub / f"{kind}_{name}.txt"
-            with open(path, "wb") as f:
+            with Path(path).open("wb") as f:
                 f.write(b"\xff\xfe")
                 f.write(f"Content_{name}".encode("utf-16-le"))
 
@@ -549,7 +550,7 @@ class TestImportAllBomDetection:
 
     def _install_save_mock(self):
         def save_side_effect(kind, name, path):
-            with open(path, "wb") as f:
+            with Path(path).open("wb") as f:
                 f.write(b"\xff\xfe")
                 f.write(f"Content_{name}".encode("utf-16-le"))
 
@@ -562,7 +563,7 @@ class TestImportAllBomDetection:
         sub.mkdir()
         path = sub / "forms_frmUTF16.txt"
         content = "UTF-16 content with BOM"
-        with open(path, "wb") as f:
+        with Path(path).open("wb") as f:
             f.write(b"\xff\xfe")
             f.write(content.encode("utf-16-le"))
 
@@ -589,7 +590,7 @@ class TestCompareVersioning:
         self.backend = VersioningBackend(self.dispatcher)
 
     def _write_bom_text(self, path: str, content: str) -> None:
-        with open(path, "wb") as f:
+        with Path(path).open("wb") as f:
             f.write(b"\xff\xfe")
             f.write(content.encode("utf-16-le"))
 

@@ -43,12 +43,12 @@ class TestCreateSessionBackup:
         backup_path = data["backup_path"]
         manifest_path = data["manifest_path"]
 
-        assert os.path.exists(backup_path)
-        assert os.path.exists(manifest_path)
+        assert Path(backup_path).exists()
+        assert Path(manifest_path).exists()
         assert backup_path.endswith(".accdb")
         assert "autosession_" in backup_path
 
-        with open(manifest_path) as f:
+        with Path(manifest_path).open() as f:
             manifest = json.load(f)
         assert manifest["kind"] == "auto_session"
         assert manifest["source_path"] == str(db)
@@ -68,7 +68,7 @@ class TestCreateSessionBackup:
         assert isinstance(result, Ok)
 
         backup_path = result.data["backup_path"]
-        with open(backup_path, "rb") as f:
+        with Path(backup_path).open("rb") as f:
             assert f.read() == b"ORIGINAL CONTENT"
 
 
@@ -83,13 +83,13 @@ class TestCleanupSessionBackup:
         backup_path = result.data["backup_path"]
         manifest_path = result.data["manifest_path"]
 
-        assert os.path.exists(backup_path)
-        assert os.path.exists(manifest_path)
+        assert Path(backup_path).exists()
+        assert Path(manifest_path).exists()
 
         cleanup_session_backup(str(db), pid)
 
-        assert not os.path.exists(backup_path)
-        assert not os.path.exists(manifest_path)
+        assert not Path(backup_path).exists()
+        assert not Path(manifest_path).exists()
 
     def test_best_effort_never_raises(self, tmp_path: Path) -> None:
         # Calling cleanup with a non-existent PID should not raise
@@ -124,10 +124,10 @@ class TestCleanupSessionBackup:
         try:
             cleanup_session_backup(str(db_a), pid)
 
-            assert not os.path.exists(backup_a)
-            assert not os.path.exists(backup_a + ".manifest.json")
-            assert os.path.exists(backup_b), "db B snapshot must survive cleanup of db A"
-            assert os.path.exists(backup_b + ".manifest.json"), "db B manifest must survive cleanup of db A"
+            assert not Path(backup_a).exists()
+            assert not Path(backup_a + ".manifest.json").exists()
+            assert Path(backup_b).exists(), "db B snapshot must survive cleanup of db A"
+            assert Path(backup_b + ".manifest.json").exists(), "db B manifest must survive cleanup of db A"
         finally:
             cleanup_session_backup(str(db_b), pid)
 
@@ -147,7 +147,7 @@ class TestDetectOrphanedBackup:
         # Simulate: write a manifest for a dead PID, using the SAME _AUTO_SESSION_DIR
         dead_pid = 99999  # very unlikely to exist
         backup_filename = f"autosession_{dead_pid}_20260916_test.accdb"
-        backup_path = os.path.join(session_backup._AUTO_SESSION_DIR, backup_filename)
+        backup_path = str(Path(session_backup._AUTO_SESSION_DIR) / backup_filename)
         manifest_path = backup_path + ".manifest.json"
         manifest = {
             "source_path": str(db),
@@ -159,9 +159,9 @@ class TestDetectOrphanedBackup:
             "session_pid": dead_pid,
         }
 
-        os.makedirs(session_backup._AUTO_SESSION_DIR, exist_ok=True)
+        Path(session_backup._AUTO_SESSION_DIR).mkdir(parents=True, exist_ok=True)
         Path(backup_path).write_bytes(b"DEAD SESSION CONTENT")
-        with open(manifest_path, "w") as f:
+        with Path(manifest_path).open("w") as f:
             json.dump(manifest, f)
 
         try:
@@ -172,11 +172,11 @@ class TestDetectOrphanedBackup:
         finally:
             # Clean up
             try:
-                os.remove(backup_path)
+                Path(backup_path).unlink()
             except Exception:
                 pass
             try:
-                os.remove(manifest_path)
+                Path(manifest_path).unlink()
             except Exception:
                 pass
 
@@ -214,7 +214,7 @@ class TestDetectOrphanedBackup:
 
         dead_pid = 99998  # very unlikely to exist
         backup_filename = f"autosession_{dead_pid}_20260916_test.accdb"
-        backup_path = os.path.join(session_backup._AUTO_SESSION_DIR, backup_filename)
+        backup_path = str(Path(session_backup._AUTO_SESSION_DIR) / backup_filename)
         manifest_path = backup_path + ".manifest.json"
         manifest = {
             "source_path": str(db),
@@ -226,9 +226,9 @@ class TestDetectOrphanedBackup:
             "session_pid": dead_pid,
         }
 
-        os.makedirs(session_backup._AUTO_SESSION_DIR, exist_ok=True)
+        Path(session_backup._AUTO_SESSION_DIR).mkdir(parents=True, exist_ok=True)
         Path(backup_path).write_bytes(b"DEAD SESSION CONTENT")
-        with open(manifest_path, "w") as f:
+        with Path(manifest_path).open("w") as f:
             json.dump(manifest, f)
 
         try:
@@ -238,10 +238,10 @@ class TestDetectOrphanedBackup:
         finally:
             # Clean up
             try:
-                os.remove(backup_path)
+                Path(backup_path).unlink()
             except Exception:
                 pass
             try:
-                os.remove(manifest_path)
+                Path(manifest_path).unlink()
             except Exception:
                 pass

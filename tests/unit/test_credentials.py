@@ -56,10 +56,10 @@ def _write_global_file(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data), encoding="utf-8")
-    os.replace(tmp, path)
+    tmp.replace(path)
     # Set permissions on POSIX
     if os.name != "nt":
-        os.chmod(path, 0o600)
+        path.chmod(0o600)
 
 
 def _write_local_file(db_path: str | Path, data: dict) -> None:
@@ -68,7 +68,7 @@ def _write_local_file(db_path: str | Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data), encoding="utf-8")
-    os.replace(tmp, path)
+    tmp.replace(path)
 
 
 # Normalize a db_path the same way credentials.resolve_password does
@@ -165,7 +165,7 @@ class TestNormalizationMatrix:
         monkeypatch.setenv("ACCESS_MCP_CREDENTIALS_FILE", str(global_file))
 
         # Query with relative path
-        old_cwd = os.getcwd()
+        old_cwd = Path.cwd()
         try:
             os.chdir(tmp_path)
             rel_path = Path("sub") / "db.accdb"

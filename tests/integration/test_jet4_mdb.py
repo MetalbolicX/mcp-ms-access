@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 
 import pytest
 
@@ -66,7 +67,7 @@ class TestJet4MdbIntegration:
         import pyodbc
 
         mdb_path = jet4_mdb_fixture["path"]
-        assert os.path.exists(mdb_path), "Jet 4 .mdb was not created"
+        assert Path(mdb_path).exists(), "Jet 4 .mdb was not created"
 
         # Connect via ODBC using ACE driver
         conn_str = f"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={mdb_path};"
@@ -103,7 +104,7 @@ class TestJet4MdbRecovery:
         mdb_path = jet4_mdb_fixture["path"]
 
         uc = MaintenanceUseCases(
-            allowed_dirs=[tmp_path, os.path.dirname(mdb_path)],
+            allowed_dirs=[tmp_path, Path(mdb_path).parent],
         )
 
         # Run salvage with a fresh copy to avoid corrupting the fixture

@@ -9,13 +9,13 @@ path. Read-only sessions take no snapshot.
 
 from __future__ import annotations
 
-import glob
 import hashlib
 import json
 import os
 import shutil
 import tempfile
 from datetime import UTC, datetime
+from pathlib import Path
 
 from ..errors import Err, Ok, Result
 
@@ -23,7 +23,7 @@ from ..errors import Err, Ok, Result
 # Internal helpers (shared with maintenance.backup but isolated for auto-session)
 # ---------------------------------------------------------------------------
 
-_AUTO_SESSION_DIR = os.path.join(tempfile.gettempdir(), "ms_access_backups", "autosession")
+_AUTO_SESSION_DIR = Path(tempfile.gettempdir()) / "ms_access_backups" / "autosession"
 _FILENAME_PREFIX = "autosession"
 
 
@@ -33,19 +33,20 @@ def _snapshot_path(db_path: str, pid: int) -> tuple[str, str]:
     Filename: autosession_<pid>_<timestamp>_<basename>
     This never collides with or counts against manual-backup retention.
     """
-    os.makedirs(_AUTO_SESSION_DIR, exist_ok=True)
-    basename = os.path.basename(db_path)
+    auto_session_dir = Path(_AUTO_SESSION_DIR)
+    auto_session_dir.mkdir(parents=True, exist_ok=True)
+    basename = Path(db_path).name
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
     filename = f"{_FILENAME_PREFIX}_{pid}_{timestamp}_{basename}"
-    backup_path = os.path.join(_AUTO_SESSION_DIR, filename)
-    manifest_path = backup_path + ".manifest.json"
-    return backup_path, manifest_path
+    backup_path = auto_session_dir / filename
+    manifest_path = Path(f"{backup_path}.manifest.json")
+    return str(backup_path), str(manifest_path)
 
 
 def _write_manifest(manifest_path: str, source_path: str, backup_path: str) -> None:
     """Write the manifest file for an auto-session snapshot."""
     sha256 = hashlib.sha256()
-    with open(backup_path, "rb") as f:
+    with Path(backup_path).open("rb") as f:
         while True:
             chunk = f.read(8192)
             if not chunk:
@@ -56,12 +57,12 @@ def _write_manifest(manifest_path: str, source_path: str, backup_path: str) -> N
         "source_path": source_path,
         "backup_path": backup_path,
         "sha256": sha256.hexdigest(),
-        "size_bytes": os.path.getsize(backup_path),
+        "size_bytes": Path(backup_path).stat().st_size,
         "created_at": datetime.now(UTC).isoformat(),
         "kind": "auto_session",
         "session_pid": os.getpid(),
     }
-    with open(manifest_path, "w") as f:
+    with Path(manifest_path).open("w") as f:
         json.dump(manifest, f, indent=2)
 
 
@@ -81,7 +82,7 @@ def create_session_backup(db_path: str) -> Result:
         Ok with {"backup_path": ..., "manifest_path": ...} on success.
         Err on failure (backup not created — non-fatal, proceed without it).
     """
-    if not os.path.exists(db_path):
+    if not Path(db_path).exists():
         return Err(f"Cannot backup {db_path}: source not found")
 
     backup_path, manifest_path = _snapshot_path(db_path, os.getpid())
@@ -96,7 +97,7 @@ def create_session_backup(db_path: str) -> Result:
     except Exception as e:
         # Best-effort: delete partial snapshot if manifest write fails
         try:
-            os.remove(backup_path)
+            Path(backup_path).unlink()
         except Exception:
             pass
         return Err(f"Cannot write session backup manifest: {e}")
@@ -112,17 +113,17 @@ def cleanup_session_backup(db_path: str, pid: int | None = None) -> None:
     call in finally blocks.
     """
     target_pid = pid if pid is not None else os.getpid()
-    basename = os.path.basename(db_path)
-    pattern = os.path.join(_AUTO_SESSION_DIR, f"{_FILENAME_PREFIX}_{target_pid}_*_{basename}")
-    for backup_path in glob.glob(pattern):
-        manifest_path = backup_path + ".manifest.json"
+    basename = Path(db_path).name
+    pattern = f"{_FILENAME_PREFIX}_{target_pid}_*_{basename}"
+    for backup_path in Path(_AUTO_SESSION_DIR).glob(pattern):
+        manifest_path = Path(f"{backup_path}.manifest.json")
         try:
-            os.remove(backup_path)
+            backup_path.unlink()
         except Exception:
             pass
         try:
-            if os.path.exists(manifest_path):
-                os.remove(manifest_path)
+            if manifest_path.exists():
+                manifest_path.unlink()
         except Exception:
             pass
 
@@ -138,19 +139,19 @@ def detect_orphaned_backup(db_path: str) -> dict | None:
     session_pid is dead (or simply: any surviving auto-session snapshot =
     crashed session, since clean close deletes it).
     """
-    basename = os.path.basename(db_path)
-    pattern = os.path.join(_AUTO_SESSION_DIR, f"{_FILENAME_PREFIX}_*_{basename}")
-    candidates = glob.glob(pattern)
+    basename = Path(db_path).name
+    pattern = f"{_FILENAME_PREFIX}_*_{basename}"
+    candidates = Path(_AUTO_SESSION_DIR).glob(pattern)
     if not candidates:
         return None
 
     # Filter to those whose manifest belongs to this source path
     for backup_path in candidates:
-        manifest_path = backup_path + ".manifest.json"
-        if not os.path.exists(manifest_path):
+        manifest_path = Path(f"{backup_path}.manifest.json")
+        if not manifest_path.exists():
             continue
         try:
-            with open(manifest_path) as f:
+            with manifest_path.open() as f:
                 manifest = json.load(f)
         except Exception:
             continue

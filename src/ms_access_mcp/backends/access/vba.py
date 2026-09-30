@@ -9,6 +9,7 @@ import logging
 import os
 import tempfile
 import threading
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ def save_object_to_text(access_app: Any, object_type: int, object_name: str) -> 
         fd, temp_path = tempfile.mkstemp(suffix=".txt", prefix="mcp_exp_")
         os.close(fd)
         access_app.SaveAsText(object_type, object_name, temp_path)
-        with open(temp_path, "rb") as f:
+        with Path(temp_path).open("rb") as f:
             raw = f.read()
         # SaveAsText outputs UTF-16-LE with BOM; decode accordingly
         content = raw.decode("utf-16-le", errors="replace").lstrip("\ufeff")
@@ -54,7 +55,7 @@ def save_object_to_text(access_app: Any, object_type: int, object_name: str) -> 
     finally:
         if temp_path:
             try:
-                os.unlink(temp_path)
+                Path(temp_path).unlink()
             except Exception as exc:
                 logger.debug("temp file cleanup %s failed: %s", temp_path, exc)
                 pass
@@ -79,10 +80,10 @@ def load_object_from_text(
         os.close(fd)
         if object_type == 5:  # acModule
             enc = locale.getpreferredencoding(False) or "cp1252"
-            with open(temp_path, "w", encoding=enc, errors="replace") as f:
+            with Path(temp_path).open("w", encoding=enc, errors="replace") as f:
                 f.write(text_data)
         else:
-            with open(temp_path, "wb") as f:
+            with Path(temp_path).open("wb") as f:
                 f.write(b"\xff\xfe")
                 f.write(text_data.encode("utf-16-le"))
         access_app.LoadFromText(object_type, object_name, temp_path)
@@ -92,7 +93,7 @@ def load_object_from_text(
     finally:
         if temp_path:
             try:
-                os.unlink(temp_path)
+                Path(temp_path).unlink()
             except Exception as exc:
                 logger.debug("temp file cleanup %s failed: %s", temp_path, exc)
                 pass

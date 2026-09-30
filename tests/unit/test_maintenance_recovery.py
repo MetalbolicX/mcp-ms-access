@@ -175,8 +175,8 @@ class TestRepairWithAccessCli:
 
         with patch("sys.platform", "win32"):
             with patch("ms_access_mcp.application.maintenance.shutil.which", return_value=r"C:\Program Files\...\msaccess.exe"):
-                with patch("os.path.exists", return_value=True):
-                    with patch("os.path.isfile", return_value=True):
+                with patch("pathlib.Path.exists", return_value=True):
+                    with patch("pathlib.Path.is_file", return_value=True):
                         with patch("subprocess.run") as mock_run:
                             mock_run.return_value = MagicMock(returncode=0)
                             mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
@@ -191,7 +191,7 @@ class TestRepairWithAccessCli:
 
         with patch("sys.platform", "win32"):
             with patch("ms_access_mcp.application.maintenance.shutil.which", return_value=r"C:\Program Files\...\msaccess.exe"):
-                with patch("os.path.exists", return_value=True):
+                with patch("pathlib.Path.exists", return_value=True):
                     with patch("subprocess.run") as mock_run:
                         mock_run.return_value = MagicMock(returncode=0)
                         mc = MaintenanceUseCases(allowed_dirs=[tmp_path])
@@ -207,8 +207,8 @@ class TestRepairWithAccessCli:
 
         with patch("sys.platform", "win32"):
             with patch("ms_access_mcp.application.maintenance.shutil.which", return_value=r"C:\Program Files\...\msaccess.exe"):
-                with patch("os.path.exists", return_value=True):
-                    with patch("os.path.isfile", return_value=True):
+                with patch("pathlib.Path.exists", return_value=True):
+                    with patch("pathlib.Path.is_file", return_value=True):
                         with patch("subprocess.run") as mock_run:
                             mock_run.return_value = MagicMock(returncode=0)
                             mc = MaintenanceUseCases(allowed_dirs=[tmp_path])

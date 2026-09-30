@@ -216,7 +216,7 @@ def write_atomic(
             os.fsync(f.fileno())
 
         # Atomic rename
-        os.replace(tmp, path)
+        tmp.replace(path)
     except Exception:
         # Clean up temp file on error
         if tmp.exists():
@@ -230,7 +230,7 @@ def write_atomic(
         except Exception as exc:  # noqa: BLE001
             # Restore from backup or delete new file
             if backup_path is not None and backup_path.exists():
-                os.replace(backup_path, path)
+                backup_path.replace(path)
             elif path.exists():
                 path.unlink()
             raise _ValidationError(backup_path=backup_path, message=str(exc)) from exc

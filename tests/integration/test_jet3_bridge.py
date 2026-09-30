@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -22,7 +23,7 @@ def _bridge_available() -> bool:
     if not IS_WINDOWS:
         return False
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    return os.path.isfile(os.path.join(system_root, "SysWOW64", "cscript.exe"))
+    return (Path(system_root) / "SysWOW64" / "cscript.exe").is_file()
 
 
 def _private_dbengine_36_works() -> bool:
@@ -30,7 +31,7 @@ def _private_dbengine_36_works() -> bool:
     if not IS_WINDOWS:
         return False
     # Use a temp file path (forward slashes to avoid PowerShell interpretation)
-    tmp_path = os.path.join(tempfile.gettempdir(), "jet3_probe.mdb").replace("\\", "/")
+    tmp_path = (Path(tempfile.gettempdir()) / "jet3_probe.mdb").as_posix()
     vbs = (
         f'Set e = CreateObject("DAO.PrivateDBEngine.36")\n'
         f'Set db = e.CreateDatabase("{tmp_path}", ";LANGID=0x0409;CP=1252;COUNTRY=0", 32)\n'
@@ -41,21 +42,21 @@ def _private_dbengine_36_works() -> bool:
         vbs_path = fh.name
     try:
         system_root = os.environ.get("SystemRoot", r"C:\Windows")
-        cscript = os.path.join(system_root, "SysWOW64", "cscript.exe")
+        cscript = str(Path(system_root) / "SysWOW64" / "cscript.exe")
         result = subprocess.run(
             [cscript, "//nologo", vbs_path],
             capture_output=True,
             timeout=30,
         )
-        if result.returncode == 0 and os.path.isfile(tmp_path):
-            os.unlink(tmp_path)
+        if result.returncode == 0 and Path(tmp_path).is_file():
+            Path(tmp_path).unlink()
             return True
         return False
     except Exception:
         return False
     finally:
         try:
-            os.unlink(vbs_path)
+            Path(vbs_path).unlink()
         except OSError:
             pass
 
@@ -67,8 +68,8 @@ def _create_jet3_vbs(tmp_dir: str) -> str | None:
     The database contains one table [T1] with rows (1, 'alpha') and (2, 'beta').
     """
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    cscript = os.path.join(system_root, "SysWOW64", "cscript.exe")
-    mdb_path = os.path.join(tmp_dir, "test_jet3.mdb")
+    cscript = str(Path(system_root) / "SysWOW64" / "cscript.exe")
+    mdb_path = str(Path(tmp_dir) / "test_jet3.mdb")
     # Use forward slashes in VBS paths to avoid PowerShell interpretation
     mdb_path_fs = mdb_path.replace("\\", "/")
 
@@ -91,14 +92,14 @@ def _create_jet3_vbs(tmp_dir: str) -> str | None:
             capture_output=True,
             timeout=30,
         )
-        if result.returncode != 0 or not os.path.isfile(mdb_path):
+        if result.returncode != 0 or not Path(mdb_path).is_file():
             return None
         return mdb_path
     except Exception:
         return None
     finally:
         try:
-            os.unlink(vbs_path)
+            Path(vbs_path).unlink()
         except OSError:
             pass
 
@@ -159,7 +160,7 @@ class TestJet3BridgeIntegration:
         from ms_access_mcp.application.database import DatabaseUseCases
 
         mdb_path = jet3_mdb_fixture["path"]
-        uc = DatabaseUseCases(allowed_dirs=[os.path.dirname(mdb_path)])
+        uc = DatabaseUseCases(allowed_dirs=[Path(mdb_path).parent])
         result = uc.open_database(mdb_path)
 
         from ms_access_mcp.errors import Err
@@ -180,7 +181,7 @@ class TestJet3BridgeIntegration:
         from ms_access_mcp.errors import Ok
 
         assert isinstance(result, Ok), f"Expected Ok, got {result.message}"
-        assert os.path.isfile(dst), "Destination file was not created"
+        assert Path(dst).is_file(), "Destination file was not created"
         assert detect_access_format(dst) == AccessFormat.JET4, "Output is not Jet 4 format"
 
     def test_converted_jet4_readable_via_odbc(self, jet3_mdb_fixture, tmp_path):

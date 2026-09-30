@@ -6,7 +6,6 @@ All destructive ops gated via safety.require_acknowledgment + write policy.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from ..errors import Err, Ok, Result
@@ -107,7 +106,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             data = getattr(self._adapter, export_method)(name)
             prefix, ext = resolved[2], resolved[3]
             safe_name = "".join(c if c.isalnum() or c in "_-" else "_" for c in name)
-            output_path = os.path.join(out_dir, f"{prefix}_{safe_name}{ext}")
+            output_path = str(Path(out_dir) / f"{prefix}_{safe_name}{ext}")
             return _ok(data={"kind": kind, "name": name, "data": data, "output_path": output_path})
         except Exception as e:
             return _err(str(e))
@@ -148,7 +147,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             return err
 
         try:
-            with open(file_path, "rb") as f:
+            with Path(file_path).open("rb") as f:
                 raw = f.read()
             if raw.startswith(b"\xff\xfe"):
                 text_data = raw[2:].decode("utf-16-le", errors="replace")

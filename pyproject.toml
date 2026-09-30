@@ -51,12 +51,22 @@ select = [
     "D",      # pydocstyle (enforced on backends; deferred elsewhere)
     "EM",     # exception message mechanics
     "TRY003", # exception message placement
+    "S301",   # pickle usage (global python.md: unsafe-deserialization; import-level S403 is preview-gated)
+    "S307",   # eval usage (global python.md: no-eval-exec)
+    "S308",   # exec usage (global python.md: no-eval-exec)
+    "PTH",    # pathlib usage (global python.md: use-pathlib)
+    "SIM115", # open without context manager (global python.md: use-context-managers)
+    "ASYNC",  # blocking calls in async code (global python.md: async-await)
 ]
 ignore = [
     "E501",  # line too long (handled separately)
     "N802",   # function name in class
     "N803",   # argument name
     "N806",   # variable in function
+    "D215",   # over-indented section underline: underline sections are legacy (9
+              # occurrences in 4 files) and obsolete under the Google-style target;
+              # D214 (section content indentation) stays — it still guards Google
+              # Args:/Returns: sections
 ]
 
 # Rule families are enabled globally through [tool.ruff.lint].select. Entries

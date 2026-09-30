@@ -6,11 +6,12 @@ Run: `ms-access-mcp doctor [--json] [--deep]`
 from __future__ import annotations
 
 import json
-import os
+import os as os
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .errors import strip_password
 
@@ -218,18 +219,18 @@ def _check_deep_access() -> Check:
             # Pick a path that does NOT yet exist; NewCurrentDatabase refuses
             # to overwrite. NamedTemporaryFile pre-creates the file and breaks.
             tmpdir = tempfile.mkdtemp(prefix="acc_doctor_")
-            temp_db = os.path.join(tmpdir, "doctor_probe.accdb")
+            temp_db = Path(tmpdir) / "doctor_probe.accdb"
             try:
-                app.NewCurrentDatabase(temp_db)
+                app.NewCurrentDatabase(str(temp_db))
                 app.CloseCurrentDatabase()
                 app.Quit()
             finally:
                 try:
-                    os.unlink(temp_db)
+                    temp_db.unlink()
                 except Exception:
                     pass
                 try:
-                    os.rmdir(tmpdir)
+                    Path(tmpdir).rmdir()
                 except Exception:
                     pass
 
@@ -302,7 +303,7 @@ def run_checks(deep: bool = False) -> list[Check]:
         _check_dao_engine(),
         _check_odbc_driver(),
     ]
-    local_store = _local_credentials_path(os.getcwd())
+    local_store = _local_credentials_path(Path.cwd())
     if local_store.exists():
         warning = synced_store_warning(local_store)
         if warning:

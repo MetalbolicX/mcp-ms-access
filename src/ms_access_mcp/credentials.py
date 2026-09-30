@@ -88,16 +88,16 @@ def _atomic_write_store(target: Path, payload: _CredentialsDict) -> None:
             json.dump(payload, fh, indent=2, ensure_ascii=False)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp_path_str, str(target))
+        Path(tmp_path_str).replace(target)
 
         # Restrict POSIX permissions or apply an owner-only Windows DACL.
         if os.name != "nt":
-            os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
+            target.chmod(stat.S_IRUSR | stat.S_IWUSR)
         else:
             _harden_nt(target)
     except BaseException:
         try:
-            os.unlink(tmp_path_str)
+            Path(tmp_path_str).unlink()
         except OSError:
             pass
         raise
@@ -214,7 +214,7 @@ def _read_credentials_file(path: Path) -> _CredentialsDict | None:
         return None
 
     try:
-        with open(path, encoding="utf-8") as fh:
+        with path.open(encoding="utf-8") as fh:
             raw = json.load(fh)
     except (json.JSONDecodeError, OSError):
         _cache[(path, mtime)] = None
@@ -340,7 +340,7 @@ def remove_entry(db_path: str, *, local: bool = False) -> bool:
     # a file may still hold profiles even when credentials are gone.
     if not existing["credentials"] and not existing.get("profiles"):
         try:
-            os.unlink(target)
+            target.unlink()
         except OSError:
             pass
     else:

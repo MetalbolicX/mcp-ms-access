@@ -49,8 +49,8 @@ def bridge_available() -> bool:
 
     """
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    cscript_path = os.path.join(system_root, "SysWOW64", "cscript.exe")
-    return os.path.isfile(cscript_path)
+    cscript_path = Path(system_root) / "SysWOW64" / "cscript.exe"
+    return cscript_path.is_file()
 
 
 def convert_jet3_to_jet4(src: str, dst: str) -> Result:
@@ -79,7 +79,7 @@ def convert_jet3_to_jet4(src: str, dst: str) -> Result:
 
     """
     # ---- validate source exists ------------------------------------------------
-    if not os.path.isfile(src):
+    if not Path(src).is_file():
         return _err(f"Source file not found: {src}")
 
     # ---- validate it is actually Jet 3 ---------------------------------------
@@ -93,7 +93,7 @@ def convert_jet3_to_jet4(src: str, dst: str) -> Result:
     # ---- check bridge availability ---------------------------------------------
     if not bridge_available():
         system_root = os.environ.get("SystemRoot", r"C:\Windows")
-        cscript_path = os.path.join(system_root, "SysWOW64", "cscript.exe")
+        cscript_path = Path(system_root) / "SysWOW64" / "cscript.exe"
         return _err(
             f"32-bit script host not found at {cscript_path}. "
             "Cannot convert Jet 3 files on this system."
@@ -101,7 +101,7 @@ def convert_jet3_to_jet4(src: str, dst: str) -> Result:
 
     # ---- write VBS to temp file ------------------------------------------------
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    cscript_path = os.path.join(system_root, "SysWOW64", "cscript.exe")
+    cscript_path = Path(system_root) / "SysWOW64" / "cscript.exe"
 
     vbs_content = JET3_CONVERT_VBS.encode("utf-16-le")
 
@@ -121,7 +121,7 @@ def convert_jet3_to_jet4(src: str, dst: str) -> Result:
         # cscript.exe is 32-bit (WOW64) so it loads the 32-bit JRO/Jet engine.
         try:
             proc = subprocess.run(
-                [cscript_path, "//nologo", tmp_vbs, src, dst],
+                [str(cscript_path), "//nologo", tmp_vbs, src, dst],
                 capture_output=True,
                 timeout=60,
                 check=False,
@@ -137,14 +137,14 @@ def convert_jet3_to_jet4(src: str, dst: str) -> Result:
 
     finally:
         # ---- always clean up the temp VBS ------------------------------------
-        if tmp_vbs and os.path.isfile(tmp_vbs):
+        if tmp_vbs and Path(tmp_vbs).is_file():
             try:
-                os.unlink(tmp_vbs)
+                Path(tmp_vbs).unlink()
             except OSError:
                 pass
 
     # ---- verify output ---------------------------------------------------------
-    if not os.path.isfile(dst):
+    if not Path(dst).is_file():
         return _err(f"Conversion completed but destination file was not created: {dst}")
 
     detected_fmt = detect_access_format(Path(dst))

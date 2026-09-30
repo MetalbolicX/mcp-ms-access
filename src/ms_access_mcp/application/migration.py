@@ -6,7 +6,6 @@ Module-level job tracker with uuid4().hex[:8] keys.
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -228,7 +227,7 @@ class MigrationUseCases:
         # Validate path before opening
         if not database_path:
             return _err("database_path is required")
-        if not os.path.isfile(database_path):
+        if not Path(database_path).is_file():
             return _err(f"Access database not found: {database_path}")
         if not is_path_allowed(database_path, self._allowed_dirs):
             return _err(f"Database path not allowed: {database_path}")

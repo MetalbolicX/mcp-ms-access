@@ -67,10 +67,10 @@ class TestExportXlsx:
                 db = DatabaseUseCases(backend="access", readonly=False, allowed_dirs=[Path(tmpdir)])
                 db._connections["test_conn"] = adapter
 
-                xlsx_path = os.path.join(tmpdir, "exported.xlsx")
+                xlsx_path = str(Path(tmpdir) / "exported.xlsx")
 
                 # Create the output file so is_path_allowed's p.exists() check passes
-                with open(xlsx_path, "wb"):
+                with Path(xlsx_path).open("wb"):
                     pass
 
                 result = db.export_data(
@@ -83,8 +83,8 @@ class TestExportXlsx:
 
                 assert isinstance(result, Ok), f"export_data failed: {result.message}"
                 assert result.rowcount >= 0
-                assert os.path.exists(xlsx_path), "xlsx file was not created"
-                assert os.path.getsize(xlsx_path) > 0, "xlsx file is empty"
+                assert Path(xlsx_path).exists(), "xlsx file was not created"
+                assert Path(xlsx_path).stat().st_size > 0, "xlsx file is empty"
 
         finally:
             adapter.disconnect()
@@ -125,8 +125,8 @@ class TestExportXlsx:
                 db = DatabaseUseCases(backend="access", readonly=False, allowed_dirs=[Path(tmpdir)])
                 db._connections["test_conn"] = adapter
 
-                xlsx_path = os.path.join(tmpdir, "exported_custom.xlsx")
-                with open(xlsx_path, "wb"):
+                xlsx_path = str(Path(tmpdir) / "exported_custom.xlsx")
+                with Path(xlsx_path).open("wb"):
                     pass
 
                 result = db.export_data(
@@ -138,7 +138,7 @@ class TestExportXlsx:
                 )
 
                 assert isinstance(result, Ok), f"export_data failed: {result.message}"
-                assert os.path.exists(xlsx_path)
+                assert Path(xlsx_path).exists()
 
         finally:
             adapter.disconnect()

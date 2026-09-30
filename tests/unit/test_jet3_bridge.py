@@ -23,33 +23,45 @@ class TestBridgeAvailable:
 
     def test_returns_true_when_cscript_exists(self):
         """bridge_available() returns True when SysWOW64 cscript.exe exists."""
-        with patch("os.path.isfile", return_value=True):
+        with patch("pathlib.Path.is_file", return_value=True):
             with patch.dict(os.environ, {"SystemRoot": "C:\\Windows"}):
                 result = bridge_available()
                 assert result is True
 
     def test_returns_false_when_cscript_missing(self):
         """bridge_available() returns False when SysWOW64 cscript.exe is absent."""
-        with patch("os.path.isfile", return_value=False):
+        with patch("pathlib.Path.is_file", return_value=False):
             with patch.dict(os.environ, {"SystemRoot": "C:\\Windows"}):
                 result = bridge_available()
                 assert result is False
 
     def test_uses_systemroot_env(self):
         """bridge_available() resolves cscript from SystemRoot env var."""
-        with patch("os.path.isfile", return_value=True) as mock_isfile:
+        captured: list[Path] = []
+
+        def fake_is_file(p: Path) -> bool:
+            captured.append(p)
+            return True
+
+        with patch.object(Path, "is_file", fake_is_file):
             with patch.dict(os.environ, {"SystemRoot": "D:\\WINDOWS"}):
-                bridge_available()
-                mock_isfile.assert_called_once_with("D:\\WINDOWS\\SysWOW64\\cscript.exe")
+                assert bridge_available() is True
+        assert captured == [Path("D:\\WINDOWS\\SysWOW64\\cscript.exe")]
 
     def test_falls_back_to_c_windows(self):
         """bridge_available() falls back to C:\\WINDOWS when SystemRoot is unset."""
+        captured: list[Path] = []
+
+        def fake_is_file(p: Path) -> bool:
+            captured.append(p)
+            return True
+
         env = os.environ.copy()
         env.pop("SystemRoot", None)
-        with patch("os.path.isfile", return_value=True) as mock_isfile:
+        with patch.object(Path, "is_file", fake_is_file):
             with patch.dict(os.environ, env, clear=True):
-                bridge_available()
-                mock_isfile.assert_called_once_with("C:\\WINDOWS\\SysWOW64\\cscript.exe")
+                assert bridge_available() is True
+        assert captured == [Path("C:\\WINDOWS\\SysWOW64\\cscript.exe")]
 
 
 class TestJet3ConvertVbsConstant:
@@ -289,7 +301,7 @@ class TestConvertJet3Errors:
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = Mock(returncode=0, stderr=b"")
                     # Mock os.path.isfile to return True for dst
-                    with patch("os.path.isfile", return_value=True):
+                    with patch("pathlib.Path.is_file", return_value=True):
                         result = convert_jet3_to_jet4(str(src), str(dst))
 
         assert isinstance(result.message, str)

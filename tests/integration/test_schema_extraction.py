@@ -11,6 +11,7 @@ import os
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -321,16 +322,16 @@ class TestDaoSchemaExtraction:
             assert len(table_names) >= 1, "Need ≥1 table to test generate_sql"
 
             with tempfile.TemporaryDirectory() as tmpdir:
-                sql_path = os.path.join(tmpdir, "schema.sql")
+                sql_path = Path(tmpdir) / "schema.sql"
 
-                result = adapter.generate_sql(sql_path)
+                result = adapter.generate_sql(str(sql_path))
                 assert isinstance(result, dict), "generate_sql must return a dict"
                 assert result.get("success") is True, (
                     f"generate_sql failed: {result.get('error', 'unknown')}"
                 )
-                assert os.path.exists(sql_path), "generate_sql did not write the output file"
+                assert sql_path.exists(), "generate_sql did not write the output file"
 
-                content = open(sql_path, encoding="utf-8").read()
+                content = sql_path.read_text(encoding="utf-8")
                 assert len(content) > 0, "generate_sql wrote an empty file"
 
                 # Assert CREATE TABLE appears for at least one fixture table

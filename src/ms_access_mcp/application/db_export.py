@@ -6,6 +6,7 @@ import csv
 import dataclasses
 import inspect
 import json
+import os
 from functools import cache
 from pathlib import Path
 from typing import Any, Literal
@@ -58,7 +59,7 @@ def _build_iisam_insert_sql(table_or_query: str, output_path: str, sheet_name: s
     Returns Err if output_path contains ';', '"', or ']' — connection-string
     injection and bracket-escape vectors in the DATABASE= segment.
     """
-    if any(ch in output_path for ch in (';', '"', "]")):
+    if any(ch in os.fspath(output_path) for ch in (';', '"', "]")):
         return _err(
             f"Output path must not contain ';', '\"' or ']' characters "
             f"(connection-string / bracket-escape vectors in the DATABASE= segment). Got: {output_path!r}"
@@ -164,7 +165,7 @@ def export_data(
 
         # Export to file
         if format == "csv":
-            with open(output_path, "w", newline="", encoding="utf-8") as f:
+            with Path(output_path).open("w", newline="", encoding="utf-8") as f:
                 if rows:
                     writer = csv.DictWriter(f, fieldnames=rows[0].keys())
                     writer.writeheader()
@@ -172,7 +173,7 @@ def export_data(
                 else:
                     f.write("")
         else:  # json
-            with open(output_path, "w", encoding="utf-8") as f:
+            with Path(output_path).open("w", encoding="utf-8") as f:
                 json.dump(rows, f, indent=2, default=str)
 
         return _ok(rowcount=len(rows))

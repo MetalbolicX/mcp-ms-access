@@ -223,7 +223,7 @@ class TestConnectionManagement:
 
     def test_open_database_with_fake_adapter(self):
         """open_database connects with adapter."""
-        db = DatabaseUseCases(backend="auto", allowed_dirs=[Path(".")])
+        db = DatabaseUseCases(backend="auto", allowed_dirs=[Path()])
         # Verify the connections dict exists - we can't fully test without mocking BackendSelector
         assert hasattr(db, "_connections")
 
@@ -475,13 +475,12 @@ class TestExportDataXlsx:
 
     def test_xlsx_via_docmd_on_access_adapter(self) -> None:
         """format='xlsx' routes to AccessAdapter.export_table_to_xlsx."""
-        import os
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
+            output_path = Path(tmpdir) / "output.xlsx"
             # Touch the file so is_path_allowed's p.exists() passes
-            open(output_path, "w").close()
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_adapter = FakeAccessAdapterForXlsx()
             db._connections["test_conn"] = fake_adapter
@@ -500,12 +499,11 @@ class TestExportDataXlsx:
 
     def test_xlsx_via_docmd_uses_default_sheet_name(self) -> None:
         """Default sheet_name is 'Sheet1' when not specified."""
-        import os
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
-            open(output_path, "w").close()
+            output_path = Path(tmpdir) / "output.xlsx"
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_adapter = FakeAccessAdapterForXlsx()
             db._connections["test_conn"] = fake_adapter
@@ -522,12 +520,11 @@ class TestExportDataXlsx:
 
     def test_xlsx_via_docmd_custom_sheet_name_passed(self) -> None:
         """Custom sheet_name is accepted and passed to routing."""
-        import os
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
-            open(output_path, "w").close()
+            output_path = Path(tmpdir) / "output.xlsx"
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_adapter = FakeAccessAdapterForXlsx()
             db._connections["test_conn"] = fake_adapter
@@ -545,7 +542,6 @@ class TestExportDataXlsx:
 
     def test_xlsx_via_sql_fallback_when_probe_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With probe=True and DaoAdapter, IISAM SQL is generated."""
-        import os
         import tempfile
 
         import ms_access_mcp.application.xlsx_capability as xlsx_capability
@@ -553,8 +549,8 @@ class TestExportDataXlsx:
         monkeypatch.setattr(xlsx_capability.IisamProviderProbe, "_cached", True)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
-            open(output_path, "w").close()
+            output_path = Path(tmpdir) / "output.xlsx"
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_dao = FakeDaoAdapterForXlsx()
             db._connections["test_dao"] = fake_dao
@@ -577,7 +573,6 @@ class TestExportDataXlsx:
 
     def test_xlsx_sheet_name_trailing_dollar_stripped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Trailing $ in sheet name is stripped automatically."""
-        import os
         import tempfile
 
         import ms_access_mcp.application.xlsx_capability as xlsx_capability
@@ -585,8 +580,8 @@ class TestExportDataXlsx:
         monkeypatch.setattr(xlsx_capability.IisamProviderProbe, "_cached", True)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
-            open(output_path, "w").close()
+            output_path = Path(tmpdir) / "output.xlsx"
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_dao = FakeDaoAdapterForXlsx()
             db._connections["test_dao"] = fake_dao
@@ -605,12 +600,11 @@ class TestExportDataXlsx:
 
     def test_xlsx_sheet_name_rejects_bracket(self) -> None:
         """Sheet name with ] is rejected before any adapter call."""
-        import os
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
-            open(output_path, "w").close()
+            output_path = Path(tmpdir) / "output.xlsx"
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_adapter = FakeAccessAdapterForXlsx()
             db._connections["test_conn"] = fake_adapter
@@ -629,12 +623,11 @@ class TestExportDataXlsx:
 
     def test_xlsx_sheet_name_rejects_empty(self) -> None:
         """Empty sheet name is rejected."""
-        import os
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
-            open(output_path, "w").close()
+            output_path = Path(tmpdir) / "output.xlsx"
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_adapter = FakeAccessAdapterForXlsx()
             db._connections["test_conn"] = fake_adapter
@@ -652,12 +645,11 @@ class TestExportDataXlsx:
 
     def test_xlsx_sheet_name_rejects_too_long(self) -> None:
         """Sheet name over 31 chars is rejected."""
-        import os
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
-            open(output_path, "w").close()
+            output_path = Path(tmpdir) / "output.xlsx"
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_adapter = FakeAccessAdapterForXlsx()
             db._connections["test_conn"] = fake_adapter
@@ -675,7 +667,6 @@ class TestExportDataXlsx:
 
     def test_xlsx_dao_no_provider_returns_err(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """DaoAdapter without ACE provider returns BackendCapabilityMismatchError as Err."""
-        import os
         import tempfile
 
         import ms_access_mcp.application.xlsx_capability as xlsx_capability
@@ -683,8 +674,8 @@ class TestExportDataXlsx:
         monkeypatch.setattr(xlsx_capability.IisamProviderProbe, "_cached", False)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
-            open(output_path, "w").close()
+            output_path = Path(tmpdir) / "output.xlsx"
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_dao = FakeDaoAdapterForXlsx()
             db._connections["test_dao"] = fake_dao
@@ -702,12 +693,11 @@ class TestExportDataXlsx:
 
     def test_xlsx_odbc_always_returns_err(self) -> None:
         """OdbcAdapter always returns BackendCapabilityMismatchError as Err."""
-        import os
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = os.path.join(tmpdir, "output.xlsx")
-            open(output_path, "w").close()
+            output_path = Path(tmpdir) / "output.xlsx"
+            Path(output_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_odbc = FakeOdbcAdapterForXlsx()
             db._connections["test_odbc"] = fake_odbc
@@ -724,14 +714,13 @@ class TestExportDataXlsx:
 
     def test_csv_and_json_still_work(self) -> None:
         """CSV and JSON export paths remain unchanged (no xlsx dependency)."""
-        import os
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            csv_path = os.path.join(tmpdir, "output.csv")
-            json_path = os.path.join(tmpdir, "output.json")
-            open(csv_path, "w").close()
-            open(json_path, "w").close()
+            csv_path = Path(tmpdir) / "output.csv"
+            json_path = Path(tmpdir) / "output.json"
+            Path(csv_path).touch()
+            Path(json_path).touch()
             db = DatabaseUseCases(readonly=False, allowed_dirs=[Path(tmpdir)])
             fake_adapter = FakeAccessAdapterForXlsx()
             db._connections["test_conn"] = fake_adapter

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 
@@ -10,10 +11,9 @@ class TestAccessAdapterExportTableToXlsx:
 
     def test_docmd_transfer_spreadsheet_called_with_correct_args(self) -> None:
         """DoCmd.TransferSpreadsheet is called with acExport=1, acSpreadsheetTypeExcel12Xml=14."""
-        import os
         import sys
 
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
         from ms_access_mcp.backends.access import AccessAdapter
 
@@ -61,10 +61,9 @@ class TestAccessAdapterExportTableToXlsx:
 
     def test_returns_record_count_from_docmd(self) -> None:
         """export_table_to_xlsx returns an int (rowcount proxy)."""
-        import os
         import sys
 
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
         from ms_access_mcp.backends.access import AccessAdapter
 

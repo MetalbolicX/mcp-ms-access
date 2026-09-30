@@ -6,7 +6,6 @@ All destructive ops gated via safety.require_acknowledgment + write policy.
 
 from __future__ import annotations
 
-import glob
 import hashlib
 import json
 import os
@@ -110,25 +109,25 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
 
     def _is_disposable_path(self, path: str) -> bool:
         temp_dir = tempfile.gettempdir()
-        if path.startswith(temp_dir):
+        if str(path).startswith(temp_dir):
             return True
-        disposable_marker = os.path.join(temp_dir, "ms_access_disposable")
-        if os.path.exists(disposable_marker):
-            marker_dir = os.path.dirname(disposable_marker)
-            if path.startswith(marker_dir):
+        disposable_marker = Path(temp_dir) / "ms_access_disposable"
+        if disposable_marker.exists():
+            marker_dir = str(disposable_marker.parent)
+            if str(path).startswith(marker_dir):
                 return True
         return False
 
     def _preflight_backup(self, path: str) -> Ok | Err:
-        if not os.path.exists(path):
+        if not Path(path).exists():
             return _err(f"Cannot backup {path}: source not found")
 
-        backup_dir = os.path.join(tempfile.gettempdir(), "ms_access_backups")
-        os.makedirs(backup_dir, exist_ok=True)
+        backup_dir = Path(tempfile.gettempdir()) / "ms_access_backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
 
-        basename = os.path.basename(path)
+        basename = Path(path).name
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
-        backup_file = os.path.join(backup_dir, f"{timestamp}_{basename}")
+        backup_file = backup_dir / f"{timestamp}_{basename}"
 
         try:
             shutil.copy2(path, backup_file)
@@ -136,40 +135,40 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
             return _err(f"Cannot backup {path}: {e}")
 
         sha256 = hashlib.sha256()
-        with open(backup_file, "rb") as f:
+        with backup_file.open("rb") as f:
             for chunk in iter(lambda: f.read(8192), b""):
                 sha256.update(chunk)  # type: ignore[arg-type]
 
         manifest = {
             "source_path": path,
-            "backup_path": backup_file,
+            "backup_path": str(backup_file),
             "sha256": sha256.hexdigest(),
-            "size_bytes": os.path.getsize(backup_file),
+            "size_bytes": backup_file.stat().st_size,
             "created_at": datetime.now(UTC).isoformat(),
             "kind": "backup",
         }
-        manifest_path = backup_file + ".manifest.json"
-        with open(manifest_path, "w") as f:
+        manifest_path = Path(f"{backup_file}.manifest.json")
+        with manifest_path.open("w") as f:
             json.dump(manifest, f, indent=2)
 
-        return _ok(data={"backup_path": backup_file, "manifest_path": manifest_path})
+        return _ok(data={"backup_path": str(backup_file), "manifest_path": str(manifest_path)})
 
     # -------------------------------------------------------------------------
     # Public Use Cases
     # -------------------------------------------------------------------------
 
     def backup(self, path: str, *, retention: int | None = None) -> Result:
-        if not os.path.exists(path):
+        if not Path(path).exists():
             return _err(f"Source not found: {path}")
         if not is_path_allowed(path, self._allowed_dirs):
             return _err(f"Source path not allowed: {path}")
 
-        backup_dir = os.path.join(tempfile.gettempdir(), "ms_access_backups")
-        os.makedirs(backup_dir, exist_ok=True)
+        backup_dir = Path(tempfile.gettempdir()) / "ms_access_backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
 
-        basename = os.path.basename(path)
+        basename = Path(path).name
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
-        backup_file = os.path.join(backup_dir, f"{timestamp}_{basename}")
+        backup_file = backup_dir / f"{timestamp}_{basename}"
 
         try:
             shutil.copy2(path, backup_file)
@@ -177,30 +176,29 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
             return _err(f"Cannot backup {path}: {e}")
 
         sha256 = hashlib.sha256()
-        with open(backup_file, "rb") as f:
+        with backup_file.open("rb") as f:
             for chunk in iter(lambda: f.read(8192), b""):
                 sha256.update(chunk)  # type: ignore[arg-type]
 
         manifest = {
             "source_path": path,
-            "backup_path": backup_file,
+            "backup_path": str(backup_file),
             "sha256": sha256.hexdigest(),
-            "size_bytes": os.path.getsize(backup_file),
+            "size_bytes": backup_file.stat().st_size,
             "created_at": datetime.now(UTC).isoformat(),
             "kind": "backup",
         }
-        manifest_path = backup_file + ".manifest.json"
-        with open(manifest_path, "w") as f:
+        manifest_path = Path(f"{backup_file}.manifest.json")
+        with manifest_path.open("w") as f:
             json.dump(manifest, f, indent=2)
 
         retention_count = retention or self.DEFAULT_RETENTION
-        pattern = os.path.join(backup_dir, f"*_{basename}")
-        existing_backups = glob.glob(pattern)
+        existing_backups = list(backup_dir.glob(f"*_{basename}"))
         existing_with_manifest = [
             bp for bp in existing_backups
-            if os.path.exists(bp + ".manifest.json")
+            if Path(f"{bp}.manifest.json").exists()
         ]
-        existing_with_manifest.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        existing_with_manifest.sort(key=lambda p: Path(p).stat().st_mtime, reverse=True)
 
         kept = len(existing_with_manifest)
         pruned = 0
@@ -208,10 +206,10 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
             to_remove = existing_with_manifest[retention_count:]
             for old_backup in to_remove:
                 try:
-                    os.remove(old_backup)
-                    manifest_to_remove = old_backup + ".manifest.json"
-                    if os.path.exists(manifest_to_remove):
-                        os.remove(manifest_to_remove)
+                    Path(old_backup).unlink()
+                    manifest_to_remove = Path(f"{old_backup}.manifest.json")
+                    if manifest_to_remove.exists():
+                        manifest_to_remove.unlink()
                     pruned += 1
                 except Exception:
                     pass
@@ -235,27 +233,27 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
                 )
             source = self._db_path
 
-        if not os.path.exists(source):
+        if not Path(source).exists():
             return _err(f"Source not found: {source}")
 
         if not is_path_allowed(source, self._allowed_dirs):
             return _err(f"Source path not allowed: {source}")
 
-        dev_dir = os.path.join(tempfile.gettempdir(), "ms_access_dev")
-        os.makedirs(dev_dir, exist_ok=True)
+        dev_dir = Path(tempfile.gettempdir()) / "ms_access_dev"
+        dev_dir.mkdir(parents=True, exist_ok=True)
 
         source_md5 = hashlib.md5(source.encode()).hexdigest()[:8]
-        basename = os.path.basename(source)
-        name, ext = os.path.splitext(basename)
+        source_path = Path(source)
+        name, ext = source_path.stem, source_path.suffix
         dev_name = f"{name}_dev{ext}"
-        dev_path = os.path.join(dev_dir, source_md5, dev_name)
+        dev_path = dev_dir / source_md5 / dev_name
 
-        manifest_path = os.path.join(dev_dir, f"{source_md5}.json")
+        manifest_path = dev_dir / f"{source_md5}.json"
 
-        if os.path.exists(manifest_path):
+        if manifest_path.exists():
             return _err("Dev copy already active")
 
-        os.makedirs(os.path.dirname(dev_path), exist_ok=True)
+        dev_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             shutil.copy2(source, dev_path)
@@ -264,19 +262,19 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
 
         manifest = {
             "production_path": source,
-            "dev_path": dev_path,
+            "dev_path": str(dev_path),
             "created_at": datetime.now(UTC).isoformat(),
-            "db_size_bytes": os.path.getsize(dev_path),
+            "db_size_bytes": dev_path.stat().st_size,
             "deployed_at": None,
         }
 
-        with open(manifest_path, "w") as f:
+        with manifest_path.open("w") as f:
             json.dump(manifest, f, indent=2)
 
         return _ok(
             data={
-                "dev_path": dev_path,
-                "manifest_path": manifest_path,
+                "dev_path": str(dev_path),
+                "manifest_path": str(manifest_path),
                 "production_path": source,
             }
         )
@@ -311,14 +309,14 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         except Exception as e:
             return _err(f"Cannot deploy dev copy: {e}")
 
-        dev_dir = os.path.join(tempfile.gettempdir(), "ms_access_dev")
+        dev_dir = Path(tempfile.gettempdir()) / "ms_access_dev"
 
-        for mf in glob.glob(os.path.join(dev_dir, "*.json")):
+        for mf in dev_dir.glob("*.json"):
             try:
-                with open(mf) as f:
+                with mf.open() as f:
                     manifest = json.load(f)
                 if manifest.get("dev_path") == dev_path:
-                    os.remove(mf)
+                    mf.unlink()
                     break
             except Exception:
                 continue
@@ -332,15 +330,15 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         )
 
     def dev_copy_status(self) -> Result:
-        dev_dir = os.path.join(tempfile.gettempdir(), "ms_access_dev")
+        dev_dir = Path(tempfile.gettempdir()) / "ms_access_dev"
 
-        manifest_files = glob.glob(os.path.join(dev_dir, "*.json"))
+        manifest_files = list(dev_dir.glob("*.json"))
         if not manifest_files:
             return _ok(data={"active": False})
 
         for manifest_path in manifest_files:
             try:
-                with open(manifest_path) as f:
+                with manifest_path.open() as f:
                     manifest = json.load(f)
                 return _ok(data={**manifest, "active": True, "manifest_path": manifest_path})
             except Exception:
@@ -357,20 +355,20 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         if err := self._confirm_gate("discard_dev_copy", confirm):
             return err
 
-        dev_dir = os.path.join(tempfile.gettempdir(), "ms_access_dev")
-        manifest_files = glob.glob(os.path.join(dev_dir, "*.json"))
+        dev_dir = Path(tempfile.gettempdir()) / "ms_access_dev"
+        manifest_files = list(dev_dir.glob("*.json"))
 
         if not manifest_files:
             return _err("No active dev copy found")
 
         for manifest_path in manifest_files:
             try:
-                with open(manifest_path) as f:
+                with manifest_path.open() as f:
                     manifest = json.load(f)
                 dev_path = manifest.get("dev_path")
-                if dev_path and os.path.exists(dev_path):
-                    os.remove(dev_path)
-                os.remove(manifest_path)
+                if dev_path and Path(dev_path).exists():
+                    Path(dev_path).unlink()
+                manifest_path.unlink()
                 return _ok(
                     data={
                         "dev_path": dev_path,
@@ -488,7 +486,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         if sys.platform != "win32":
             return _err("repair_with_access_cli is only available on Windows")
 
-        if not os.path.exists(path):
+        if not Path(path).exists():
             return _err(f"File not found: {path}")
 
         if not is_path_allowed(path, self._allowed_dirs):
@@ -496,36 +494,36 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
 
         # Probe for msaccess.exe — standard Office16 locations + PATH
         candidates: list[str] = []
-        office16 = os.path.join(os.environ.get("ProgramFiles", ""), "Microsoft Office", "Office16")
-        if os.path.exists(office16):
-            candidates.append(os.path.join(office16, "msaccess.exe"))
+        office16 = Path(os.environ.get("ProgramFiles", "")) / "Microsoft Office" / "Office16"
+        if office16.exists():
+            candidates.append(str(office16 / "msaccess.exe"))
         # Also check common alternate locations
         for base in [
-            os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Microsoft Office", "Office16"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "MS Access"),
+            Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Office" / "Office16",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Windows" / "MS Access",
         ]:
-            if os.path.exists(base):
-                candidates.append(os.path.join(base, "msaccess.exe"))
+            if base.exists():
+                candidates.append(str(base / "msaccess.exe"))
 
         exe_path = None
         for candidate in candidates:
-            if os.path.exists(candidate):
+            if Path(candidate).exists():
                 exe_path = candidate
                 break
         if exe_path is None:
             exe_path = shutil.which("msaccess.exe")
 
-        if exe_path is None or not os.path.exists(exe_path):
+        if exe_path is None or not Path(exe_path).exists():
             return _err("msaccess.exe not found; install Microsoft Access or add it to PATH")
 
         # Target is a temp file — we compact TO the target, Access handles it
-        target_dir = os.path.join(tempfile.gettempdir(), "ms_access_cli_repair")
-        os.makedirs(target_dir, exist_ok=True)
-        target = os.path.join(target_dir, f"repair_{os.path.basename(path)}")
+        target_dir = Path(tempfile.gettempdir()) / "ms_access_cli_repair"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"repair_{Path(path).name}"
 
         try:
             proc = subprocess.run(
-                [exe_path, path, "/compact", target],
+                [exe_path, path, "/compact", str(target)],
                 capture_output=True,
                 timeout=120,
                 check=False,
@@ -537,7 +535,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
             stderr = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
             return _err(f"msaccess.exe /compact failed (exit {proc.returncode}): {stderr}")
 
-        if not os.path.isfile(target):
+        if not target.is_file():
             return _err(
                 f"msaccess.exe /compact exited 0 but produced no output at {target}; "
                 "escalating (output verification failed)"
@@ -562,7 +560,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         if err := self._confirm_gate("salvage_database", confirm):
             return err
 
-        if not os.path.exists(path):
+        if not Path(path).exists():
             return _err(f"File not found: {path}")
 
         if not is_path_allowed(path, self._allowed_dirs):
@@ -572,18 +570,18 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         from ..backends.format_detector import AccessFormat, detect_access_format
 
         fmt = detect_access_format(Path(path))
-        original_ext = os.path.splitext(path)[1]
+        original_ext = Path(path).suffix
         file_format = "mdb" if (fmt == AccessFormat.JET4 and original_ext == ".mdb") else "accdb"
 
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
-        basename = os.path.basename(path)
-        name_without_ext = os.path.splitext(basename)[0]
+        source_path = Path(path)
+        name_without_ext = source_path.stem
         corrupt_name = f"{name_without_ext}.corrupt-{timestamp}{original_ext}"
-        corrupt_path = os.path.join(os.path.dirname(path), corrupt_name)
+        corrupt_path = source_path.parent / corrupt_name
 
         # Rename original to .corrupt-*
         try:
-            os.rename(path, corrupt_path)
+            source_path.rename(corrupt_path)
         except Exception as e:
             return _err(f"Cannot rename original file: {e}")
 
@@ -606,17 +604,17 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
 
             # Salvage tables from corrupt DB using DAO backend seam
             try:
-                table_reports = cast(Any, fresh_adapter).salvage_tables(corrupt_path, path)
+                table_reports = cast(Any, fresh_adapter).salvage_tables(str(corrupt_path), path)
             except Exception as e:
                 return _err(
-                    f"Salvage failed after the corrupt database was renamed to {corrupt_path!r} "
+                    f"Salvage failed after the corrupt database was renamed to {str(corrupt_path)!r} "
                     f"and an empty database was created at {path!r}: {e}. "
                     "Your data is in the .corrupt file — do not re-run salvage against the empty DB."
                 )
 
             lost_tables = [r for r in table_reports if r["error"] is not None]
             return _ok(data={
-                "renamed_path": corrupt_path,
+                "renamed_path": str(corrupt_path),
                 "new_path": path,
                 "tables": table_reports,
                 "lost_table_count": len(lost_tables),
