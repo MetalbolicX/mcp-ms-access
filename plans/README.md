@@ -621,3 +621,129 @@ design; DIR-02 (close/archive openspec plan-024) is a verification sweep;
 DIR-03/04 (schema diff, reverse migration), DIR-06 (package-manager
 distribution), DIR-07 (multi-DB ADR) are spike-class decisions.
 
+## Plans 077–093: deep audit cycle 2026-10-04 — correctness restoration
+
+Third improve-skill deep audit of `main @ e4a4ce0` (six parallel category
+audits — correctness/runtime, data integrity, security, architecture/DX,
+tests, direction — plus supplemental coverage of the remaining source and
+three independent vetting passes with inert mock checks against live code).
+Baseline at plan time: ruff clean; pyright 0/0/0 (with the venv interpreter
+— a bare-wrapper run misreports imports; see 077-era note below); unit
+suite 1541 passed / 5 skipped / **1 failed** (wrong monkeypatch seam —
+plan 077); tool budget core 21 / full 126, exit 0; pip-audit NOT installed,
+no advisory scan run. Tree clean; no live Access/COM execution in audit.
+
+Headline confirmed defects: non-core MCP profiles never connect a database
+(automation/ddl/analysis/versioning + maintenance compact/recover); WeakSet
+session registry cannot close per-call sessions and DAO dispatchers never
+shut down; facade↔adapter contract drift reports DDL/relationship failures
+as `Ok(rowcount=1)`; migration `upload_schema` executes only the first DDL
+statement (FKs/indexes dropped) and count verification never gates success
+(Jet brackets in postgres/mysql COUNTs); the complete VersioningBackend has
+no production wiring while `export_object` advertises an unwritten file;
+analysis consumes a nonexistent Ok/Err API; `limit` silently dropped
+everywhere; g13 chaos gate calls nonexistent tools and exits 0 on failed
+rounds; credential store hardens after replace; scrubber weaker than the
+credential detector.
+
+### Execution order & status
+
+| Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
+|------|-------|-------|----------|--------|------|------|------------|--------|
+| 077  | [Password-scrub test seam + green baseline](077-password-scrub-test-seam.md) | 26 | P1 | S | LOW | Test-only repair (existing failure IS the RED) | — | DONE (beea53d) |
+| 078  | [Exit codes, mcp argv, tool-budget honesty, config hygiene](078-cli-gate-honesty.md) | 26 | P1 | S | LOW | Strict TDD (code) + direct edit (config) | 077 | TODO |
+| 079  | [Session ownership + dispatcher teardown](079-session-ownership-teardown.md) | 27 | P1 | M | MED | Strict TDD | 077 | TODO |
+| 080  | [Facade↔backend contract truth](080-facade-adapter-contract-truth.md) | 27 | P1 | M | MED | Characterization → strict TDD | 077 | TODO |
+| 081  | [Action-SQL routing + db-property honesty](081-action-sql-db-property-honesty.md) | 27 | P1 | S | MED | Strict TDD | 080 | TODO |
+| 082  | [Connect non-core MCP profiles](082-connect-non-core-profiles.md) | 27 | P1 | M | MED | Strict TDD (per profile) | 079, 080 | TODO |
+| 083  | [Migration full-DDL upload (FK + indexes)](083-migration-full-ddl-upload.md) | 28 | P1 | M | MED | Strict TDD + goldens | — | TODO |
+| 084  | [Migration verification gates success](084-migration-verification-gating.md) | 28 | P1 | S | MED | Characterization → strict TDD | 083 | TODO |
+| 085  | [Versioning production wiring](085-versioning-production-wiring.md) | 29 | P1 | M | MED | Conformance-first strict TDD | 082 | TODO |
+| 086  | [Analysis envelope correctness](086-analysis-envelope-correctness.md) | 29 | P1 | S | LOW | Strict TDD | 082 | TODO |
+| 087  | [g13 chaos gate repair + stale README claims](087-g13-harness-repair.md) | 30 | P2 | M | LOW | Direct edit + registry-conformance test | 078 (recommended) | TODO |
+| 088  | [limit honored end-to-end + bounded exports](088-limit-and-bounded-data.md) | 30 | P2 | M | MED | Strict TDD, probe-gated live TOP | 080, 084 | TODO |
+| 089  | [Credential staging + scrub hardening](089-credential-scrub-hardening.md) | 31 | P1 | S | MED | Strict TDD | 077 | TODO |
+| 090  | [SQL literals + identifier escaping](090-sql-literals-and-escaping.md) | 31 | P2 | S | MED | Strict TDD (goldens) | — | TODO |
+| 091  | [Dialog-killer PID scope + doctor ACE classification](091-dialog-killer-doctor-ace.md) | 32 | P2 | S | LOW | Strict TDD + pin refresh | — | TODO |
+| 092  | [VBA/design-view write safety](092-vba-design-view-safety.md) | 32 | P2 | M | MED | Characterization refresh + strict TDD on fakes; operator gates | 091 (sequencing) | TODO |
+| 093  | [Dead-surface retirement (capabilities, ADO, dead opt-in)](093-dead-surface-retirement.md) | 33 | P3 | M | MED | Direct edit + test retirement | 080, 081 | TODO |
+
+### Dependency notes
+
+- **077 first, always** — it restores the green baseline every other plan's
+  gates assume.
+- **079 → 080 → 081 → 082** is the load-bearing chain: session lifecycle
+  (079) is required before wiring MORE per-call profiles (082); contract
+  truth (080/081) is required before 082 exposes the fixed contracts;
+  skipping 080 before 082 would connect tools straight to false-success
+  paths.
+- **083 → 084** share `application/migration.py` (same-file sequencing).
+- **085 and 086** need 082's connected tools for meaningful MCP-level
+  tests; sequence immediately after.
+- **088** after 080 (envelopes) and 084 (migration file sequencing); its
+  migration-materialization half is deliberately deferred (see below).
+- **093 last** — ADO/capabilities retirement only after contracts settle;
+  its Step 0 is an external-compatibility STOP gate.
+- Live-Access operator gates are embedded in 085 (versioning round-trip),
+  087 (chaos re-run), 088 (TOP semantics), 091 (desktop ownership),
+  092 (four COM behaviors) — unit work never fakes them.
+- Pyright note for all executors: run it via `uv run pyright` (CI shape); a
+  bare `.venv/Scripts/pyright.exe` without the venv interpreter selected
+  misreports installed imports as missing (audit-verified environment
+  artifact, not a code defect).
+
+### Findings from this audit considered and NOT planned (recorded so nobody re-audits)
+
+- **ODBC introspection facade mismatches** — `application/database.py`
+  runs `dataclasses.asdict`/`.name` over ODBC's `list[str]`/`{}` results
+  (`get_tables`/`get_queries`/`get_object_metadata`/
+  `get_database_statistics`, ~lines 286/317/375/394/440) → TypeError →
+  Err on the `ACCESS_MCP_BACKEND=odbc` path; linked-table envelope reports
+  `rowcount=len(dict)` (=2). Real, confirmed; fold into a future
+  backend-parity plan with 080's characterization pattern. Not planned now:
+  17 plans already cover the default-backend (DAO/COM) surface first.
+- **Zero-table migration vacuous success + unbounded `_JOBS`**
+  (`migration.py:587`, `:97`) — still deferred; 084 deliberately excludes
+  the `all([])` flip (product decision, documented in-plan).
+- **PERF family** — N+1 `COUNT(*)` per table (`schema_inspector.py:93`),
+  linear `TableDefs` scans, `salvage_tables` double scan, empty-result
+  column metadata loss (`dao.py:356`), unbounded migration source
+  materialization (needs keyset-paging design; 088 covers query/export
+  paths only). All deferred as before.
+- **FK topology orientation contradiction** (`schema_inspector.py:291-310`
+  vs `odbc_schema_reader.py:107-114`) — unchanged; needs one live-DB check
+  before any flip.
+- **Versioning UTF-16 temp format** (LoadFromText expectation) and
+  **filename-collision sanitization** — deferred; 085 explicitly keeps
+  both and adds the round-trip safety net.
+- **`upload_schema` tables_failed conflation** (exists vs failed) —
+  deferred (noted in 083's maintenance notes).
+- **DEBT-03/04/05/07** — `convert_legacy_database` MCP policy placement,
+  34-site guard preambles, residual adapter duplication, cli.py
+  extraction families — unchanged deferred debt.
+- **ARCH-03 query_data write-gating placement** — policy decision, MED/HIGH
+  risk; not planned.
+- **DX/docs deferred**: AGENTS.md, pre-commit, pip-audit CI step, README
+  migrate-extra + MCP registration docs (DOC-02), version-literal
+  consolidation (`__version__`), openspec plan-024 archive sweep,
+  pydantic `schema_json` shadow warnings (`models/migration.py:44,60`).
+- **Direction findings (grounded, re-verified, unplanned)**: composable
+  profiles, schema-as-MCP-resources, `import_data`, `compare_schemas` —
+  design/spike candidates AFTER the correctness phases; see prior DIR
+  backlog notes for the rejected remainder.
+
+### Claims REFUTED during vetting (do not re-raise)
+
+- "Nested STA dispatch deadlock in `set_control_event_procedure`" — the
+  live path calls the VBE helper directly inside the queued work; no
+  nested `dispatcher.call`. (Residual dispatcher restart/timeout risk IS
+  real and owned by 079.)
+- "Versioning temp files never deleted" — `finally: unlink` exists
+  (`backends/versioning.py:79-80,103-104`); only the UTF-16 format
+  question remains (deferred).
+- "Trusted-location restore is an active registry vulnerability" — the
+  preserve opt-in is hardcoded dead; the cross-hive defect is latent and
+  now recorded (093 retires the dead plumbing).
+- Plan-047's "g13 3/3 CLEAN" durability evidence — superseded pending 087's
+  repaired harness re-run (row 047 annotated by 087 Step 5).
+
