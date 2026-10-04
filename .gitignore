@@ -4,6 +4,7 @@ dist/
 build/
 *.log
 .pytest_cache/
+.ruff_cache/
 *.pyc
 *.pyo
 *.egg-info/
