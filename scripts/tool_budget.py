@@ -8,6 +8,8 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+PROFILES = ("core", "automation", "maintenance", "versioning", "ddl", "analysis", "migration", "full")
+
 
 def count_tools(profile: str) -> tuple[int, list[str]]:
     """Build server for profile and count registered tools."""
@@ -29,19 +31,26 @@ def main() -> int:
     Returns:
         0 on success, non-zero on failure
     """
-    profiles = ["core", "automation", "maintenance", "versioning", "full"]
-
     results: dict[str, tuple[int, list[str]]] = {}
-    for profile in profiles:
+    build_failed = False
+    for profile in PROFILES:
         try:
             count, names = count_tools(profile)
             results[profile] = (count, names)
             print(f"{profile}: {count} tools")
         except Exception as exc:
-            print(f"ERROR building {profile}: {exc}", file=sys.stderr)
-            results[profile] = (0, [])
+            print(f"{profile}: ERROR building profile: {exc}", file=sys.stderr)
+            results[profile] = (0, [str(exc)])
+            build_failed = True
 
-    # Gate 1: core ≤ 30
+    if build_failed:
+        return 1
+
+    # Gate 1: every registered profile must expose tools; core also has a budget.
+    for profile, (count, names) in results.items():
+        if count == 0:
+            print(f"FAIL: {profile} profile has 0 tools", file=sys.stderr)
+            return 1
     core_count, core_names = results["core"]
     if core_count > 30:
         print(f"FAIL: core profile has {core_count} tools (max 30)", file=sys.stderr)
@@ -49,18 +58,13 @@ def main() -> int:
         return 1
     print(f"OK: core profile has {core_count} tools (<= 30)")
 
-    # Gate 2: disabled profiles contribute zero schemas
+    # Gate 2: specialized profiles must not introduce tools outside the full set.
     full_names = set(results["full"][1])
-    for profile in ["automation", "maintenance", "versioning"]:
-        count, names = results[profile]
-        profile_names = set(names)
-        if count == 0:
-            print(f"OK: {profile} contributes 0 tools (disabled)")
-        else:
-            # Check that they don't add new tools beyond core
-            extra = profile_names - full_names
-            if extra:
-                print(f"WARN: {profile} has tools not in full: {extra}", file=sys.stderr)
+    for profile in ("automation", "maintenance", "versioning"):
+        names = set(results[profile][1])
+        extra = names - full_names
+        if extra:
+            print(f"WARN: {profile} has tools not in full: {extra}", file=sys.stderr)
 
     # Gate 3: full = core + automation + maintenance + versioning
     # (This is a structural check, not a strict gate)
@@ -68,9 +72,6 @@ def main() -> int:
     automation_set = set(results["automation"][1])
     maintenance_set = set(results["maintenance"][1])
     versioning_set = set(results["versioning"][1])
-
-    # The sum of all should equal or exceed full
-    # (full might have more if there are cross-profile tools)
     combined = core_set | automation_set | maintenance_set | versioning_set
     full_set = full_names
 
