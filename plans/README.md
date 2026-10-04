@@ -651,7 +651,7 @@ credential detector.
 | Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
 |------|-------|-------|----------|--------|------|------|------------|--------|
 | 077  | [Password-scrub test seam + green baseline](077-password-scrub-test-seam.md) | 26 | P1 | S | LOW | Test-only repair (existing failure IS the RED) | — | DONE (beea53d) |
-| 078  | [Exit codes, mcp argv, tool-budget honesty, config hygiene](078-cli-gate-honesty.md) | 26 | P1 | S | LOW | Strict TDD (code) + direct edit (config) | 077 | TODO |
+| 078  | [Exit codes, mcp argv, tool-budget honesty, config hygiene](078-cli-gate-honesty.md) | 26 | P1 | S | LOW | Strict TDD (code) + direct edit (config) | 077 | DONE (4fe319d) |
 | 079  | [Session ownership + dispatcher teardown](079-session-ownership-teardown.md) | 27 | P1 | M | MED | Strict TDD | 077 | TODO |
 | 080  | [Facade↔backend contract truth](080-facade-adapter-contract-truth.md) | 27 | P1 | M | MED | Characterization → strict TDD | 077 | TODO |
 | 081  | [Action-SQL routing + db-property honesty](081-action-sql-db-property-honesty.md) | 27 | P1 | S | MED | Strict TDD | 080 | TODO |

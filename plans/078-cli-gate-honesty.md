@@ -197,3 +197,4 @@ check applying to `core` only (that is the documented budget).
 - When a new profile is added to `profiles.py`, `scripts/tool_budget.py`
   must be updated in the same commit — its profile list is now tested, so CI
   will catch drift.
+- `[project.urls]` is deferred until the repository has a remote.
