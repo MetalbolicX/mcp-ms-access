@@ -35,7 +35,7 @@ def format_result(result: Ok | Err, json_output: bool = False) -> int:
     """
     if json_output:
         print(json.dumps(result_to_dict(result)))
-        return 0
+        return 0 if isinstance(result, Ok) else 1
     if isinstance(result, Ok):
         if result.data is not None:
             print(result.data)

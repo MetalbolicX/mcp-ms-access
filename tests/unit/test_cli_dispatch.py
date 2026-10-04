@@ -15,10 +15,17 @@ from unittest.mock import patch
 import pytest
 
 from ms_access_mcp import cli
+from ms_access_mcp.application.database import Err, Ok
+from ms_access_mcp.cli_format import format_result
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def test_format_result_json_err_exit_code():
+    assert format_result(Err("boom"), json_output=True) == 1
+    assert format_result(Ok(data={"a": 1}), json_output=True) == 0
 
 
 class _FakeDb:
