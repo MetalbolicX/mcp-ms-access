@@ -5,6 +5,21 @@ from __future__ import annotations
 from ms_access_mcp.server import _ServerState, build_server, lifespan
 
 
+def test_mcp_subcommand_ignores_outer_argv(monkeypatch):
+    from types import SimpleNamespace
+
+    from ms_access_mcp import cli, server
+
+    class FakeServer:
+        def run(self):
+            pass
+
+    monkeypatch.setattr("sys.argv", ["ms-access-mcp", "mcp"])
+    monkeypatch.setattr(server, "build_server", lambda profile: FakeServer())
+
+    assert cli._run_mcp(SimpleNamespace(profile=None)) == 0
+
+
 class TestBuildServer:
     def test_build_server_returns_fastmcp(self):
         """build_server returns a FastMCP instance (not started)."""

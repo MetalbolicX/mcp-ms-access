@@ -1460,7 +1460,7 @@ def _build_links_parser(sub: argparse._SubParsersAction) -> None:
 def _run_mcp(opts: Any) -> Any:
     from .server import main as mcp_main  # lazy: keeps --version/--help import-light
 
-    return mcp_main(["--profile", opts.profile] if opts.profile else None)
+    return mcp_main(["--profile", opts.profile] if opts.profile else [])
 
 
 def _build_mcp_parser(sub: argparse._SubParsersAction) -> None:
