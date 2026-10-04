@@ -1022,7 +1022,7 @@ class TestCreateLinkedTableErrorScrub:
 
         monkeypatch.setattr(BackendSelector, "get_adapter", lambda **kw: MagicMock())
         monkeypatch.setattr(
-            "ms_access_mcp.credentials.resolve_profile",
+            "ms_access_mcp.application.database.resolve_profile",
             lambda name: "ODBC;PWD=hunter2;Server=srv" if name == "prod_dw" else None,
         )
 
@@ -1049,4 +1049,7 @@ class TestCreateLinkedTableErrorScrub:
 
         assert isinstance(result, Err), f"expected Err, got {result}"
         assert "hunter2" not in result.message
-        assert "***" in result.message or "[sanitized]" in result.message
+        # Scrub contract (plan 077): the PWD token is removed entirely rather
+        # than substituted with a marker; the non-secret remainder survives.
+        assert "PWD=" not in result.message.upper()
+        assert "ODBC;Server=srv" in result.message
