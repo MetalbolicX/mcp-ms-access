@@ -68,8 +68,9 @@ def set_database_property(
     if not policy.allow_write():
         return _err("Write operations are disabled (readonly mode)")
     try:
-        adapter.set_database_property(name, value)
-        return _ok(rowcount=1)
+        if adapter.set_database_property(name, value):
+            return _ok(rowcount=1)
+        return _err("Database property write is not supported by this backend")
     except Exception as e:
         return _err(str(e))
 

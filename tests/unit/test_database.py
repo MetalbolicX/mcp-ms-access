@@ -235,6 +235,71 @@ class TestConnectionManagement:
         assert "Not connected" in result.message
 
 
+class TestExecuteActionSql:
+    """Action SQL goes through the adapter action contract and write policy."""
+
+    def test_execute_action_sql_returns_adapter_rowcount(self):
+        db = DatabaseUseCases(readonly=False)
+        adapter = FakeAdapter()
+        adapter.execute_raw_sql = lambda sql: 7
+        db._connections["default"] = adapter
+
+        result = db.execute_action_sql("DELETE FROM Users", confirm=True)
+
+        assert isinstance(result, Ok)
+        assert result.rowcount == 7
+
+    @pytest.mark.parametrize(
+        "adapter_setup",
+        [
+            lambda adapter: None,
+            lambda adapter: setattr(
+                adapter,
+                "execute_raw_sql",
+                lambda sql: (_ for _ in ()).throw(NotImplementedError("not supported")),
+            ),
+        ],
+        ids=["missing-method", "not-supported"],
+    )
+    def test_execute_action_sql_reports_unsupported_adapter(self, adapter_setup):
+        db = DatabaseUseCases(readonly=False)
+        adapter = FakeAdapter()
+        adapter_setup(adapter)
+        db._connections["default"] = adapter
+
+        result = db.execute_action_sql("DELETE FROM Users", confirm=True)
+
+        assert isinstance(result, Err)
+        assert "Backend does not support raw action SQL" in result.message
+
+
+class TestDatabasePropertyWriteHonesty:
+    """Database property writes report the adapter's success result."""
+
+    @pytest.mark.parametrize("adapter_result", [False, None, 0, ""])
+    def test_set_database_property_reports_falsy_adapter_result(self, adapter_result):
+        db = DatabaseUseCases(readonly=False)
+        adapter = FakeAdapter()
+        adapter.set_database_property = lambda name, value: adapter_result
+        db._connections["default"] = adapter
+
+        result = db.set_database_property("Version", "17.0", confirm=True)
+
+        assert isinstance(result, Err)
+        assert result.message == "Database property write is not supported by this backend"
+
+    def test_set_database_property_reports_success_when_adapter_succeeds(self):
+        db = DatabaseUseCases(readonly=False)
+        adapter = FakeAdapter()
+        adapter.set_database_property = lambda name, value: True
+        db._connections["default"] = adapter
+
+        result = db.set_database_property("Version", "17.0", confirm=True)
+
+        assert isinstance(result, Ok)
+        assert result.rowcount == 1
+
+
 class TestWriteProtection:
     """Test readonly policy enforcement."""
 

@@ -571,6 +571,31 @@ class DatabaseUseCases:
         except Exception as e:
             return _err(str(e))
 
+    def execute_action_sql(
+        self,
+        sql: str,
+        connection_name: str = "default",
+        confirm: bool = False,
+    ) -> Result:
+        """Execute raw SQL through the adapter's action-SQL contract."""
+        if ack := self._policy.require_acknowledgment("execute_action_sql", confirm):
+            return _err(ack)
+        if not self._policy.allow_write():
+            return _err("Write operations are disabled (readonly mode)")
+        adapter = self._get_adapter(connection_name)
+        if adapter is None:
+            return _err("Not connected")
+        try:
+            method = getattr(adapter, "execute_raw_sql", None)
+            if method is None:
+                return _err("Backend does not support raw action SQL: execute_raw_sql is unavailable")
+            rowcount = method(sql)
+            return _ok(rowcount=rowcount)
+        except (NotImplementedError, AttributeError) as e:
+            return _err(f"Backend does not support raw action SQL: {e}")
+        except Exception as e:
+            return _err(str(e))
+
     # -------------------------------------------------------------------------
     # Data Modification
     # -------------------------------------------------------------------------

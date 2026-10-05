@@ -120,6 +120,41 @@ class TestExecuteRawSqlGate:
         content = json.loads(_text(result))
         assert "write policy" in content["error"].lower()
 
+    def test_execute_raw_sql_routes_through_action_facade(self, monkeypatch):
+        """execute_raw_sql uses action SQL, not the SELECT-oriented query method."""
+        from ms_access_mcp.errors import Ok
+        from ms_access_mcp.mcp_tools import core
+
+        calls = []
+
+        class FakeUseCase:
+            readonly = False
+
+            def __init__(self, **kwargs):
+                pass
+
+            def open_database(self, path):
+                return Ok()
+
+            def execute_action_sql(self, sql, confirm=False):
+                calls.append(("action", sql, confirm))
+                return Ok(rowcount=3)
+
+            def query_data(self, sql):
+                calls.append(("query", sql))
+                return Ok(rowcount=0)
+
+            def close_database(self):
+                pass
+
+        monkeypatch.setattr(core, "DatabaseUseCases", FakeUseCase)
+        monkeypatch.setattr(core, "allowed_dirs_from_env", lambda: [])
+
+        result = core.execute_raw_sql("db.accdb", "DELETE FROM T", confirm=True)
+
+        assert result.isError is False
+        assert calls == [("action", "DELETE FROM T", True)]
+
 
 def test_new_db_session_is_retained_by_registry_until_teardown(monkeypatch):
     import gc

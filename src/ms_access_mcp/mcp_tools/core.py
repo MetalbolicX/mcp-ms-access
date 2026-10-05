@@ -284,13 +284,7 @@ def execute_raw_sql(path: str, sql: str, confirm: bool = False) -> CallToolResul
     db = _new_db(readonly=False)
     if (err := _open_or_err(db, path)) is not None:
         return err
-    # Ported write-policy pre-check (dead factory logic, preserved verbatim)
-    if db.readonly and not confirm:
-        return to_mcp_result({
-            "success": False,
-            "error": "write policy blocks this; pass confirm=True and enable writes",
-        })
-    result = db.query_data(sql)
+    result = db.execute_action_sql(sql, confirm=confirm)
     return to_mcp_result(_result_to_dict(result))
 
 
