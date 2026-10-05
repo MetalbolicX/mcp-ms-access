@@ -814,3 +814,145 @@ class TestOdBcAdapterVersioningStub:
         adapter = OdbcAdapter("")
         with pytest.raises(NotImplementedError, match="COM automation"):
             adapter.import_module_from_text("x", "y")
+
+
+class TestAdapterExportAllListingWiring:
+    """Plan-085 operator-gate defect: production export_all must pass listers.
+
+    The live gate found export-all returned file_count=0 with the module
+    present because the adapter called the backend without any
+    list_* callables, and every backend export branch is gated on
+    ``if callable(list_*)`` — a silent no-op success in production.
+    """
+
+    def test_export_all_passes_all_listing_callables(self, monkeypatch, tmp_path):
+        from ms_access_mcp.backends.access import AccessAdapter
+        from ms_access_mcp.models import (
+            ExportAllResult,
+            FormInfo,
+            MacroInfo,
+            ModuleInfo,
+            ReportInfo,
+        )
+
+        adapter = AccessAdapter(str(tmp_path / "db.accdb"))
+        recorded: dict = {}
+
+        class RecordingVersioning:
+            def export_all_versioning(self, out_dir, **kwargs):
+                recorded.update(kwargs)
+                return ExportAllResult(
+                    success=True, exported={}, output_dir=str(out_dir), file_count=0
+                )
+
+        monkeypatch.setattr(adapter, "_versioning", RecordingVersioning())
+        monkeypatch.setattr(adapter, "get_forms", lambda: [FormInfo(name="Form1")])
+        monkeypatch.setattr(adapter, "get_reports", lambda: [ReportInfo(name="Report2")])
+        monkeypatch.setattr(adapter, "get_macros", lambda: [MacroInfo(name="Mac3")])
+        monkeypatch.setattr(adapter, "get_modules", lambda: [ModuleInfo(name="Mod4")])
+        monkeypatch.setattr(adapter, "_list_query_names", lambda: ["Qry5"])
+
+        result = adapter.export_all_versioning(str(tmp_path / "out"))
+
+        assert result.success
+        for key in (
+            "list_forms",
+            "list_reports",
+            "list_macros",
+            "list_modules",
+            "list_queries",
+        ):
+            assert callable(recorded.get(key)), f"{key} not passed to backend"
+        assert recorded["list_forms"]() == ["Form1"]
+        assert recorded["list_reports"]() == ["Report2"]
+        assert recorded["list_macros"]() == ["Mac3"]
+        assert recorded["list_modules"]() == ["Mod4"]
+        assert recorded["list_queries"]() == ["Qry5"]
+
+    def test_list_query_names_empty_when_disconnected(self):
+        from ms_access_mcp.backends.access import AccessAdapter
+
+        adapter = AccessAdapter("db.accdb")
+        assert adapter._list_query_names() == []
+
+    def test_list_query_names_filters_hidden_and_system_queries(self, monkeypatch):
+        from ms_access_mcp.backends.access import AccessAdapter
+
+        adapter = AccessAdapter("db.accdb")
+
+        class FakeQDef:
+            def __init__(self, name: str) -> None:
+                self.Name = name
+
+        class FakeQueryDefs:
+            def __init__(self, names: list[str]) -> None:
+                self._defs = [FakeQDef(n) for n in names]
+
+            def __iter__(self):
+                return iter(self._defs)
+
+        class FakeDB:
+            QueryDefs = FakeQueryDefs(["Qry5", "~wsTemp", "MSysObjects"])
+
+        monkeypatch.setattr(adapter._dispatcher, "_started", True)
+        monkeypatch.setattr(adapter._dispatcher, "_current_db", FakeDB(), raising=False)
+        monkeypatch.setattr(adapter._dispatcher, "call", lambda fn: fn())
+
+        assert adapter._list_query_names() == ["Qry5"]
+
+
+class TestModuleImportEncodingContract:
+    """Plan-085 operator gate: module LoadFromText needs byte-exact ANSI, no leak.
+
+    Live ground truth (2026-10-05): LoadFromText for acModule reads the temp
+    file as system-ANSI without a BOM; UTF-16 content truncates to the single
+    character "A", and text-mode writes inject ``\r\r\n`` drift. The temp
+    file must be removed after the call.
+    """
+
+    def test_new_module_branch_writes_ansi_bytes_and_unlinks(self):
+        import locale
+
+        dispatcher = FakeDispatcher(started=True)
+        backend = VersioningBackend(dispatcher)
+        captured: dict = {}
+
+        def fake_load(kind, name, path):
+            captured["kind"] = kind
+            captured["name"] = name
+            captured["path"] = path
+            captured["bytes"] = Path(path).read_bytes()
+
+        dispatcher.access_app.VBE = make_fake_vbe([])
+        dispatcher.access_app.LoadFromText = fake_load
+
+        code = "Sub New()\r\nEnd Sub"
+        ok = backend.import_module_from_text("modTest", code)
+
+        assert ok is True
+        enc = locale.getpreferredencoding(False) or "cp1252"
+        expected = f'Attribute VB_Name = "modTest"\r\n{code}'.encode(enc, errors="replace")
+        assert captured["bytes"] == expected, (
+            "module LoadFromText temp must be byte-exact system-ANSI (no BOM, no CRLF drift)"
+        )
+        assert not Path(captured["path"]).exists(), "versioning module temp file leaked"
+
+    def test_vba_module_writer_is_byte_exact(self):
+        import locale
+
+        from ms_access_mcp.backends.access import vba
+
+        captured: dict = {}
+
+        class FakeApp:
+            def LoadFromText(self, kind, name, path):  # noqa: N802 - COM name
+                captured["path"] = path
+                captured["bytes"] = Path(path).read_bytes()
+
+        text = 'Attribute VB_Name = "GateMod"\r\nSub X()\r\nEnd Sub'
+        ok = vba.load_object_from_text(FakeApp(), 5, "GateMod", text)
+
+        assert ok is True
+        enc = locale.getpreferredencoding(False) or "cp1252"
+        assert captured["bytes"] == text.encode(enc, errors="replace")
+        assert not Path(captured["path"]).exists(), "vba module temp file leaked"

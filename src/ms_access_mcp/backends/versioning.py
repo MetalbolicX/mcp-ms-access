@@ -211,11 +211,17 @@ class VersioningBackend:
                         break
 
                 if target is None:
+                    # Lazy import: backends.access imports this module at
+                    # package init, so a top-level import would cycle.
+                    from .access.vba import load_object_from_text
+
                     text_data = f"Attribute VB_Name = \"{module_name}\"\r\n{code}"
-                    self._dispatcher.access_app.LoadFromText(
-                        self._AC_MODULE, module_name, self._make_temp_path(text_data)
+                    return load_object_from_text(
+                        self._dispatcher.access_app,
+                        self._AC_MODULE,
+                        module_name,
+                        text_data,
                     )
-                    return True
 
                 try:
                     cm = target.CodeModule
@@ -231,13 +237,6 @@ class VersioningBackend:
             return self._dispatcher.call(_do)
         except Exception:
             return False
-
-    def _make_temp_path(self, text_data: str) -> str:
-        fd, path = tempfile.mkstemp(suffix=".txt", prefix="mcp_mod_")
-        os.close(fd)
-        with Path(path).open("w", encoding="utf-16-le") as f:
-            f.write(text_data)
-        return path
 
     # ------------------------------------------------------------------ #
     # Safe filename

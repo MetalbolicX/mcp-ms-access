@@ -79,9 +79,12 @@ def load_object_from_text(
         fd, temp_path = tempfile.mkstemp(suffix=".txt", prefix="mcp_imp_")
         os.close(fd)
         if object_type == 5:  # acModule
+            # Byte-exact system-ANSI write: Access reads module import files as
+            # ANSI without BOM; text mode injects \r\r\n drift (plan-085 live
+            # ground truth 2026-10-05: UTF-16 truncates to "A").
             enc = locale.getpreferredencoding(False) or "cp1252"
-            with Path(temp_path).open("w", encoding=enc, errors="replace") as f:
-                f.write(text_data)
+            with Path(temp_path).open("wb") as f:
+                f.write(text_data.encode(enc, errors="replace"))
         else:
             with Path(temp_path).open("wb") as f:
                 f.write(b"\xff\xfe")

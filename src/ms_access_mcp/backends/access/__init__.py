@@ -767,8 +767,40 @@ class AccessAdapter:
         return self._versioning.import_module_from_text(module_name, code)
 
     def export_all_versioning(self, out_dir):
-        """Export all versioned objects through the shared backend."""
-        return self._versioning.export_all_versioning(out_dir)
+        """Export all versioned objects through the shared backend.
+
+        The backend exports only kinds whose listing callable is supplied,
+        so every lister must be passed here — wiring them was missing
+        until the plan-085 operator gate caught file_count=0 live.
+        """
+        return self._versioning.export_all_versioning(
+            out_dir,
+            list_forms=lambda: [f.name for f in self.get_forms()],
+            list_reports=lambda: [r.name for r in self.get_reports()],
+            list_macros=lambda: [m.name for m in self.get_macros()],
+            list_modules=lambda: [m.name for m in self.get_modules()],
+            list_queries=self._list_query_names,
+        )
+
+    def _list_query_names(self) -> list[str]:
+        """List saved query names for versioning export (hiding system/temp)."""
+        if not self._dispatcher._started:
+            return []
+
+        def _do() -> list[str]:
+            names: list[str] = []
+            for qdef in self._dispatcher.current_db.QueryDefs:
+                name = qdef.Name
+                if name.startswith("~") or name.startswith("MSys"):
+                    continue
+                names.append(name)
+            return names
+
+        try:
+            return self._dispatcher.call(_do)
+        except Exception as exc:
+            logger.debug("_list_query_names failed: %s", exc)
+            return []
 
     def import_all_versioning(self, input_dir):
         """Import all versioned objects through the shared backend."""
