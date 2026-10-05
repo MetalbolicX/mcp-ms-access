@@ -295,34 +295,42 @@ class TestTempDirWritable:
 # ---------------------------------------------------------------------------
 
 
-class TestSilentSwallows:
-    """# characterization: documents current swallow behavior.
+class TestAceProviderOpenFailures:
+    """ACE Open errors distinguish provider absence from other failures."""
 
-    doctor.py swallows exceptions at three boundaries: the inner
-    ``except Exception: pass`` around ``conn.Open`` in ``_check_ace_provider``
-    (:111), and the ``os.unlink`` / ``os.rmdir`` cleanup in
-    ``_check_deep_access`` (:232, :236). These tests pin exactly that: the
-    swallowed failure never changes the check outcome nor propagates.
-    """
-
-    def test_ace_open_failure_swallowed_check_still_passes(self, monkeypatch: pytest.MonkeyPatch):
-        # characterization: documents current swallow behavior — the inner
-        # `except Exception: pass` around conn.Open means an ACE Open failure
-        # is swallowed and the probe reports available (passed=True) anyway.
+    @pytest.mark.parametrize(
+        ("hresult", "expected_passed", "expected_message"),
+        [
+            (0x800A0E7A, False, "provider missing"),
+            (0x80004005, True, "Open failed"),
+        ],
+    )
+    def test_ace_open_failure_classification(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        hresult: int,
+        expected_passed: bool,
+        expected_message: str,
+    ) -> None:
         fake_client = _patch_com_imports(monkeypatch)
         monkeypatch.setattr(doctor.sys, "platform", "win32")
 
+        class FakeComError(Exception):
+            def __init__(self, error_code: int) -> None:
+                super().__init__(error_code, "Open failed")
+                self.hresult = error_code
+
         class FakeConnection:
             def Open(self, conn_str: str) -> None:
-                raise RuntimeError("ACE provider rejected connection")
+                raise FakeComError(hresult)
 
         fake_client.Dispatch = lambda progid: FakeConnection()
 
         result = doctor._check_ace_provider()
 
         assert result.name == "ace_provider"
-        assert result.passed is True  # swallow: Open failure does not fail the check
-        assert result.message == "ACE OLE DB provider available"
+        assert result.passed is expected_passed
+        assert expected_message.lower() in result.message.lower()
 
     def test_deep_access_happy_path_cleanup_swallow_never_created_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path):
         # characterization: documents current swallow behavior — the fake app

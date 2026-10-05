@@ -111,8 +111,24 @@ def _check_ace_provider() -> Check:
             conn = win32com.client.Dispatch("ADODB.Connection")
             try:
                 conn.Open("Provider=Microsoft.ACE.OLEDB.12.0;Data Source=NUL;")
-            except Exception:
-                pass
+            except Exception as e:
+                error = strip_password(str(e))
+                hresult = getattr(e, "hresult", None)
+                if hresult is None and e.args and isinstance(e.args[0], int):
+                    hresult = e.args[0]
+                if isinstance(hresult, int) and hresult & 0xFFFFFFFF == 0x800A0E7A:
+                    return Check(
+                        name="ace_provider",
+                        passed=False,
+                        message=f"ACE OLE DB provider missing: {error}",
+                        details={"error": error, "hresult": hresult},
+                    )
+                return Check(
+                    name="ace_provider",
+                    passed=True,
+                    message=f"ACE OLE DB provider available (Open failed: {error})",
+                    details={"provider": "Microsoft.ACE.OLEDB.12.0", "open_error": error},
+                )
             return Check(
                 name="ace_provider",
                 passed=True,
@@ -335,7 +351,6 @@ def _format_human(checks: list[Check]) -> str:
 
     ace_ok = any(c.name == "ace_provider" and c.passed for c in checks)
     odbc_ok = any(c.name == "odbc_driver" and c.passed for c in checks)
-    any(c.name == "dao_engine" and c.passed for c in checks)
 
     # accdb: OK when ACE OLEDB or Access ODBC driver found
     accdb_status = "OK" if (ace_ok or odbc_ok) else "MISSING"
@@ -379,7 +394,6 @@ def _format_json(checks: list[Check]) -> str:
     """Format checks as machine-readable JSON."""
     ace_ok = any(c.name == "ace_provider" and c.passed for c in checks)
     odbc_ok = any(c.name == "odbc_driver" and c.passed for c in checks)
-    any(c.name == "dao_engine" and c.passed for c in checks)
     from .backends.jet3_bridge import bridge_available
 
     return json.dumps(
