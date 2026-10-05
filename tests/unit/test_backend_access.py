@@ -20,6 +20,7 @@ class FakeDispatcher:
 
     def __init__(self):
         self._started = False
+        self.shutdown_calls = 0
         self._access_app: Any = None
         self._access_pid: int | None = None
         self._current_db: Any = None
@@ -59,6 +60,7 @@ class FakeDispatcher:
         return fn(*args, **kwargs)
 
     def shutdown(self):
+        self.shutdown_calls += 1
         self._started = False
 
     def capture_access_pid(self):
@@ -251,6 +253,7 @@ class TestAccessAdapterConnectFailure:
 
         assert app.quit_calls == 1
         assert adapter.connected is False
+        assert adapter._dispatcher.shutdown_calls == 1
 
 
 # -------------------------------------------------------------------------- #

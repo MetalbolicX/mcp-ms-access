@@ -350,6 +350,20 @@ class TestLifecycle:
         assert isinstance(exc_info.value.cause, FakeComError)
         assert adapter.is_connected() is False
         assert dispatcher.unhealthy_marked is True
+        assert dispatcher.shutdown_calls == 0
+
+    def test_failed_connect_shuts_down_owned_dispatcher(self, monkeypatch: pytest.MonkeyPatch):
+        from ms_access_mcp.backends import dao
+
+        owned = FakeDispatcher()
+        owned.fail_open = FakeComError("engine unavailable")
+        monkeypatch.setattr(dao, "ComDispatcher", lambda: owned)
+        adapter = DaoAdapter("C:\\db\\owned.accdb")
+
+        with pytest.raises(DaoOperationError):
+            adapter.connect()
+
+        assert owned.shutdown_calls == 1
 
     def test_disconnect_closes_database(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         adapter.connect()

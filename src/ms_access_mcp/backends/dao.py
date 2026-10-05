@@ -145,6 +145,8 @@ class DaoAdapter:
         except Exception as e:
             self._dispatcher.mark_unhealthy()
             self._connected = False
+            if self._owns_dispatcher:
+                self._dispatcher.shutdown()
             msg = f"DAO connect failed for {target_path}: {e}"
             raise DaoOperationError(
                 msg,

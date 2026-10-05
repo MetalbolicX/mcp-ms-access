@@ -47,6 +47,49 @@ class TestComDispatcherStaThreadQuit:
 
 
 class TestComDispatcherShutdownLivenessKill:
+    def test_shutdown_warns_when_thread_remains_alive(self, caplog):
+        from ms_access_mcp.backends.dispatcher import ComDispatcher
+
+        class StuckThread:
+            def join(self, timeout=None):
+                pass
+
+            def is_alive(self):
+                return True
+
+        dispatcher = ComDispatcher()
+        dispatcher._thread = StuckThread()  # type: ignore[assignment]
+        with caplog.at_level("WARNING", logger="ms_access_mcp.backends.dispatcher"):
+            dispatcher.shutdown()
+
+        assert any("dispatcher thread is still alive" in record.message for record in caplog.records)
+
+    def test_shutdown_warns_before_pid_kill_and_uses_pid_only(self, monkeypatch, caplog):
+        import subprocess
+
+        from ms_access_mcp.backends import dispatcher as dispatcher_module
+        from ms_access_mcp.backends.dispatcher import ComDispatcher
+
+        dispatcher = ComDispatcher()
+        dispatcher._access_pid = 4321
+        monkeypatch.setattr(dispatcher_module.sys, "platform", "win32")
+        commands = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            if command[0] == "tasklist":
+                return subprocess.CompletedProcess(command, 0, stdout="PID 4321", stderr="")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(dispatcher_module.subprocess, "run", run)
+        monkeypatch.setattr(dispatcher_module.time, "sleep", lambda _: None)
+        with caplog.at_level("WARNING", logger="ms_access_mcp.backends.dispatcher"):
+            dispatcher.shutdown()
+
+        assert any("still alive" in record.message for record in caplog.records)
+        assert ["taskkill", "/F", "/PID", "4321"] in commands
+        assert all("/IM" not in command for command in commands)
+
     """Post-shutdown PID liveness kill — PID-scoped only, never /IM."""
 
     def test_shutdown_kills_by_pid_only_never_im(self):

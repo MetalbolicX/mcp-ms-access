@@ -270,6 +270,8 @@ class ComDispatcher:
         self._call_queue.put((lambda: None, (), {}, concurrent.futures.Future()))
         if self._thread is not None:
             self._thread.join(timeout=15.0)
+            if self._thread.is_alive():
+                logger.warning("ComDispatcher shutdown timed out; dispatcher thread is still alive")
 
         # Plan 030: post-shutdown PID liveness kill — caller thread, no COM
         pid = self._access_pid
@@ -294,6 +296,7 @@ class ComDispatcher:
                 time.sleep(0.25)
             if not process_gone:
                 # Still alive after 5s poll — kill by PID only
+                logger.warning("Access process PID %s is still alive after shutdown; killing by PID", pid)
                 try:
                     subprocess.run(
                         ["taskkill", "/F", "/PID", str(pid)],

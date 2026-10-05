@@ -108,7 +108,11 @@ class AccessAdapter:
             self._dispatcher._db_path = target
             ComDispatcher._dismiss_access_dialogs()
 
-        self._dispatcher.call(_do)
+        try:
+            self._dispatcher.call(_do)
+        except Exception:
+            self._dispatcher.shutdown()
+            raise
         self._connected = True
 
     def disconnect(self) -> None:
