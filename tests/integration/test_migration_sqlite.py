@@ -305,6 +305,7 @@ class TestSqliteRenderTableDdlIntegration:
         )
 
         assert result.data["tables_created"] == ["Customers", "Orders"]
+        assert result.data["tables_existing"] == []
         assert result.data["tables_failed"] == []
 
         with sqlite3.connect(temp_sqlite_db) as conn:

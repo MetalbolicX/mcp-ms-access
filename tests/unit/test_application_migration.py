@@ -259,6 +259,24 @@ class TestMigrationUseCasesUnit:
         assert isinstance(result, Err)
         assert "verification_mode" in result.message
 
+    def test_transfer_data_rejects_empty_schema_without_registering_job(self, tmp_path):
+        """An empty transfer schema fails before registering a job."""
+        from ms_access_mcp.application import migration
+
+        migration._JOBS.clear()
+        use_cases = MigrationUseCases()
+        result = use_cases.transfer_data(
+            "sqlite",
+            str(tmp_path / "unused-connection"),
+            "test.accdb",
+            schema_json=ExtractedSchema(source="test.accdb", tables=[]).model_dump(),
+            confirm=True,
+        )
+
+        assert isinstance(result, Err)
+        assert "no tables" in result.message
+        assert migration._JOBS == {}
+
     def test_list_jobs_returns_all_registered(self):
         """list_jobs returns all registered jobs."""
         # Clear any pre-existing jobs
@@ -349,8 +367,31 @@ class TestUploadSchemaFullDdl:
         expected = render_schema_ddl("postgres", [table])
         assert len(expected) == 3
         assert connector.statements == expected
-        assert result.data == {"tables_created": ["Orders"], "tables_failed": []}
+        assert result.data == {
+            "tables_created": ["Orders"],
+            "tables_existing": [],
+            "tables_failed": [],
+        }
         assert connector.disconnected is True
+
+    def test_upload_schema_reports_preexisting_table_separately(self, monkeypatch):
+        table = self._table("Customers")
+        schema = ExtractedSchema(source="source.accdb", tables=[table])
+        connector = self._connector()
+        connector.table_exists = lambda _table: True
+        use_cases = MigrationUseCases()
+        monkeypatch.setattr(use_cases, "_get_connector", lambda *_args: Ok(data=connector))
+
+        result = use_cases.upload_schema(
+            "postgres", "fake-connection", schema.model_dump(), confirm=True
+        )
+
+        assert isinstance(result, Ok)
+        assert result.data == {
+            "tables_created": [],
+            "tables_existing": ["Customers"],
+            "tables_failed": [],
+        }
 
     def test_upload_schema_isolates_statement_failure_and_continues(self, monkeypatch):
         from ms_access_mcp.backends.migration import render_schema_ddl
@@ -372,12 +413,12 @@ class TestUploadSchemaFullDdl:
             "postgres", "fake-connection", schema.model_dump(), confirm=True
         )
 
-        assert isinstance(result, Ok)
+        assert isinstance(result, Err)
+        assert "1 table(s) failed to create: Orders" in result.message
         first_table_ddl = render_schema_ddl("postgres", [failed_table])
         later_table_ddl = render_schema_ddl("postgres", [later_table])
         assert connector.failed_statements == [first_table_ddl[1]]
         assert connector.statements == [*first_table_ddl[:2], *later_table_ddl]
-        assert result.data == {"tables_created": ["Later"], "tables_failed": ["Orders"]}
 
 
 class TestODBCGranularGetters:

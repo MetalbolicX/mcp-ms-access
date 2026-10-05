@@ -415,7 +415,8 @@ class MigrationUseCases:
             confirm: Must be True to execute DDL.
 
         Returns:
-            Ok with {tables_created, tables_failed} on success, Err on failure.
+            Ok with {tables_created, tables_existing, tables_failed} when all
+            table creations succeed; Err when any creation fails.
 
         """
         if not confirm:
@@ -441,13 +442,14 @@ class MigrationUseCases:
         connector = connector_result.data
 
         tables_created: list[str] = []
+        tables_existing: list[str] = []
         tables_failed: list[str] = []
 
         try:
             for table in schema.tables:
                 try:
                     if connector.table_exists(table.name):
-                        tables_failed.append(table.name)
+                        tables_existing.append(table.name)
                         continue
                     for ddl in render_schema_ddl(target_type, [table]):
                         connector.create_table(ddl)
@@ -455,7 +457,18 @@ class MigrationUseCases:
                 except Exception:
                     tables_failed.append(table.name)
 
-            return _ok(data={"tables_created": tables_created, "tables_failed": tables_failed})
+            if tables_failed:
+                return _err(
+                    f"{len(tables_failed)} table(s) failed to create: {', '.join(tables_failed)}"
+                )
+
+            return _ok(
+                data={
+                    "tables_created": tables_created,
+                    "tables_existing": tables_existing,
+                    "tables_failed": tables_failed,
+                }
+            )
         finally:
             connector.disconnect()
 
@@ -526,6 +539,9 @@ class MigrationUseCases:
                 schema = ExtractedSchema.model_validate(schema_json)
             except Exception as e:
                 return _err(_sanitize_error(str(e), "schema"))
+
+        if not schema.tables:
+            return _err("no tables in schema to transfer")
 
         # Register job
         job_id = _generate_job_id()

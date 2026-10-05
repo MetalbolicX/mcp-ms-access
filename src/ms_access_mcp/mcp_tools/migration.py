@@ -86,7 +86,8 @@ def upload_schema(
         confirm: Must be True to execute DDL.
 
     Returns:
-        CallToolResult with {tables_created, tables_failed} on success.
+        CallToolResult with {tables_created, tables_existing, tables_failed} on success;
+        creation failures return an error naming the affected tables.
 
     Note:
         Credentials resolve server-side from named profiles. If the connection
