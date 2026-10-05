@@ -141,6 +141,56 @@ class TestComDispatcherLogging:
             mock_logger.warning.assert_called()
 
 
+class TestDispatcherRestartSafety:
+    def test_start_does_not_spawn_second_live_worker_after_join_timeout(self, monkeypatch):
+        from ms_access_mcp.backends import dispatcher as dispatcher_module
+        from ms_access_mcp.backends.dispatcher import ComDispatcher
+
+        workers = []
+
+        class SlowWorker:
+            def __init__(self, **kwargs):
+                self.started = False
+                workers.append(self)
+
+            def start(self):
+                self.started = True
+
+            def is_alive(self):
+                return self.started
+
+            def join(self, timeout=None):
+                pass
+
+        monkeypatch.setattr(dispatcher_module.threading, "Thread", SlowWorker)
+        dispatcher = ComDispatcher()
+        dispatcher.start()
+        dispatcher.shutdown()
+        dispatcher.start()
+
+        assert len(workers) == 1
+
+    def test_timed_out_call_does_not_prevent_later_shutdown(self, monkeypatch):
+        import threading
+
+        from ms_access_mcp.backends.dispatcher import ComDispatcher
+
+        dispatcher = ComDispatcher()
+        dispatcher.DISPATCH_TIMEOUT = 0.01
+        started = threading.Event()
+        release = threading.Event()
+        dispatcher.start()
+        try:
+            with pytest.raises(TimeoutError):
+                dispatcher.call(lambda: (started.set(), release.wait(1)))
+            assert started.wait(1)
+            release.set()
+        finally:
+            dispatcher.shutdown()
+        assert dispatcher._thread is not None
+        assert not dispatcher._thread.is_alive()
+
+
 class TestComDispatcherHealthTracking:
     """Test the unhealthy-state flag lifecycle."""
 

@@ -79,7 +79,7 @@ class ComDispatcher:
 
     def start(self) -> None:
         """Start the STA dispatcher thread (idempotent, reentrant after shutdown)."""
-        if self._started:
+        if self._started or (self._thread is not None and self._thread.is_alive()):
             return
         self._stopping = False
         self._thread = threading.Thread(target=self._run, name="ComDispatcher-STA", daemon=True)

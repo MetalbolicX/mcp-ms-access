@@ -246,6 +246,7 @@ class FakeDispatcher:
         self.started = 0
         self.open_calls: list[tuple[str, str, bool]] = []
         self.close_calls = 0
+        self.shutdown_calls = 0
         self.create_calls: list[tuple[str, str]] = []
         self.unhealthy_marked = False
         self.fail_open: Exception | None = None
@@ -276,6 +277,9 @@ class FakeDispatcher:
         if self.fail_close is not None:
             raise self.fail_close
         self._db = None
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
 
     def create_dao_database(self, db_path: str, *, format: str = "accdb") -> None:
         self.create_calls.append((db_path, format))
@@ -353,6 +357,28 @@ class TestLifecycle:
 
         assert adapter.is_connected() is False
         assert dispatcher.close_calls == 1
+        assert dispatcher.shutdown_calls == 0
+
+    def test_disconnect_shuts_down_owned_dispatcher_after_close(self, monkeypatch: pytest.MonkeyPatch):
+        events: list[str] = []
+
+        class OwnedDispatcher(FakeDispatcher):
+            def close_dao_database(self) -> None:
+                events.append("close_database")
+                super().close_dao_database()
+
+            def shutdown(self) -> None:
+                events.append("shutdown")
+                super().shutdown()
+
+        from ms_access_mcp.backends import dao
+
+        owned = OwnedDispatcher(connected=True)
+        monkeypatch.setattr(dao, "ComDispatcher", lambda: owned)
+        adapter = DaoAdapter("C:\\db\\owned.accdb")
+        adapter.disconnect()
+
+        assert events == ["close_database", "shutdown"]
 
     def test_disconnect_is_idempotent(self, adapter: DaoAdapter):
         adapter.disconnect()

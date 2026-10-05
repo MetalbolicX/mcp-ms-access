@@ -117,7 +117,8 @@ class DaoAdapter:
     ) -> None:
         """Initialize a DAO adapter with an optional shared dispatcher."""
         self._db_path: str = db_path
-        self._dispatcher: ComDispatcher = dispatcher or ComDispatcher()
+        self._owns_dispatcher = dispatcher is None
+        self._dispatcher: ComDispatcher = dispatcher if dispatcher is not None else ComDispatcher()
         self._connected: bool = False
         self._schema: Any = None  # initialized on first use
         self._db_ops: Any = None
@@ -160,6 +161,8 @@ class DaoAdapter:
             logger.warning("DaoAdapter.disconnect close_dao_database failed: %s", e)
         finally:
             self._connected = False
+            if self._owns_dispatcher:
+                self._dispatcher.shutdown()
 
     def create_database(self, path: str, *, format: str = "accdb") -> bool:
         """Create a blank Access database at path via the shared dispatcher.
