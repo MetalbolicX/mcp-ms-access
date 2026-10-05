@@ -71,7 +71,7 @@ class TestDaoSchemaExtraction:
     ]
 
     def test_get_tables_returns_user_tables(self, temp_db_copy: str) -> None:
-        """DAO get_tables() returns ≥1 user table with populated fields and record_count ≥ 0."""
+        """DAO get_tables() returns ≥1 user table with populated fields."""
         pytest.importorskip("win32com")
         from ms_access_mcp.backends.dao import DaoAdapter
 
@@ -88,9 +88,6 @@ class TestDaoSchemaExtraction:
             for tbl in tables:
                 assert hasattr(tbl, "name"), "TableInfo missing .name"
                 assert hasattr(tbl, "fields"), "TableInfo missing .fields"
-                assert hasattr(tbl, "record_count"), "TableInfo missing .record_count"
-                assert tbl.record_count >= 0, f"record_count for {tbl.name} must be ≥ 0"
-
                 # Fields must be a list of FieldInfo-like objects
                 assert isinstance(tbl.fields, list), f".fields on {tbl.name} must be a list"
                 for fld in tbl.fields:
@@ -228,8 +225,8 @@ class TestDaoSchemaExtraction:
                 foreign_table=t2,
                 foreign_columns=foreign_columns,
             )
-            assert create_result.get("success") is True, (
-                f"create_relationship failed: {create_result.get('error', 'unknown')}"
+            assert create_result.success is True, (
+                f"create_relationship failed: {create_result.error or 'unknown'}"
             )
 
             # Verify present
@@ -242,8 +239,8 @@ class TestDaoSchemaExtraction:
 
             # Delete
             delete_result = adapter.delete_relationship(t1, test_rel_name)
-            assert delete_result.get("success") is True, (
-                f"delete_relationship failed: {delete_result.get('error', 'unknown')}"
+            assert delete_result.success is True, (
+                f"delete_relationship failed: {delete_result.error or 'unknown'}"
             )
 
             # Verify gone
@@ -325,9 +322,8 @@ class TestDaoSchemaExtraction:
                 sql_path = Path(tmpdir) / "schema.sql"
 
                 result = adapter.generate_sql(str(sql_path))
-                assert isinstance(result, dict), "generate_sql must return a dict"
-                assert result.get("success") is True, (
-                    f"generate_sql failed: {result.get('error', 'unknown')}"
+                assert result.success is True, (
+                    f"generate_sql failed: {result.error or 'unknown'}"
                 )
                 assert sql_path.exists(), "generate_sql did not write the output file"
 

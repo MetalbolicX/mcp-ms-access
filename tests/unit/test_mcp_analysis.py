@@ -42,6 +42,19 @@ class TestConnectedPath:
         assert "Not connected" not in result.content[0].text
 
 
+def test_er_diagram_omits_fake_zero_record_count():
+    from ms_access_mcp.application.db_analysis import get_er_diagram
+    from ms_access_mcp.errors import Ok
+
+    result = get_er_diagram(
+        adapter=object(),
+        get_tables_fn=lambda: Ok(data=[{"name": "Users", "fields": [], "record_count": 0}]),
+        get_relationships_fn=lambda: Ok(data=[]),
+    )
+
+    assert "record_count" not in result.data["nodes"][0]["data"]
+
+
 class TestToolNames:
     """All 3 analysis verbatim oracle names are present in _TOOLS."""
 

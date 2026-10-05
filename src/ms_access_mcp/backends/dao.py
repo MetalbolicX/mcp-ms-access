@@ -1002,12 +1002,19 @@ class DaoAdapter:
                     if tname.startswith("MSys"):
                         continue
                     src_rs = None
-                    src_rs2 = None
                     dst_rs = None
                     try:
                         # Read source rows via recordset
                         src_rs = corrupt_db.OpenRecordset(f"SELECT * FROM [{tname}]", 2)
                         field_count = src_rs.Fields.Count
+                        field_definitions = [
+                            (
+                                src_rs.Fields(i).Name,
+                                src_rs.Fields(i).Type,
+                                src_rs.Fields(i).Size,
+                            )
+                            for i in range(field_count)
+                        ]
                         rows: list[list[Any]] = []
                         while not src_rs.EOF:
                             rows.append([src_rs.Fields(i).Value for i in range(field_count)])
@@ -1021,15 +1028,10 @@ class DaoAdapter:
                             })
                             continue
 
-                        # Build DDL from source FieldDefs
-                        src_rs2 = corrupt_db.OpenRecordset(f"SELECT * FROM [{tname}]", 2)
-                        field_count = src_rs2.Fields.Count
+                        # Build DDL from FieldDefs captured from the source read.
                         ddl_parts = []
-                        for i in range(field_count):
-                            fld = src_rs2.Fields(i)
-                            fname = f"[{fld.Name}]"
-                            ftype = fld.Type  # DAO field type number
-                            fsize = fld.Size
+                        for fname_value, ftype, fsize in field_definitions:
+                            fname = f"[{fname_value}]"
 
                             # Map DAO type to Access DDL
                             if ftype == 1:  # YESNO
@@ -1104,7 +1106,7 @@ class DaoAdapter:
                             "error": str(table_err),
                         })
                     finally:
-                        for recordset in (src_rs, src_rs2, dst_rs):
+                        for recordset in (src_rs, dst_rs):
                             if recordset is not None:
                                 try:
                                     recordset.Close()

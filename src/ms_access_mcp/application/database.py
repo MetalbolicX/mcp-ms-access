@@ -280,7 +280,10 @@ class DatabaseUseCases:
             return _err("Not connected")
         try:
             tables = adapter.get_tables()
-            return _ok(data=[dataclasses.asdict(t) for t in tables], rowcount=len(tables))
+            table_data = [dataclasses.asdict(table) for table in tables]
+            for table in table_data:
+                table.pop("record_count", None)
+            return _ok(data=table_data, rowcount=len(tables))
         except Exception as e:
             return _err(str(e))
 
@@ -302,6 +305,29 @@ class DatabaseUseCases:
         except Exception as e:
             return _err(str(e))
 
+    def get_schemas_for(
+        self, table_names: list[str], connection_name: str = "default"
+    ) -> Result:
+        """Return schemas for multiple tables from one adapter table pass."""
+        adapter = self._get_adapter(connection_name)
+        if adapter is None:
+            return _err("Not connected")
+        try:
+            tables = adapter.get_tables()
+            tables_by_name = {table.name.casefold(): table for table in tables}
+            schemas: dict[str, dict[str, Any]] = {}
+            for table_name in table_names:
+                table = tables_by_name.get(table_name.casefold())
+                if table is None:
+                    schemas[table_name] = {"error": f"Table '{table_name}' not found"}
+                    continue
+                schema = dataclasses.asdict(table)
+                schema.pop("record_count", None)
+                schemas[table_name] = schema
+            return _ok(data=schemas)
+        except Exception as e:
+            return _err(str(e))
+
     def get_table_schema(self, table_name: str, connection_name: str = "default") -> Result:
         """Get schema for a table (composed from get_tables per oracle mcp/schema.py)."""
         adapter = self._get_adapter(connection_name)
@@ -311,7 +337,9 @@ class DatabaseUseCases:
             tables = adapter.get_tables()
             for table in tables:
                 if table.name == table_name:
-                    return _ok(data=dataclasses.asdict(table))
+                    schema = dataclasses.asdict(table)
+                    schema.pop("record_count", None)
+                    return _ok(data=schema)
             return _err(f"Table '{table_name}' not found")
         except Exception as e:
             return _err(str(e))

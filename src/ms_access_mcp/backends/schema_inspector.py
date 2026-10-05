@@ -62,7 +62,7 @@ class SchemaInspector:
         self._dispatcher = dispatcher
 
     def get_tables(self) -> list[TableInfo]:
-        """Return user tables with fields and record counts, or [] when disconnected."""
+        """Return user tables with fields, or [] when disconnected."""
         if not self._dispatcher.is_connected():
             return []
 
@@ -87,24 +87,13 @@ class SchemaInspector:
                             allow_zero_length=bool(fld.AllowZeroLength),
                         )
                     )
-                # Get record count via SELECT COUNT(*)
-                record_count = 0
-                try:
-                    rs = db.OpenRecordset(f"SELECT COUNT(*) FROM [{name}]")
-                    if not rs.EOF:
-                        record_count = rs.Fields[0].Value or 0
-                    rs.Close()
-                except Exception:
-                    pass
-                tables.append(
-                    TableInfo(name=name, fields=fields, record_count=record_count)
-                )
+                tables.append(TableInfo(name=name, fields=fields))
             return tables
 
         return self._dispatcher.call(_do)
 
     def get_system_tables(self) -> list[TableInfo]:
-        """Return system tables with record_count=0 per oracle."""
+        """Return system tables."""
         if not self._dispatcher.is_connected():
             return []
 
@@ -125,7 +114,7 @@ class SchemaInspector:
                                 allow_zero_length=bool(fld.AllowZeroLength),
                             )
                         )
-                    tables.append(TableInfo(name=name, fields=fields, record_count=0))
+                    tables.append(TableInfo(name=name, fields=fields))
             return tables
 
         return self._dispatcher.call(_do)
@@ -169,24 +158,24 @@ class SchemaInspector:
         def _do() -> list[IndexInfo]:
             db = self._dispatcher.current_db
             indexes: list[IndexInfo] = []
-            for tdef in db.TableDefs:
-                if tdef.Name != table_name:
+            try:
+                tdef = db.TableDefs[table_name]
+            except Exception:
+                return indexes
+            for idx in tdef.Indexes:
+                # Skip column-less indexes
+                col_names = [f.Name for f in idx.Fields]
+                if not col_names:
                     continue
-                for idx in tdef.Indexes:
-                    # Skip column-less indexes
-                    col_names = [f.Name for f in idx.Fields]
-                    if not col_names:
-                        continue
-                    indexes.append(
-                        IndexInfo(
-                            name=idx.Name,
-                            columns=col_names,
-                            is_unique=bool(getattr(idx, "Unique", False)),
-                            is_primary=bool(getattr(idx, "Primary", False)),
-                            ignore_nulls=bool(getattr(idx, "IgnoreNulls", False)),
-                        )
+                indexes.append(
+                    IndexInfo(
+                        name=idx.Name,
+                        columns=col_names,
+                        is_unique=bool(getattr(idx, "Unique", False)),
+                        is_primary=bool(getattr(idx, "Primary", False)),
+                        ignore_nulls=bool(getattr(idx, "IgnoreNulls", False)),
                     )
-                break
+                )
             return indexes
 
         return self._dispatcher.call(_do)
@@ -229,22 +218,12 @@ class SchemaInspector:
 
         def _do() -> ObjectMetadata | None:
             db = self._dispatcher.current_db
-            # Check tables first
-            for tdef in db.TableDefs:
-                if tdef.Name == object_name:
-                    record_count = 0
-                    try:
-                        rs = db.OpenRecordset(f"SELECT COUNT(*) FROM [{object_name}]")
-                        if not rs.EOF:
-                            record_count = rs.Fields[0].Value or 0
-                        rs.Close()
-                    except Exception:
-                        pass
-                    return ObjectMetadata(
-                        name=object_name,
-                        type="table",
-                        properties={"record_count": str(record_count)},
-                    )
+            # Check tables first with direct collection lookup.
+            try:
+                db.TableDefs[object_name]
+                return ObjectMetadata(name=object_name, type="table", properties={})
+            except Exception:
+                pass
 
             # Check forms
             try:
@@ -425,7 +404,6 @@ class SchemaInspector:
                     TableInfo(
                         name=name,
                         fields=fields,
-                        record_count=0,
                         primary_key=primary_key,
                     )
                 )

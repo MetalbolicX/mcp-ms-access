@@ -130,7 +130,9 @@ def list_connections() -> CallToolResult:
 
 @_close_per_call_sessions
 def get_tables(path: str) -> CallToolResult:
-    """Get list of user tables (excludes system and linked tables).
+    """Get user tables (excludes system and linked tables), without row counts.
+
+    To get a row count, call ``query_data("SELECT COUNT(*) FROM [table]")``.
 
     Args:
         path: Absolute path to the .accdb or .mdb file.

@@ -865,6 +865,7 @@ class TestStep7cSerialization:
             assert isinstance(item, dict)
             assert "name" in item
             assert "fields" in item
+            assert "record_count" not in item
         # Verify json.dumps works (load-bearing contract)
         import json
 
@@ -902,6 +903,20 @@ class TestStep7cSerialization:
         json.dumps(result.data)
 
 
+class TestGetSchemasFor:
+    def test_fetches_multiple_schemas_with_one_adapter_pass(self) -> None:
+        db = DatabaseUseCases()
+        adapter = FakeAdapter()
+        adapter.get_tables = MagicMock(wraps=adapter.get_tables)
+        db._connections["default"] = adapter
+
+        result = db.get_schemas_for(["Users", "Orders"])
+
+        assert isinstance(result, Ok)
+        assert set(result.data) == {"Users", "Orders"}
+        adapter.get_tables.assert_called_once_with()
+
+
 class TestGetTableSchema:
     """Tests for get_table_schema composition from get_tables (Bug B fix)."""
 
@@ -913,6 +928,7 @@ class TestGetTableSchema:
         assert isinstance(result, Ok)
         assert isinstance(result.data, dict)
         assert result.data["name"] == "Users"
+        assert "record_count" not in result.data
         # Verify json.dumps works
         import json
 

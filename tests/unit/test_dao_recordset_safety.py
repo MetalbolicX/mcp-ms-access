@@ -129,7 +129,7 @@ def test_salvage_tables_closes_recordsets_when_field_read_fails() -> None:
 
         def OpenRecordset(self, _sql: str, _kind: int = 2) -> _SalvageRecordset:
             self.open_count += 1
-            fail_value = not self.is_fresh and self.open_count == 3
+            fail_value = not self.is_fresh and self.open_count == 2
             recordset = _SalvageRecordset(fail_value=fail_value)
             return recordset
 

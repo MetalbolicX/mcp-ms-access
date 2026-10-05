@@ -1081,3 +1081,105 @@ class TestDaoSession:
             pass
 
         assert session.db is None
+
+
+class TestSalvageSingleRead:
+    def test_opens_source_table_once(self, monkeypatch: pytest.MonkeyPatch):
+        class SourceField:
+            Name = "id"
+            Type = 4
+            Size = 0
+
+            def __init__(self, recordset: Any) -> None:
+                self._recordset = recordset
+
+            @property
+            def Value(self) -> int:
+                return self._recordset.row["id"]
+
+        class SourceFields:
+            Count = 1
+
+            def __init__(self, recordset: Any) -> None:
+                self._recordset = recordset
+
+            def __call__(self, index: int) -> SourceField:
+                assert index == 0
+                return SourceField(self._recordset)
+
+        class SourceRecordset:
+            def __init__(self) -> None:
+                self.row = {"id": 7}
+                self.EOF = False
+                self.Fields = SourceFields(self)
+
+            def MoveNext(self) -> None:
+                self.EOF = True
+
+            def Close(self) -> None:
+                pass
+
+        class SourceTable:
+            Name = "Users"
+
+        class SourceDb:
+            TableDefs = [SourceTable()]
+
+            def __init__(self) -> None:
+                self.select_calls = 0
+
+            def OpenRecordset(self, sql: str, _options: int = 0) -> SourceRecordset:
+                assert sql == "SELECT * FROM [Users]"
+                self.select_calls += 1
+                return SourceRecordset()
+
+            def Close(self) -> None:
+                pass
+
+        class DestField:
+            Value = None
+
+        class DestFields:
+            def __call__(self, index: int) -> DestField:
+                assert index == 0
+                return DestField()
+
+        class DestRecordset:
+            Fields = DestFields()
+
+            def AddNew(self) -> None:
+                pass
+
+            def Update(self) -> None:
+                pass
+
+            def Close(self) -> None:
+                pass
+
+        class FreshDb:
+            def Execute(self, _sql: str) -> None:
+                pass
+
+            def OpenRecordset(self, _name: str, _options: int) -> DestRecordset:
+                return DestRecordset()
+
+            def Close(self) -> None:
+                pass
+
+        source_db = SourceDb()
+
+        class Engine:
+            def OpenDatabase(self, path: str) -> Any:
+                return source_db if path == "corrupt.accdb" else FreshDb()
+
+        class Dispatcher:
+            def call(self, fn: Any, **kwargs: Any) -> Any:
+                return fn(**kwargs)
+
+        _patch_win32com(monkeypatch, _FakeEngine(FakeDb()))
+        adapter = DaoAdapter("", dispatcher=cast(Any, Dispatcher()))
+
+        result = adapter.salvage_tables("corrupt.accdb", "fresh.accdb", engine=Engine())
+
+        assert result == [{"table_name": "Users", "salvaged_rows": 1, "error": None}]
+        assert source_db.select_calls == 1

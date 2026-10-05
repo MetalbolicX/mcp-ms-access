@@ -294,21 +294,29 @@ class QueryAnalyzerService:
                 "error": "Not a SELECT statement",
             }
 
-        # Get schema for tables involved
+        # Fetch all involved schemas in one adapter pass.
         schema_info: dict[str, Any] = {}
-        for table_name in parse_result.tables_involved:
-            try:
-                schema_result = db_use_cases.get_table_schema(
-                    table_name, connection_name=connection_name
-                )
-                if isinstance(schema_result, Ok):
-                    schema_info[table_name] = schema_result.data
-                elif isinstance(schema_result, Err):
-                    schema_info[table_name] = {"error": schema_result.message}
-                else:
-                    schema_info[table_name] = {"error": "Unexpected schema result"}
-            except Exception as e:
-                schema_info[table_name] = {"error": str(e)}
+        try:
+            schema_result = db_use_cases.get_schemas_for(
+                parse_result.tables_involved, connection_name=connection_name
+            )
+            if isinstance(schema_result, Ok):
+                schema_info.update(schema_result.data)
+            elif isinstance(schema_result, Err):
+                schema_info = {
+                    table_name: {"error": schema_result.message}
+                    for table_name in parse_result.tables_involved
+                }
+            else:
+                schema_info = {
+                    table_name: {"error": "Unexpected schema result"}
+                    for table_name in parse_result.tables_involved
+                }
+        except Exception as e:
+            schema_info = {
+                table_name: {"error": str(e)}
+                for table_name in parse_result.tables_involved
+            }
 
         # Generate structural recommendations
         recommendations = generate_recommendations(parse_result, schema_info, None, sql)

@@ -83,9 +83,14 @@ class FakeTableDef:
 class FakeTableDefs:
     def __init__(self, tdefs: list[FakeTableDef]) -> None:
         self._tdefs = tdefs
+        self.iter_calls = 0
 
     def __iter__(self):
+        self.iter_calls += 1
         return iter(self._tdefs)
+
+    def __getitem__(self, name: str) -> FakeTableDef:
+        return next(table for table in self._tdefs if table.Name == name)
 
 
 class FakeRelField:
@@ -302,12 +307,16 @@ class TestGetTables:
         insp = SchemaInspector(FakeDispatcher(db=None, connected=False))
         assert insp.get_tables() == []
 
-    def test_record_count_populated(self) -> None:
+    def test_get_tables_does_not_query_row_counts(self) -> None:
         tdef = FakeTableDef("Customers", [FakeField("id", 4)])
         db = FakeDb(tdefs=[tdef])
+        db.OpenRecordset = MagicMock(side_effect=AssertionError("unexpected row-count query"))
         insp = SchemaInspector(FakeDispatcher(db=db))
+
         tables = insp.get_tables()
-        assert tables[0].record_count == 5  # from FakeRecordset
+
+        assert [table.name for table in tables] == ["Customers"]
+        db.OpenRecordset.assert_not_called()
 
 
 class TestGetSystemTables:
@@ -347,6 +356,7 @@ class TestGetIndexes:
         db = FakeDb(tdefs=[tdef])
         insp = SchemaInspector(FakeDispatcher(db=db))
         indexes = insp.get_indexes("Customers")
+        assert db.TableDefs.iter_calls == 0
         assert len(indexes) == 2
         pk = next(i for i in indexes if i.is_primary)
         assert pk.name == "PK_Customers"
@@ -360,6 +370,7 @@ class TestGetIndexes:
         db = FakeDb(tdefs=[tdef])
         insp = SchemaInspector(FakeDispatcher(db=db))
         indexes = insp.get_indexes("Customers")
+        assert db.TableDefs.iter_calls == 0
         assert indexes == []
 
 
@@ -472,13 +483,18 @@ class TestGetObjectMetadata:
     def test_returns_table_metadata(self) -> None:
         tdef = FakeTableDef("Customers", [FakeField("id", 4)])
         db = FakeDb(tdefs=[tdef])
+        db.OpenRecordset = MagicMock(side_effect=AssertionError("unexpected row-count query"))
         dispatcher = FakeDispatcher(db=db)
         insp = SchemaInspector(dispatcher)
         meta = insp.get_object_metadata("Customers")
         assert meta is not None
+        assert db.TableDefs.iter_calls == 0
         assert meta.name == "Customers"
         assert meta.type == "table"
-        assert "record_count" in meta.properties
+        assert meta.properties == {}
+        db.OpenRecordset = MagicMock(side_effect=AssertionError("unexpected row-count query"))
+        assert insp.get_object_metadata("Customers") == meta
+        db.OpenRecordset.assert_not_called()
 
 
 class TestGetDatabaseStatistics:

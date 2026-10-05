@@ -46,7 +46,6 @@ def get_er_diagram(
             "data": {
                 "label": table_dict.get("name", ""),
                 "columns": table_dict.get("fields", []),
-                "record_count": table_dict.get("record_count", 0),
             },
         })
 
