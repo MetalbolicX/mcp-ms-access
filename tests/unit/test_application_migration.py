@@ -769,6 +769,7 @@ class TestSourceAdapterLifecycle:
         import ms_access_mcp.application.migration as migration_module
 
         adapter = MagicMock()
+        adapter.iter_query = None
         adapter.execute_query.return_value = QueryResult(
             success=True,
             rows=[{"id": 7}],
@@ -846,6 +847,7 @@ class TestSourceAdapterLifecycle:
         import ms_access_mcp.application.migration as migration_module
 
         adapter = MagicMock()
+        adapter.iter_query = None
         adapter.execute_query.side_effect = [{"rows": []}, RuntimeError("query failed")]
         monkeypatch.setattr(
             migration_module.BackendSelector, "get_adapter", MagicMock(return_value=adapter)
@@ -1043,6 +1045,66 @@ class TestMigrationVerificationGating:
             "target_rows": 999,
             "mode": "count-only",
         }
+
+
+class TestStreamingTransfer:
+    def test_streaming_chunks_flush_across_boundaries_and_count_exactly(self):
+        connector = FakeConnector("connection")
+        inserted_sizes = []
+        original_insert = connector.insert_batch
+
+        def record_insert(table, columns, rows):
+            inserted_sizes.append(len(rows))
+            return original_insert(table, columns, rows)
+
+        connector.insert_batch = record_insert
+        connector.count_rows = lambda table: 1201
+        table = TableSchema(
+            name="Customers",
+            columns=[ColumnSchema(name="id", source_type="Long Integer")],
+            primary_key=[], foreign_keys=[], indexes=[],
+        )
+
+        class StreamingAdapter:
+            def __init__(self):
+                self.insertions_at_yield = []
+
+            def iter_query(self, query, chunk=1000):
+                yield [{"id": i} for i in range(600)]
+                yield [{"id": i} for i in range(600, 1200)]
+                self.insertions_at_yield.append(list(inserted_sizes))
+                yield [{"id": 1200}]
+
+        adapter = StreamingAdapter()
+        result = MigrationUseCases()._transfer_table(
+            connector, table, None, "full", adapter
+        )
+
+        assert adapter.insertions_at_yield == [[1000]]
+        assert inserted_sizes == [1000, 201]
+        assert result.source_rows == 1201
+        assert result.rows_transferred == 1201
+
+    def test_transfer_falls_back_to_execute_query_without_iterator(self):
+        connector = FakeConnector("connection")
+        connector.count_rows = lambda table: 2
+        table = TableSchema(
+            name="Customers",
+            columns=[ColumnSchema(name="id", source_type="Long Integer")],
+            primary_key=[], foreign_keys=[], indexes=[],
+        )
+
+        class LegacyAdapter:
+            def execute_query(self, query):
+                return {"rows": [{"id": 1}, {"id": 2}]}
+
+        result = MigrationUseCases()._transfer_table(
+            connector, table, None, "full", LegacyAdapter()
+        )
+
+        assert result.success is True
+        assert result.source_rows == 2
+        assert connector._data["Customers"] == [{"id": 1}, {"id": 2}]
 
 
 class TestCountRowsProtocol:

@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, TypeGuard
+from typing import Any, Literal, TypeGuard, cast
 
 from ..backends import BackendSelector
 from ..backends.migration import (
@@ -648,24 +649,42 @@ class MigrationUseCases:
             if order_by:
                 query += f" ORDER BY {', '.join(order_by)}"
 
-            query_result = adapter.execute_query(query)
-            if isinstance(query_result, QueryResult):
-                rows = query_result.rows
-            elif isinstance(query_result, dict):
-                rows = query_result.get("rows", [])
-            else:
-                rows = []
-
-            result.source_rows = len(rows)
-
-            # Insert in batches of 1000
             batch_size = 1000
-            for batch_start in range(0, len(rows), batch_size):
-                batch = rows[batch_start : batch_start + batch_size]
-                batch_rows = [tuple(row.get(c) for c in columns) for row in batch]
+            iter_query = cast(
+                "Callable[[str], Iterator[list[dict]]] | None",
+                getattr(adapter, "iter_query", None),
+            )
+            source_rows = 0
+            pending: list[dict] = []
+
+            def insert_rows(rows: list[dict]) -> None:
+                batch_rows = [tuple(row.get(c) for c in columns) for row in rows]
                 connector.insert_batch(table.name, columns, batch_rows)
 
-            result.rows_transferred = len(rows)
+            if iter_query is not None:
+                for chunk in iter_query(query):
+                    source_rows += len(chunk)
+                    pending.extend(chunk)
+                    while len(pending) >= batch_size:
+                        insert_rows(pending[:batch_size])
+                        del pending[:batch_size]
+                if pending:
+                    insert_rows(pending)
+            else:
+                query_result = adapter.execute_query(query)
+                if isinstance(query_result, QueryResult):
+                    rows = query_result.rows
+                elif isinstance(query_result, dict):
+                    rows = query_result.get("rows", [])
+                else:
+                    rows = []
+                source_rows = len(rows)
+                for batch_start in range(0, len(rows), batch_size):
+                    insert_rows(rows[batch_start : batch_start + batch_size])
+
+            # Preserve the previous source_rows=len(rows) semantics exactly.
+            result.source_rows = source_rows
+            result.rows_transferred = source_rows
             result.strategy_used = "batch"
 
             # Verification
