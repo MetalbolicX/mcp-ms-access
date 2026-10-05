@@ -780,7 +780,7 @@ has no cheap row count; row counts stay reachable via an explicit
 
 | Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
 |------|-------|-------|----------|--------|------|------|------------|--------|
-| 094  | [Migration transfer honesty (zero-table, tables_failed split)](094-migration-transfer-honesty.md) | 34 | P1 | S | MED | Strict TDD | 077–093 | TODO |
+| 094  | [Migration transfer honesty (zero-table, tables_failed split)](094-migration-transfer-honesty.md) | 34 | P1 | S | MED | Strict TDD | 077–093 | DONE (c521edc) |
 | 095  | [Stream migration transfers (bounded memory)](095-transfer-streaming.md) | 34 | P2 | M | MED | Strict TDD | 094 | TODO |
 | 096  | [Schema inspection performance (counts out, batch, direct lookup, salvage)](096-schema-perf.md) | 35 | P2 | M | MED | Contract change + strict TDD | 094–095 | TODO |
 | 097  | [FK orientation — one contract, proven live](097-fk-orientation.md) | 36 | P1 | M | MED | Matrix + live probe + fix | 096 | TODO |
