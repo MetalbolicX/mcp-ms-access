@@ -25,6 +25,14 @@ def _get_core_tools() -> dict[str, object]:
     return getattr(tool_manager, "_tools", {})
 
 
+def _get_profile_tools(profile: str) -> dict[str, object]:
+    server = build_server(profile)
+    tool_manager = getattr(server, "_tool_manager", None)
+    if tool_manager is None:
+        return {}
+    return getattr(tool_manager, "_tools", {})
+
+
 def _schema_properties(tool) -> dict:
     """Return the JSON Schema properties dict for a tool's parameters (FastMCP)."""
     return tool.parameters.get("properties", {})
@@ -117,6 +125,22 @@ def test_no_tool_takes_opaque_params_object():
         "The following tools take an opaque 'params' object "
         "(typed signatures required):\n" + "\n".join(failures)
     )
+
+
+def test_all_versioning_tools_declare_path_property():
+    tools = _get_profile_tools("versioning")
+    expected = {
+        "versioning_export_object",
+        "versioning_export_all",
+        "versioning_compare",
+        "versioning_export_schema_ddl",
+        "versioning_import_object",
+        "versioning_import_all",
+    }
+
+    assert expected.issubset(tools)
+    for name in expected:
+        assert "path" in _schema_properties(tools[name]), f"{name} has no path property"
 
 
 def test_every_core_tool_has_path_property():
