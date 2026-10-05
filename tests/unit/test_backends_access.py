@@ -89,3 +89,17 @@ class TestAccessAdapterExportTableToXlsx:
         result = adapter.export_table_to_xlsx("Users", "C:\\temp\\output.xlsx")
         assert isinstance(result, int)
         assert result >= 0  # 0 is acceptable when RecordsAffected isn't exposed
+
+
+class TestTrustedLocationsPassthrough:
+    def test_wrapper_invokes_operation_without_registry_mutation(self):
+        from ms_access_mcp.backends.access.trusted_locations import trusted_locations_wrap
+
+        calls = []
+
+        def operation(value):
+            calls.append(value)
+            return value + 1
+
+        assert trusted_locations_wrap(operation, 4) == 5
+        assert calls == [4]

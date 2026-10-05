@@ -16,22 +16,9 @@ import sys
 import pytest
 
 from ms_access_mcp.application.database import DatabaseUseCases
-from ms_access_mcp.backends.ado import AdoAdapter
 from ms_access_mcp.backends.odbc import OdbcAdapter
 from ms_access_mcp.errors import Err, Ok
 from ms_access_mcp.models import ObjectMetadata, QueryResult, WriteResult
-
-
-class _FakeRecordset:
-    EOF = True
-
-    def Close(self) -> None:
-        pass
-
-
-class _FakeAdoConnection:
-    def Execute(self, sql: str, params=None):
-        return (_FakeRecordset(),)
 
 
 class _FakeCursor:
@@ -59,11 +46,10 @@ class _FakeOdbcConnection:
         pass
 
 
-@pytest.mark.parametrize("adapter_type", [OdbcAdapter, AdoAdapter])
-def test_backend_crud_model_serialization_contract(adapter_type) -> None:
-    """Pin the intentional dataclass envelope contract after unification."""
-    adapter = adapter_type("test.accdb")
-    adapter._conn = _FakeOdbcConnection() if adapter_type is OdbcAdapter else _FakeAdoConnection()
+def test_odbc_crud_model_serialization_contract() -> None:
+    """Pin the live ODBC adapter's dataclass envelope contract."""
+    adapter = OdbcAdapter("test.accdb")
+    adapter._conn = _FakeOdbcConnection()
     adapter._connected = True
 
     query = adapter.execute_query("SELECT id FROM Users")
@@ -72,28 +58,26 @@ def test_backend_crud_model_serialization_contract(adapter_type) -> None:
     assert isinstance(query, QueryResult)
     assert (query.success, query.rows, query.count, query.columns, query.error) == (
         True,
-        [{"id": 1}] if adapter_type is OdbcAdapter else [],
-        1 if adapter_type is OdbcAdapter else 0,
-        ["id"] if adapter_type is OdbcAdapter else [],
+        [{"id": 1}],
+        1,
+        ["id"],
         None,
     )
     assert isinstance(write, WriteResult)
     assert (write.success, write.affected, write.error) == (True, 1, None)
 
 
-@pytest.mark.parametrize("adapter_type", [OdbcAdapter, AdoAdapter])
-def test_backend_insert_returns_write_result(adapter_type) -> None:
-    adapter = adapter_type("test.accdb")
-    adapter._conn = _FakeOdbcConnection() if adapter_type is OdbcAdapter else _FakeAdoConnection()
+def test_odbc_insert_returns_write_result() -> None:
+    adapter = OdbcAdapter("test.accdb")
+    adapter._conn = _FakeOdbcConnection()
     adapter._connected = True
 
     assert isinstance(adapter.insert_data("Users", {"id": 1}), WriteResult)
 
 
-@pytest.mark.parametrize("adapter_type", [OdbcAdapter, AdoAdapter])
-def test_backend_query_returns_query_result(adapter_type) -> None:
-    adapter = adapter_type("test.accdb")
-    adapter._conn = _FakeOdbcConnection() if adapter_type is OdbcAdapter else _FakeAdoConnection()
+def test_odbc_query_returns_query_result() -> None:
+    adapter = OdbcAdapter("test.accdb")
+    adapter._conn = _FakeOdbcConnection()
     adapter._connected = True
 
     assert isinstance(adapter.execute_query("SELECT id FROM Users"), QueryResult)

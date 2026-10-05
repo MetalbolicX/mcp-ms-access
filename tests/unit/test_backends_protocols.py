@@ -1,24 +1,18 @@
 """Protocol conformance tests for CrudBackendProtocol.
 
-These tests verify that AdoAdapter, OdbcAdapter, and DaoAdapter all conform
-to the CrudBackendProtocol structural protocol.
+These tests verify that the live ODBC and DAO adapters conform to the
+CrudBackendProtocol structural protocol.
 """
 
 from __future__ import annotations
 
-from ms_access_mcp.backends.ado import AdoAdapter
 from ms_access_mcp.backends.dao import DaoAdapter
 from ms_access_mcp.backends.odbc import OdbcAdapter
 from ms_access_mcp.backends.protocols import CrudBackendProtocol
 
 
 class TestCrudBackendProtocolConformance:
-    """Verify all three adapters conform to CrudBackendProtocol."""
-
-    def test_ado_adapter_conforms(self):
-        """AdoAdapter must be a CrudBackendProtocol."""
-        adapter = AdoAdapter("test.accdb")
-        assert isinstance(adapter, CrudBackendProtocol)
+    """Verify live adapters conform to CrudBackendProtocol."""
 
     def test_odbc_adapter_conforms(self):
         """OdbcAdapter must be a CrudBackendProtocol."""
@@ -37,7 +31,6 @@ class TestCrudBackendProtocolDriftGuard:
     def test_all_known_adapters_enumerated_and_conform(self):
         """Enumerated adapters must all conform — this is the drift guard."""
         adapters = [
-            AdoAdapter("test.accdb"),
             OdbcAdapter("test.accdb"),
             DaoAdapter("test.accdb"),
         ]

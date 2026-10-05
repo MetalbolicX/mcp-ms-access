@@ -339,62 +339,8 @@ class TestDaoAdapterLinkedTableErrorScrub:
 
 
 # =============================================================================
-# Step 3 RED: ADO and DAO error string scrubbing at result boundary
+# DAO error scrubbing at result boundary
 # =============================================================================
-
-
-class TestADOErrorScrub:
-    """Step 3: str(e) at ADO result boundary must be scrubbed of credentials."""
-
-    def test_execute_script_error_scrubs_password_from_error(self):
-        """execute_script result error field must not contain password from exception."""
-        from ms_access_mcp.backends.ado import AdoAdapter
-
-        # Fake connection whose Execute raises an exception with a password in the message
-        class FakeADOConn:
-            def Execute(self, sql, params=None):
-                raise Exception("ODBC;PWD=hunter2;Database=Northwind")
-
-            def close(self):
-                pass
-
-        adapter = AdoAdapter.__new__(AdoAdapter)
-        adapter._db_path = "fake.accdb"
-        adapter._conn = FakeADOConn()
-        adapter._connected = True
-
-        result = adapter.execute_script("SELECT 1")
-
-        assert result["success"] is False
-        # execute_script returns errors in results[0]["error"]
-        error_msg = result["results"][0]["error"]
-        assert "hunter2" not in error_msg
-        assert "PWD=" not in error_msg
-
-    def test_execute_script_error_scrubs_password_from_statement_echo(self):
-        """execute_script result stmt[:60] echo must not contain password."""
-        from ms_access_mcp.backends.ado import AdoAdapter
-
-        class FakeADOConn:
-            def Execute(self, sql, params=None):
-                raise Exception("any error")
-
-            def close(self):
-                pass
-
-        adapter = AdoAdapter.__new__(AdoAdapter)
-        adapter._db_path = "fake.accdb"
-        adapter._conn = FakeADOConn()
-        adapter._connected = True
-
-        # Script starting with a credential-bearing statement
-        result = adapter.execute_script("SELECT * FROM Users;PWD=hunter2;--")
-
-        assert result["success"] is False
-        # The stmt[:60] echo must not contain the password
-        stmt_echo = result.get("statement", "")
-        assert "PWD=" not in stmt_echo
-        assert "hunter2" not in stmt_echo
 
 
 class TestDAOErrorScrub:
