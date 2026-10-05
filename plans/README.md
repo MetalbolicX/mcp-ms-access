@@ -665,7 +665,7 @@ credential detector.
 | 089  | [Credential staging + scrub hardening](089-credential-scrub-hardening.md) | 31 | P1 | S | MED | Strict TDD | 077 | DONE (a40e8bc) — real-DACL operator check pending |
 | 090  | [SQL literals + identifier escaping](090-sql-literals-and-escaping.md) | 31 | P2 | S | MED | Strict TDD (goldens) | — | DONE (3e354da) |
 | 091  | [Dialog-killer PID scope + doctor ACE classification](091-dialog-killer-doctor-ace.md) | 32 | P2 | S | LOW | Strict TDD + pin refresh | — | DONE (12bb7ee) — live desktop-ownership + no-ACE machine checks PENDING |
-| 092  | [VBA/design-view write safety](092-vba-design-view-safety.md) | 32 | P2 | M | MED | Characterization refresh + strict TDD on fakes; operator gates | 091 (sequencing) | TODO |
+| 092  | [VBA/design-view write safety](092-vba-design-view-safety.md) | 32 | P2 | M | MED | Characterization refresh + strict TDD on fakes; operator gates | 091 (sequencing) | DONE (78027f6) — 4 live-Access gates PENDING (removal round-trip, injected rollback failure, first-time event procedure, RunCommand compile-error behavior) |
 | 093  | [Dead-surface retirement (capabilities, ADO, dead opt-in)](093-dead-surface-retirement.md) | 33 | P3 | M | MED | Direct edit + test retirement | 080, 081 | TODO |
 
 ### Dependency notes
