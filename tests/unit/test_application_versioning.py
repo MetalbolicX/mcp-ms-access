@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from ms_access_mcp.application.database import Err, Ok
+from ms_access_mcp.models import (
+    CompareResult,
+    ExportAllResult,
+    ImportAllResult,
+    ObjectTextRef,
+    SchemaDdlResult,
+)
 
 
 @dataclass
@@ -79,52 +85,53 @@ class FakeVersioningAdapter:
         self.calls.append(("import_module_from_text", (name, code), {}))
         return True
 
-    def export_all_versioning(self, out_dir: str) -> dict[str, Any]:
+    def export_all_versioning(self, out_dir: str) -> ExportAllResult:
         self.calls.append(("export_all_versioning", (out_dir,), {}))
-        return {
-            "success": True,
-            "exported": {
+        return ExportAllResult(
+            success=True,
+            exported={
                 "forms": ["Form1"],
                 "reports": ["Report1"],
                 "macros": ["Macro1"],
                 "queries": ["Query1"],
                 "modules": ["Module1"],
             },
-            "output_dir": out_dir,
-            "file_count": 5,
-        }
+            output_dir=out_dir,
+            file_count=5,
+        )
 
-    def import_all_versioning(self, input_dir: str) -> dict[str, Any]:
+    def import_all_versioning(self, input_dir: str) -> ImportAllResult:
         self.calls.append(("import_all_versioning", (input_dir,), {}))
-        return {
-            "success": True,
-            "imported": {
+        return ImportAllResult(
+            success=True,
+            imported={
                 "forms": ["Form1"],
                 "reports": ["Report1"],
                 "macros": ["Macro1"],
                 "queries": ["Query1"],
                 "modules": ["Module1"],
             },
-            "errors": None,
-        }
+            errors=None,
+        )
 
-    def compare_versioning(self, export_dir: str) -> dict[str, Any]:
+    def compare_versioning(self, export_dir: str) -> CompareResult:
         self.calls.append(("compare_versioning", (export_dir,), {}))
-        return {
-            "new": [],
-            "missing": [],
-            "changed": [{"type": "form", "name": "Form1"}],
-            "unchanged": [{"type": "report", "name": "Report1"}],
-        }
+        return CompareResult(
+            new=[],
+            missing=[],
+            changed=[ObjectTextRef(kind="form", name="Form1")],
+            unchanged=[ObjectTextRef(kind="report", name="Report1")],
+        )
 
-    def export_schema_ddl(self, out_dir: str) -> dict[str, Any]:
+    def export_schema_ddl(self, out_dir: str) -> SchemaDdlResult:
         self.calls.append(("export_schema_ddl", (out_dir,), {}))
-        return {
-            "ddl_tables": "CREATE TABLE Foo (ID Integer);",
-            "ddl_relationships": "ALTER TABLE Foo ADD CONSTRAINT;",
-            "tables_exported": 1,
-            "relationships_exported": 1,
-        }
+        return SchemaDdlResult(
+            success=True,
+            ddl_tables="CREATE TABLE Foo (ID Integer);",
+            ddl_relationships="ALTER TABLE Foo ADD CONSTRAINT;",
+            tables_exported=1,
+            relationships_exported=1,
+        )
 
     def list_forms(self):
         return self._forms

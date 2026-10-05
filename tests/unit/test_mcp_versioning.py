@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 from mcp.types import TextContent
 
+from ms_access_mcp.models import CompareResult, ExportAllResult, SchemaDdlResult
+
 
 def _payload(result):
     block = result.content[0]
@@ -31,13 +33,19 @@ def _connected_adapter(monkeypatch, tmp_path):
             return "form text"
 
         def export_all_versioning(self, out_dir):
-            return {"output_dir": out_dir, "file_count": 0, "exported": {}}
+            return ExportAllResult(success=True, exported={}, output_dir=out_dir, file_count=0)
 
         def compare_versioning(self, _export_dir):
-            return {"new": [], "missing": [], "changed": [], "unchanged": []}
+            return CompareResult(new=[], missing=[], changed=[], unchanged=[])
 
         def export_schema_ddl(self, _out_dir):
-            return {"ddl_tables": "", "ddl_relationships": "", "tables_exported": 0, "relationships_exported": 0}
+            return SchemaDdlResult(
+                success=True,
+                ddl_tables="",
+                ddl_relationships="",
+                tables_exported=0,
+                relationships_exported=0,
+            )
 
     adapter = FakeAdapter()
     monkeypatch.setattr(BackendSelector, "get_adapter", lambda **_kwargs: adapter)

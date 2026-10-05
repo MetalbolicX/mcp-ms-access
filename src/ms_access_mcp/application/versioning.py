@@ -128,11 +128,13 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
 
         try:
             result = self._adapter.export_all_versioning(out_dir)
+            if not result.success:
+                return _err(result.error or "export-all failed")
             return _ok(
                 data={
-                    "output_dir": result.get("output_dir", out_dir),
-                    "file_count": result.get("file_count", 0),
-                    "exported": result.get("exported", {}),
+                    "output_dir": result.output_dir,
+                    "file_count": result.file_count,
+                    "exported": result.exported,
                 }
             )
         except Exception as e:
@@ -179,10 +181,12 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
 
         try:
             result = self._adapter.import_all_versioning(input_dir)
+            if not result.success:
+                return _err(result.error or "import-all failed")
             return _ok(
                 data={
-                    "imported": result.get("imported", {}),
-                    "errors": result.get("errors"),
+                    "imported": result.imported,
+                    "errors": result.errors,
                     "input_dir": input_dir,
                 }
             )
@@ -201,10 +205,12 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             result = self._adapter.compare_versioning(export_dir)
             return _ok(
                 data={
-                    "new": result.get("new", []),
-                    "missing": result.get("missing", []),
-                    "changed": result.get("changed", []),
-                    "unchanged": result.get("unchanged", []),
+                    "new": [{"type": ref.kind, "name": ref.name} for ref in result.new],
+                    "missing": [{"type": ref.kind, "name": ref.name} for ref in result.missing],
+                    "changed": [{"type": ref.kind, "name": ref.name} for ref in result.changed],
+                    "unchanged": [
+                        {"type": ref.kind, "name": ref.name} for ref in result.unchanged
+                    ],
                 }
             )
         except Exception as e:
@@ -220,12 +226,14 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
 
         try:
             result = self._adapter.export_schema_ddl(out_dir)
+            if not result.success:
+                return _err(result.error or "export-schema-ddl failed")
             return _ok(
                 data={
-                    "ddl_tables": result.get("ddl_tables", ""),
-                    "ddl_relationships": result.get("ddl_relationships", ""),
-                    "tables_exported": result.get("tables_exported", 0),
-                    "relationships_exported": result.get("relationships_exported", 0),
+                    "ddl_tables": result.ddl_tables or "",
+                    "ddl_relationships": result.ddl_relationships or "",
+                    "tables_exported": result.tables_exported,
+                    "relationships_exported": result.relationships_exported,
                 }
             )
         except Exception as e:
