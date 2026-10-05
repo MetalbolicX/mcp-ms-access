@@ -12,16 +12,22 @@ import time
 logger = logging.getLogger(__name__)
 
 
-def start_dialog_killer(stop_event: threading.Event) -> None:
-    """Background thread that clicks accept button on Access 'Save As' dialogs.
+def start_dialog_killer(stop_event: threading.Event, access_pid: int | None) -> None:
+    """Background thread that clicks accept buttons on this Access PID's save dialogs.
 
     Args:
-        stop_event: threading.Event — set when the dialog killer should stop.
+        stop_event: Set when the dialog killer should stop.
+        access_pid: PID of the Access instance; ``None`` disables dismissal.
 
     """
+    if access_pid is None:
+        logger.warning("dialog killer disabled: Access PID is unavailable")
+        return
+
     try:
         import win32con
         import win32gui
+        import win32process
 
         while not stop_event.is_set():
             def find_and_click(hwnd: int, _: object) -> bool:
@@ -30,6 +36,9 @@ def start_dialog_killer(stop_event: threading.Event) -> None:
                 cls = win32gui.GetClassName(hwnd)
                 title = win32gui.GetWindowText(hwnd)
                 if cls != "#32770" or "save" not in title.lower():
+                    return True
+                _, owner_pid = win32process.GetWindowThreadProcessId(hwnd)
+                if owner_pid != access_pid:
                     return True
                 btn = win32gui.FindWindowEx(hwnd, None, "Button", None)
                 while btn:

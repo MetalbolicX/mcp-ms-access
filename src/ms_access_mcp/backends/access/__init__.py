@@ -10,7 +10,7 @@ Behavior invariants:
   - Visible=False set at connect time; never re-set to True
   - Teardown uses existing dispatcher (adapter.disconnect() → dispatcher.shutdown())
   - set_vba_code / compile_vba / vba_replace_procedure wrapped in _trusted_locations_wrap
-  - compile_vba starts _dialog_killer daemon and stops it before returning
+  - compile_vba starts the PID-scoped dialog-killer daemon and stops it before returning
 """
 
 from __future__ import annotations
@@ -251,16 +251,6 @@ class AccessAdapter:
         return vba.load_object_from_text(
             self._dispatcher.access_app, object_type, object_name, text_data
         )
-
-    @staticmethod
-    def _dialog_killer(stop_event: threading.Event) -> None:
-        """Background thread that clicks accept button on Access 'Save As' dialogs.
-
-        Args:
-            stop_event: threading.Event — set when the dialog killer should stop.
-
-        """
-        dialog_killer.start_dialog_killer(stop_event)
 
     def _trusted_locations_wrap(self, func, *args, **kwargs):
         """Execute func(*args, **kwargs) with Trusted Locations preservation if enabled.
@@ -906,18 +896,21 @@ class AccessAdapter:
         """Compile VBA code.
 
         Tries known DoCmd.RunCommand constants for VBA compilation.
-        Starts _dialog_killer daemon thread and stops it before returning.
+        Starts the PID-scoped dialog-killer daemon thread and stops it before returning.
         """
         if not self._dispatcher._started:
             return {"success": False, "error": "Not connected"}
 
         vb_project = self._get_vb_project()
 
+        def _start_dialog_killer(stop_event: threading.Event) -> None:
+            dialog_killer.start_dialog_killer(stop_event, self._dispatcher._access_pid)
+
         def _do() -> dict:
             return vba.compile_vba(
                 self._dispatcher.access_app,
                 _COMPILE_CMD_IDS,
-                dialog_killer.start_dialog_killer,
+                _start_dialog_killer,
                 vb_project,
             )
 
