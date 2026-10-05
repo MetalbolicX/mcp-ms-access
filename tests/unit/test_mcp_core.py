@@ -121,6 +121,35 @@ class TestExecuteRawSqlGate:
         assert "write policy" in content["error"].lower()
 
 
+def test_new_db_session_is_retained_by_registry_until_teardown(monkeypatch):
+    import gc
+
+    from ms_access_mcp.mcp_tools import core
+    from ms_access_mcp.mcp_tools._session_registry import registry
+
+    class FakeUseCase:
+        closed = False
+
+        def __init__(self, **kwargs):
+            pass
+
+        def close_database(self):
+            self.closed = True
+            closed.append(self.closed)
+
+    closed = []
+    registry.close_all()
+    monkeypatch.setattr(core, "DatabaseUseCases", FakeUseCase)
+    monkeypatch.setattr(core, "allowed_dirs_from_env", lambda: [])
+
+    session = core._new_db()
+    del session
+    gc.collect()
+    registry.close_all()
+
+    assert closed == [True]
+
+
 def test_disconnect_access_closes_tracked_sessions():
     from ms_access_mcp.mcp_tools._session_registry import registry
     from ms_access_mcp.mcp_tools.core import disconnect_access

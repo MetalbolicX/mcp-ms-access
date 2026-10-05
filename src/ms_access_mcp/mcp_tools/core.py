@@ -11,6 +11,7 @@ The 21 core tools are split into:
 from __future__ import annotations
 
 import json
+from functools import wraps
 from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
@@ -78,6 +79,19 @@ def _open_or_err(db: DatabaseUseCases, path: str) -> CallToolResult | None:
     return None
 
 
+def _close_per_call_sessions(function: Any) -> Any:
+    """Release sessions created by a tool after its operation has completed."""
+    @wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        existing = registry.snapshot()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            registry.close_sessions_created_after(existing)
+
+    return wrapped
+
+
 # =============================================================================
 # Introspection cohort (read tools — no confirm param)
 # =============================================================================
@@ -106,6 +120,7 @@ def disconnect_access() -> CallToolResult:
     return to_mcp_result({"success": True})
 
 
+@_close_per_call_sessions
 def list_connections() -> CallToolResult:
     """List all open connections and their current state."""
     db = _new_db(readonly=True)
@@ -113,6 +128,7 @@ def list_connections() -> CallToolResult:
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def get_tables(path: str) -> CallToolResult:
     """Get list of user tables (excludes system and linked tables).
 
@@ -126,6 +142,7 @@ def get_tables(path: str) -> CallToolResult:
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def get_table_schema(path: str, table: str) -> CallToolResult:
     """Get schema for a table (column names, types, nullability).
 
@@ -140,6 +157,7 @@ def get_table_schema(path: str, table: str) -> CallToolResult:
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def get_indexes(path: str, table: str) -> CallToolResult:
     """Get indexes defined on a table.
 
@@ -154,6 +172,7 @@ def get_indexes(path: str, table: str) -> CallToolResult:
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def get_relationships(path: str) -> CallToolResult:
     """Get all relationships defined in the database.
 
@@ -167,6 +186,7 @@ def get_relationships(path: str) -> CallToolResult:
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def get_queries(path: str) -> CallToolResult:
     """Get list of saved queries (SELECT, action, pass-through).
 
@@ -180,6 +200,7 @@ def get_queries(path: str) -> CallToolResult:
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def get_database_statistics(path: str) -> CallToolResult:
     """Get database statistics (record counts, file size, last modified).
 
@@ -193,6 +214,7 @@ def get_database_statistics(path: str) -> CallToolResult:
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def get_system_tables(path: str) -> CallToolResult:
     """Get list of system tables (MSys* tables in Access).
 
@@ -206,6 +228,7 @@ def get_system_tables(path: str) -> CallToolResult:
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def get_linked_tables(path: str) -> CallToolResult:
     """Get list of tables linked from external data sources.
 
@@ -224,6 +247,7 @@ def get_linked_tables(path: str) -> CallToolResult:
 # =============================================================================
 
 
+@_close_per_call_sessions
 def query_data(path: str, sql: str, params: list[Any] | None = None, limit: int | None = None) -> CallToolResult:
     """Execute a SELECT query and return rows.
 
@@ -240,6 +264,7 @@ def query_data(path: str, sql: str, params: list[Any] | None = None, limit: int 
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def execute_raw_sql(path: str, sql: str, confirm: bool = False) -> CallToolResult:
     """Execute raw SQL (write policy blocks by default — requires confirm=True).
 
@@ -269,6 +294,7 @@ def execute_raw_sql(path: str, sql: str, confirm: bool = False) -> CallToolResul
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def create_query(path: str, name: str, sql: str, confirm: bool = False) -> CallToolResult:
     """Create a saved query with the given name and SQL.
 
@@ -285,6 +311,7 @@ def create_query(path: str, name: str, sql: str, confirm: bool = False) -> CallT
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def set_query_sql(path: str, name: str, sql: str, confirm: bool = False) -> CallToolResult:
     """Update the SQL definition of an existing saved query.
 
@@ -301,6 +328,7 @@ def set_query_sql(path: str, name: str, sql: str, confirm: bool = False) -> Call
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def delete_query(path: str, name: str, confirm: bool = False) -> CallToolResult:
     """Delete a saved query from the database.
 
@@ -316,6 +344,7 @@ def delete_query(path: str, name: str, confirm: bool = False) -> CallToolResult:
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def save_query(
     path: str,
     name: str,
@@ -368,6 +397,7 @@ def save_query(
         return to_mcp_result(dict_result)
 
 
+@_close_per_call_sessions
 def insert_data(path: str, table: str, data: dict[str, Any], confirm: bool = False) -> CallToolResult:
     """Insert a row into a table.
 
@@ -384,6 +414,7 @@ def insert_data(path: str, table: str, data: dict[str, Any], confirm: bool = Fal
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def update_data(
     path: str,
     table: str,
@@ -408,6 +439,7 @@ def update_data(
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def delete_data(path: str, table: str, where: str | None = None, confirm: bool = False) -> CallToolResult:
     """Delete rows from a table.
 
@@ -425,6 +457,7 @@ def delete_data(path: str, table: str, where: str | None = None, confirm: bool =
     return to_mcp_result(_result_to_dict(result))
 
 
+@_close_per_call_sessions
 def export_data(
     path: str,
     source: str,

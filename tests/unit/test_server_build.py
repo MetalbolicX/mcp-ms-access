@@ -105,11 +105,11 @@ class TestLifespan:
 
         from ms_access_mcp.mcp_tools._session_registry import registry
 
-        class FakeUseCase:
-            closed = False
+        closed = []
 
+        class FakeUseCase:
             def close_database(self):
-                self.closed = True
+                closed.append(True)
 
         use_case = FakeUseCase()
         registry.track(use_case)
@@ -119,5 +119,9 @@ class TestLifespan:
             async with lifespan(server):
                 pass
 
+        del use_case
+        import gc
+        gc.collect()
+
         asyncio.run(_test())
-        assert use_case.closed
+        assert closed == [True]
