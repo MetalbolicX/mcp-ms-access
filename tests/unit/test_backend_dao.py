@@ -444,6 +444,23 @@ class TestLifecycle:
 
 
 class TestRowCrud:
+    def test_iter_query_yields_ordered_chunks_incrementally(
+        self, adapter: DaoAdapter, dispatcher: FakeDispatcher
+    ):
+        dispatcher.db.recordset_rows = [{"id": row_id} for row_id in range(5)]
+        opened = []
+        original_open = dispatcher.db.OpenRecordset
+        dispatcher.db.OpenRecordset = lambda sql: opened.append(original_open(sql)) or opened[-1]
+
+        chunks = adapter.iter_query("SELECT id FROM t", chunk=2)
+
+        assert next(chunks) == [{"id": 0}, {"id": 1}]
+        assert opened[0]._pos == 2
+        assert next(chunks) == [{"id": 2}, {"id": 3}]
+        assert next(chunks) == [{"id": 4}]
+        with pytest.raises(StopIteration):
+            next(chunks)
+
     def test_execute_query_not_connected(self):
         adapter = _make_adapter(FakeDispatcher())  # disconnected
 

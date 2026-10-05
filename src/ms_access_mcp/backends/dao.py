@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterator
 from types import TracebackType
 from typing import Any
 
@@ -416,6 +417,77 @@ class DaoAdapter:
                         pass
 
         return self._dispatcher.call(_do)
+
+    def iter_query(
+        self, sql: str, params: list | None = None, chunk: int = 1000
+    ) -> Iterator[list[dict]]:
+        """Yield SELECT rows in bounded batches, reading DAO only on the STA thread.
+
+        The recordset is retained in this method's closure between dispatcher
+        calls, but every COM operation (including Close) runs inside ``call``.
+        """
+        _ = params
+        if chunk <= 0:
+            msg = "chunk must be positive"
+            raise ValueError(msg)
+        if not self._dispatcher.is_connected():
+            msg = "Not connected"
+            raise DaoOperationError(msg)
+
+        rs = None
+        columns: list[str] = []
+        finished = False
+
+        def _next_chunk() -> list[dict] | None:
+            nonlocal rs, columns, finished
+            if finished:
+                return None
+            try:
+                if rs is None:
+                    rs = self._dispatcher.current_db.OpenRecordset(sql)
+                    if rs.EOF:
+                        finished = True
+                        rs.Close()
+                        rs = None
+                        return None
+                    columns = [rs.Fields(i).Name for i in range(rs.Fields.Count)]
+
+                rows: list[dict] = []
+                while not rs.EOF and len(rows) < chunk:
+                    rows.append(
+                        {
+                            col: (
+                                val.isoformat()
+                                if val is not None and hasattr(val, "strftime")
+                                else val
+                            )
+                            for col, val in (
+                                (columns[i], rs.Fields(i).Value)
+                                for i in range(len(columns))
+                            )
+                        }
+                    )
+                    rs.MoveNext()
+                if rs.EOF:
+                    finished = True
+                    rs.Close()
+                    rs = None
+                return rows or None
+            except Exception as e:
+                finished = True
+                if rs is not None:
+                    try:
+                        rs.Close()
+                    except Exception:
+                        pass
+                    rs = None
+                raise DaoOperationError(_strip_password(str(e))) from e
+
+        while True:
+            batch = self._dispatcher.call(_next_chunk)
+            if batch is None:
+                return
+            yield batch
 
     def insert_data(self, table_name: str, data: dict | list[dict]) -> WriteResult:
         """Insert one or more rows via DAO Execute with inline values."""
