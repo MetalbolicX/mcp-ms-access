@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..backends.dao_sql import quote_ident
+
 
 def build_select(
     table_name: str,
@@ -20,12 +22,12 @@ def build_select(
     columns=[] → invalid (should not reach here)
     columns=[...] → SELECT col, col, ...
     """
-    cols = "*" if columns is None else ", ".join(columns)
-    sql = f"SELECT {cols} FROM [{table_name}]"
+    cols = "*" if columns is None else ", ".join(quote_ident(col) for col in columns)
+    sql = f"SELECT {cols} FROM {quote_ident(table_name)}"
     if where:
         sql += f" WHERE {where}"
     if order_by:
-        sql += f" ORDER BY {', '.join(order_by)}"
+        sql += f" ORDER BY {', '.join(quote_ident(column) for column in order_by)}"
     return sql
 
 

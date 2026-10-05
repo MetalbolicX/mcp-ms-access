@@ -88,8 +88,8 @@ class TestAdoAdapterCrudGoldens:
 
         assert len(adapter._conn.executed) == 1
         sql, params = adapter._conn.executed[0]
-        # Columns are interpolated BARE (no brackets on cols per current code)
-        assert sql == "INSERT INTO [Users] (name, age) VALUES (?, ?)"
+        # Column identifiers are bracket-quoted through the shared builder.
+        assert sql == "INSERT INTO [Users] ([name], [age]) VALUES (?, ?)"
         assert params == ["Alice", 30]
 
     def test_insert_multiple_rows(self):
@@ -106,11 +106,11 @@ class TestAdoAdapterCrudGoldens:
         assert len(adapter._conn.executed) == 2
 
         sql1, params1 = adapter._conn.executed[0]
-        assert sql1 == "INSERT INTO [Users] (name, age) VALUES (?, ?)"
+        assert sql1 == "INSERT INTO [Users] ([name], [age]) VALUES (?, ?)"
         assert params1 == ["Alice", 30]
 
         sql2, params2 = adapter._conn.executed[1]
-        assert sql2 == "INSERT INTO [Users] (name, age) VALUES (?, ?)"
+        assert sql2 == "INSERT INTO [Users] ([name], [age]) VALUES (?, ?)"
         assert params2 == ["Bob", 25]
 
     def test_update_with_where(self):
@@ -212,7 +212,7 @@ class TestOdbcAdapterCrudGoldens:
 
         assert len(adapter._conn.executed) == 1
         sql, params = adapter._conn.executed[0]
-        assert sql == "INSERT INTO [Users] (name, age) VALUES (?, ?)"
+        assert sql == "INSERT INTO [Users] ([name], [age]) VALUES (?, ?)"
         assert params == ["Alice", 30]
 
     def test_insert_multiple_rows(self):
@@ -229,11 +229,11 @@ class TestOdbcAdapterCrudGoldens:
         assert len(adapter._conn.executed) == 2
 
         sql1, params1 = adapter._conn.executed[0]
-        assert sql1 == "INSERT INTO [Users] (name, age) VALUES (?, ?)"
+        assert sql1 == "INSERT INTO [Users] ([name], [age]) VALUES (?, ?)"
         assert params1 == ["Alice", 30]
 
         sql2, params2 = adapter._conn.executed[1]
-        assert sql2 == "INSERT INTO [Users] (name, age) VALUES (?, ?)"
+        assert sql2 == "INSERT INTO [Users] ([name], [age]) VALUES (?, ?)"
         assert params2 == ["Bob", 25]
 
     def test_update_with_where(self):

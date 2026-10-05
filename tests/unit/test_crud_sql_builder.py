@@ -12,10 +12,15 @@ from ms_access_mcp.backends import crud_sql
 class TestBuildInsert:
     """Tests for build_insert."""
 
+    def test_insert_escapes_table_and_column_identifiers(self):
+        sql, params = crud_sql.build_insert("t]x", {"c]y": 1})
+        assert sql == "INSERT INTO [t]]x] ([c]]y]) VALUES (?)"
+        assert params == [1]
+
     def test_insert_single_row(self):
         """Single row dict produces correct INSERT."""
         sql, params = crud_sql.build_insert("Users", {"name": "Alice", "age": 30})
-        assert sql == "INSERT INTO [Users] (name, age) VALUES (?, ?)"
+        assert sql == "INSERT INTO [Users] ([name], [age]) VALUES (?, ?)"
         assert params == ["Alice", 30]
 
     def test_insert_multiple_rows(self):
@@ -35,6 +40,11 @@ class TestBuildInsert:
 
 class TestBuildUpdate:
     """Tests for build_update."""
+
+    def test_update_escapes_table_set_and_where_identifiers(self):
+        sql, params = crud_sql.build_update("t]x", {"s]y": 1}, {"w]z": 2})
+        assert sql == "UPDATE [t]]x] SET [s]]y] = ? WHERE [w]]z] = ?"
+        assert params == [1, 2]
 
     def test_update_with_where(self):
         """UPDATE SET ... WHERE with parameterized values."""
@@ -61,6 +71,11 @@ class TestBuildUpdate:
 
 class TestBuildDelete:
     """Tests for build_delete."""
+
+    def test_delete_escapes_table_and_where_identifiers(self):
+        sql, params = crud_sql.build_delete("t]x", {"w]z": 2})
+        assert sql == "DELETE FROM [t]]x] WHERE [w]]z] = ?"
+        assert params == [2]
 
     def test_delete_with_where(self):
         """DELETE ... WHERE with parameterized values."""

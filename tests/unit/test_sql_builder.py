@@ -21,7 +21,7 @@ class TestBuildSelect:
     def test_select_specific_columns(self):
         """Specific columns are comma-separated."""
         result = build_select("Users", ["id", "name"], None, None)
-        assert result == "SELECT id, name FROM [Users]"
+        assert result == "SELECT [id], [name] FROM [Users]"
 
     def test_select_with_where(self):
         """WHERE clause is appended."""
@@ -31,17 +31,21 @@ class TestBuildSelect:
     def test_select_with_order_by(self):
         """ORDER BY clause is appended."""
         result = build_select("Users", None, None, ["name", "id"])
-        assert result == "SELECT * FROM [Users] ORDER BY name, id"
+        assert result == "SELECT * FROM [Users] ORDER BY [name], [id]"
 
     def test_select_with_where_and_order_by(self):
         """WHERE and ORDER BY both appended."""
         result = build_select("Users", ["name"], "id > 5", ["name"])
-        assert result == "SELECT name FROM [Users] WHERE id > 5 ORDER BY name"
+        assert result == "SELECT [name] FROM [Users] WHERE id > 5 ORDER BY [name]"
 
     def test_table_name_brackets(self):
         """Table name is wrapped in brackets."""
         result = build_select("My Table", None, None, None)
         assert result == "SELECT * FROM [My Table]"
+
+    def test_identifiers_with_close_bracket_are_escaped(self):
+        result = build_select("a]b", ["c]d"], None, ["e]f"])
+        assert result == "SELECT [c]]d] FROM [a]]b] ORDER BY [e]]f]"
 
 
 class TestValidateColumns:
