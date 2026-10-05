@@ -659,7 +659,7 @@ credential detector.
 | 083  | [Migration full-DDL upload (FK + indexes)](083-migration-full-ddl-upload.md) | 28 | P1 | M | MED | Strict TDD + goldens | — | DONE (c663c90) |
 | 084  | [Migration verification gates success](084-migration-verification-gating.md) | 28 | P1 | S | MED | Characterization → strict TDD | 083 | DONE (17af0fe) |
 | 085  | [Versioning production wiring](085-versioning-production-wiring.md) | 29 | P1 | M | MED | Conformance-first strict TDD | 082 | DONE (6c3bf1e) — operator round-trip gate PENDING |
-| 086  | [Analysis envelope correctness](086-analysis-envelope-correctness.md) | 29 | P1 | S | LOW | Strict TDD | 082 | TODO |
+| 086  | [Analysis envelope correctness](086-analysis-envelope-correctness.md) | 29 | P1 | S | LOW | Strict TDD | 082 | DONE (ee0169f) |
 | 087  | [g13 chaos gate repair + stale README claims](087-g13-harness-repair.md) | 30 | P2 | M | LOW | Direct edit + registry-conformance test | 078 (recommended) | TODO |
 | 088  | [limit honored end-to-end + bounded exports](088-limit-and-bounded-data.md) | 30 | P2 | M | MED | Strict TDD, probe-gated live TOP | 080, 084 | TODO |
 | 089  | [Credential staging + scrub hardening](089-credential-scrub-hardening.md) | 31 | P1 | S | MED | Strict TDD | 077 | TODO |
