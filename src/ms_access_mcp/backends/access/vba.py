@@ -290,15 +290,26 @@ def set_vba_code(
                 return load_object_from_text_fn(5, module_name, text_data)
             return False
         else:
-            # Existing module: clear and repopulate in-memory
+            # Existing module: snapshot, then clear and repopulate in-memory.
+            code_module = target_module.CodeModule
+            line_count = 0
+            original = ""
             try:
-                target_module.CodeModule.DeleteLines(
-                    1, target_module.CodeModule.CountOfLines
-                )
-                target_module.CodeModule.AddFromString(code)
+                line_count = code_module.CountOfLines
+                original = code_module.Lines(1, line_count) if line_count else ""
+                code_module.DeleteLines(1, line_count)
+                code_module.AddFromString(code)
                 return True
             except Exception as exc:
                 logger.debug("set_vba_code %s repopulate failed: %s", module_name, exc)
+                try:
+                    current_line_count = code_module.CountOfLines
+                    if current_line_count:
+                        code_module.DeleteLines(1, current_line_count)
+                    if line_count:
+                        code_module.AddFromString(original)
+                except Exception as restore_exc:
+                    logger.debug("set_vba_code %s restore failed: %s", module_name, restore_exc)
                 return False
     except Exception as exc:
         logger.debug("set_vba_code %s failed: %s", module_name, exc)
@@ -497,10 +508,24 @@ def vba_replace_procedure(access_app: Any, module_name: str, procedure_name: str
 
         start_line = target_module.ProcStartLine(procedure_name, 0)
         line_count = target_module.ProcCountLines(procedure_name, 0)
+        original = target_module.Lines(start_line, line_count)
 
-        target_module.DeleteLines(start_line, line_count)
-        target_module.InsertLines(start_line, new_code)
-        return True
+        try:
+            target_module.DeleteLines(start_line, line_count)
+            target_module.InsertLines(start_line, new_code)
+            return True
+        except Exception as exc:
+            logger.debug("vba_replace_procedure %s.%s failed: %s", module_name, procedure_name, exc)
+            try:
+                target_module.InsertLines(start_line, original)
+            except Exception as restore_exc:
+                logger.debug(
+                    "vba_replace_procedure %s.%s restore failed: %s",
+                    module_name,
+                    procedure_name,
+                    restore_exc,
+                )
+            return False
     except Exception as exc:
         logger.debug("vba_replace_procedure %s.%s failed: %s", module_name, procedure_name, exc)
         return False

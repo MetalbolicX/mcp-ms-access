@@ -669,7 +669,7 @@ class TestVBAOperationsHappyPath:
         fake_disp._access_app = fake_app
 
         def fake_call(fn, *args, **kwargs):
-            return fn()
+            return fn(*args, **kwargs)
 
         fake_disp.call = fake_call
         adapter._dispatcher = fake_disp
@@ -707,6 +707,149 @@ class TestVBAOperationsHappyPath:
         adapter = self._make_connected_adapter_with_vb_project(proj)
         result = adapter.get_vba_code("Module1")
         assert "Sub Test()" in result
+
+    def test_set_vba_code_restores_snapshot_after_add_failure(self):
+        class _FakeCodeModule:
+            def __init__(self):
+                self.text = "Sub Original()\nEnd Sub"
+                self.add_calls = []
+
+            @property
+            def CountOfLines(self):
+                return len(self.text.splitlines())
+
+            def Lines(self, start, count):
+                return self.text
+
+            def DeleteLines(self, start, count):
+                self.text = ""
+
+            def AddFromString(self, text):
+                self.add_calls.append(text)
+                if len(self.add_calls) == 1:
+                    raise RuntimeError("injected AddFromString failure")
+                self.text = text
+
+        code_module = _FakeCodeModule()
+        comp = MagicMock(Name="Module1", CodeModule=code_module)
+        project = MagicMock(VBComponents=[comp])
+        adapter = self._make_connected_adapter_with_vb_project(project)
+
+        assert adapter.set_vba_code("Module1", "Sub Replacement()\nEnd Sub") is False
+        assert code_module.add_calls == [
+            "Sub Replacement()\nEnd Sub",
+            "Sub Original()\nEnd Sub",
+        ]
+        assert code_module.text == "Sub Original()\nEnd Sub"
+
+    def test_vba_replace_procedure_restores_snapshot_after_insert_failure(self):
+        class _FakeCodeModule:
+            def __init__(self):
+                self.text = "Private Sub Button_Click()\n    OldBody\nEnd Sub"
+                self.insert_calls = []
+
+            def ProcStartLine(self, name, kind):
+                return 1
+
+            def ProcCountLines(self, name, kind):
+                return len(self.text.splitlines())
+
+            def Lines(self, start, count):
+                return self.text
+
+            def DeleteLines(self, start, count):
+                self.text = ""
+
+            def InsertLines(self, start, text):
+                self.insert_calls.append((start, text))
+                if len(self.insert_calls) == 1:
+                    raise RuntimeError("injected InsertLines failure")
+                self.text = text
+
+        code_module = _FakeCodeModule()
+        comp = MagicMock(Name="Module1", CodeModule=code_module)
+        project = MagicMock(VBComponents=[comp])
+        adapter = self._make_connected_adapter_with_vb_project(project)
+
+        assert adapter.vba_replace_procedure(
+            "Module1", "Button_Click", "Private Sub Button_Click()\n    NewBody\nEnd Sub"
+        ) is False
+        assert code_module.insert_calls == [
+            (1, "Private Sub Button_Click()\n    NewBody\nEnd Sub"),
+            (1, "Private Sub Button_Click()\n    OldBody\nEnd Sub"),
+        ]
+        assert code_module.text == "Private Sub Button_Click()\n    OldBody\nEnd Sub"
+
+    def test_set_control_event_procedure_creates_missing_procedure_before_property(self):
+        events = []
+
+        class _FakeCodeModule:
+            def __init__(self):
+                self.text = ""
+
+            def ProcStartLine(self, name, kind):
+                if not self.text:
+                    raise RuntimeError("procedure missing")
+                return 1
+
+            def ProcCountLines(self, name, kind):
+                return len(self.text.splitlines())
+
+            def Lines(self, start, count):
+                return self.text
+
+            def AddFromString(self, code):
+                events.append(("write", code))
+                self.text += code
+
+            def DeleteLines(self, start, count):
+                self.text = ""
+
+            def InsertLines(self, start, code):
+                events.append(("write", code))
+                self.text = code
+
+        code_module = _FakeCodeModule()
+        component = MagicMock(Name="Form_TestForm", CodeModule=code_module)
+        project = MagicMock(VBComponents=[component])
+        adapter = self._make_connected_adapter_with_vb_project(project)
+
+        class FakeControl:
+            Name = "Button"
+
+            def Properties(self, name):
+                class EventProperty:
+                    @property
+                    def Value(self):
+                        return ""
+
+                    @Value.setter
+                    def Value(self, value):
+                        events.append(("property", name, value))
+
+                return EventProperty()
+
+        class FakeControls:
+            Count = 1
+
+            def __call__(self, index):
+                return FakeControl()
+
+        form = MagicMock()
+        form.Controls = FakeControls()
+        adapter._with_design_view = lambda kind, name, **kwargs: kwargs["work"](form)
+
+        result = adapter.set_control_event_procedure(
+            "TestForm", "Button", "Click", "Private Sub Button_Click()\n    MsgBox \"clicked\"\nEnd Sub"
+        )
+
+        assert result is True
+        assert code_module.text == "Private Sub Button_Click()\n    MsgBox \"clicked\"\nEnd Sub"
+        assert events == [
+            ("write", "Private Sub Button_Click()\nEnd Sub"),
+            ("write", "Private Sub Button_Click()\n    MsgBox \"clicked\"\nEnd Sub"),
+            ("property", "OnClick", "[Event Procedure]"),
+        ]
 
     def test_module_exists_true(self):
 

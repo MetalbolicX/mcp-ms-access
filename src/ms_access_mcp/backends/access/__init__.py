@@ -552,12 +552,36 @@ class AccessAdapter:
             if target_ctrl is None:
                 return False
 
-            event_prop_name = f"On{event_name}"
-            target_ctrl.Properties(event_prop_name).Value = "[Event Procedure]"
-
             module_name = f"Form_{form_name}"
             proc_name = f"{control_name}_{event_name}"
-            return self.vba_replace_procedure(module_name, proc_name, code)
+            project = vba.get_vb_project(self._dispatcher.access_app)
+            if project is None:
+                return False
+            code_module = None
+            for component in project.VBComponents:
+                if component.Name == module_name:
+                    code_module = component.CodeModule
+                    break
+            if code_module is None:
+                return False
+
+            try:
+                code_module.ProcStartLine(proc_name, 0)
+            except Exception:
+                stub = f"Private Sub {proc_name}()\nEnd Sub"
+                if not vba.add_vba_procedure(
+                    self._dispatcher.access_app, module_name, proc_name, stub
+                ):
+                    return False
+
+            if not vba.vba_replace_procedure(
+                self._dispatcher.access_app, module_name, proc_name, code
+            ):
+                return False
+
+            event_prop_name = f"On{event_name}"
+            target_ctrl.Properties(event_prop_name).Value = "[Event Procedure]"
+            return True
 
         return self._with_design_view(
             "form", form_name,
