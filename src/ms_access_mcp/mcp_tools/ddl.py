@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import ExitStack
+from contextvars import ContextVar
+from functools import wraps
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -17,14 +21,61 @@ from ..models.linked_tables import (
 )
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
-from ._session_registry import registry
+from ._session_registry import SessionOpenError, registry
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "_TOOLS"]
 
 
+class _ToolSession:
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.stack = ExitStack()
+        self.database: DatabaseUseCases | None = None
+
+    def open(self, *, readonly: bool):
+        if self.database is None:
+            self.database = self.stack.enter_context(
+                registry.open_session(
+                    self.path, readonly=readonly, allowed_dirs=allowed_dirs_from_env()
+                )
+            )
+        return self.database
+
+
+_active_session: ContextVar[_ToolSession | None] = ContextVar("ddl_tool_session", default=None)
+_CONFIRM_REQUIRED = {
+    "create_table", "alter_table", "delete_table", "create_index", "drop_index",
+    "create_relationship", "delete_relationship", "set_database_property",
+    "create_linked_table", "refresh_linked_table", "unlink_table", "upsert_linked_table",
+    "execute_sql_script",
+}
+
+
+def _connected_tool(function: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(function)
+    def wrapped(path: str, *args: Any, **kwargs: Any) -> Any:
+        confirm = kwargs.get("confirm", args[1] if len(args) > 1 else False)
+        if function.__name__ in _CONFIRM_REQUIRED and not confirm:
+            return function(path, *args, **kwargs)
+        session = _ToolSession(path)
+        token = _active_session.set(session)
+        try:
+            return function(path, *args, **kwargs)
+        except SessionOpenError as exc:
+            return to_mcp_result(_result_to_dict(exc.result))
+        finally:
+            _active_session.reset(token)
+            session.stack.close()
+
+    return wrapped
+
+
 def _new_db(readonly: bool = True) -> DatabaseUseCases:
-    """Construct a DatabaseUseCases honoring ACCESS_MCP_ALLOWED_DIRS."""
+    """Return this tool call's opened database session when one is active."""
+    session = _active_session.get()
+    if session is not None:
+        return session.open(readonly=readonly)
     return registry.track(DatabaseUseCases(readonly=readonly, allowed_dirs=allowed_dirs_from_env()))
 
 
@@ -370,6 +421,13 @@ _TOOLS: ToolRegistry = {
         "Execute a SQL script containing multiple statements. Requires confirm=True.",
     ),
 }
+
+for _tool_name, (_tool, _description) in tuple(_TOOLS.items()):
+    if _tool_name == "create_access_database":
+        continue
+    _wrapped_tool = _connected_tool(_tool)
+    _TOOLS[_tool_name] = (_wrapped_tool, _description)
+    globals()[_tool.__name__] = _wrapped_tool
 
 
 def register(mcp: FastMCP) -> None:

@@ -6,6 +6,42 @@ from ms_access_mcp.mcp_tools import analysis
 from ms_access_mcp.profiles import PROFILES, load_profile
 
 
+class TestConnectedPath:
+    def test_get_er_diagram_dispatches_through_connected_adapter(self, monkeypatch, tmp_path):
+        from ms_access_mcp.backends import BackendSelector
+
+        class FakeAdapter:
+            connected = False
+
+            def connect(self, path):
+                self.connected = True
+                self.connected_path = path
+
+            def disconnect(self):
+                self.connected = False
+
+            def get_tables(self):
+                self.tables_called = self.connected
+                return []
+
+            def get_relationships(self):
+                self.relationships_called = self.connected
+                return []
+
+        adapter = FakeAdapter()
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **_kwargs: adapter)
+        monkeypatch.setattr(analysis, "allowed_dirs_from_env", lambda: [tmp_path])
+        path = str(tmp_path / "db.accdb")
+        (tmp_path / "db.accdb").write_bytes(b"fake database")
+
+        result = analysis.get_er_diagram(path)
+
+        assert adapter.connected is False  # per-call session closes after dispatch
+        assert adapter.connected_path == path
+        assert adapter.tables_called and adapter.relationships_called
+        assert "Not connected" not in result.content[0].text
+
+
 class TestToolNames:
     """All 3 analysis verbatim oracle names are present in _TOOLS."""
 
@@ -48,18 +84,33 @@ class TestParamValidation:
 class TestBehavioralNoCom:
     """Behavioral tests that require no COM/ODBC — path gates and UC state checks."""
 
-    def test_get_er_diagram_no_connection_returns_error(self):
-        """get_er_diagram without a connection returns isError with 'Not connected'."""
+    def test_get_er_diagram_rejects_disallowed_database_path(self):
+        """The wrapper rejects a disallowed database path before dispatch."""
         fn, _desc = analysis._TOOLS["get_er_diagram"]
         result = fn(path="dummy.mdb", params={}, confirm=False)
         assert result.isError is True
-        assert "Not connected" in result.content[0].text
+        assert "Path not allowed" in result.content[0].text
 
-    def test_generate_sql_path_not_allowed(self):
+    def test_generate_sql_path_not_allowed(self, monkeypatch, tmp_path):
         """generate_sql with output_path outside allowed_dirs returns 'Output path not allowed'."""
+        from ms_access_mcp.backends import BackendSelector
+
+        class FakeAdapter:
+            connected = False
+
+            def connect(self, path):
+                self.connected = True
+
+            def disconnect(self):
+                self.connected = False
+
+        monkeypatch.setenv("ACCESS_MCP_ALLOWED_DIRS", str(tmp_path))
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **_kwargs: FakeAdapter())
+        database_path = tmp_path / "db.accdb"
+        database_path.write_bytes(b"fake database")
         fn, _desc = analysis._TOOLS["generate_sql"]
         result = fn(
-            path="dummy.mdb",
+            path=str(database_path),
             params={"output_path": "<nonexistent>.sql"},
             confirm=False,
         )

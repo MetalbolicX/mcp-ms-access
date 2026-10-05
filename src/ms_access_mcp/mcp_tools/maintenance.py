@@ -6,6 +6,10 @@ session and is exposed only via the maintenance CLI group.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import ExitStack
+from contextvars import ContextVar
+from functools import wraps
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -14,13 +18,62 @@ from mcp.types import CallToolResult
 from ..application.maintenance import MaintenanceUseCases
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
-from ._session_registry import registry
+from ._session_registry import SessionOpenError, registry
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "to_mcp_result", "_TOOLS"]
 
 
+class _ToolSession:
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.stack = ExitStack()
+        self.database = None
+
+    def open(self):
+        if self.database is None:
+            self.database = self.stack.enter_context(
+                registry.open_session(
+                    self.path,
+                    backend="com",
+                    readonly=True,
+                    allowed_dirs=allowed_dirs_from_env(),
+                )
+            )
+        return self.database
+
+
+_active_session: ContextVar[_ToolSession | None] = ContextVar("maintenance_tool_session", default=None)
+
+
+def _connected_compact_tool(function: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(function)
+    def wrapped(path: str, *args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("confirm", args[1] if len(args) > 1 else False):
+            return function(path, *args, **kwargs)
+        session = _ToolSession(path)
+        token = _active_session.set(session)
+        try:
+            return function(path, *args, **kwargs)
+        except SessionOpenError as exc:
+            return to_mcp_result(_result_to_dict(exc.result))
+        finally:
+            _active_session.reset(token)
+            session.stack.close()
+
+    return wrapped
+
+
 def _new_maintenance(readonly: bool = True) -> MaintenanceUseCases:
+    session = _active_session.get()
+    if session is not None:
+        database = session.open()
+        return MaintenanceUseCases(
+            adapter=database._get_adapter(),  # noqa: SLF001 - the registry-owned DB session manages this adapter
+            readonly=readonly,
+            db_path=session.path,
+            allowed_dirs=allowed_dirs_from_env(),
+        )
     return registry.track(MaintenanceUseCases(readonly=readonly, db_path=None, allowed_dirs=allowed_dirs_from_env()))
 
 
@@ -232,6 +285,13 @@ _TOOLS: ToolRegistry = {
         "Convert an Access 95/97 (Jet 3) .mdb to Jet 4 format via 32-bit JRO bridge.",
     ),
 }
+
+_connected_compact_repair = _connected_compact_tool(maintenance_compact_repair)
+_TOOLS["maintenance_compact_repair"] = (
+    _connected_compact_repair,
+    _TOOLS["maintenance_compact_repair"][1],
+)
+maintenance_compact_repair = _connected_compact_repair
 
 
 def register(mcp: FastMCP) -> None:

@@ -48,6 +48,43 @@ class TestMaintenanceRegister:
         assert mock_mcp.add_tool.call_count == 10
 
 
+class TestMaintenanceConnectedCompactRepair:
+    def test_compact_repair_dispatches_through_connected_adapter(self, monkeypatch, tmp_path):
+        from ms_access_mcp.backends import BackendSelector
+        from ms_access_mcp.mcp_tools import maintenance
+
+        class FakeAdapter:
+            connected = False
+
+            def connect(self, path):
+                self.connected = True
+                self.connected_path = path
+
+            def disconnect(self):
+                self.connected = False
+
+            def compact_repair(self, path, mode):
+                self.connected_at_dispatch = self.connected
+                self.compacted = (path, mode)
+                return {"success": True}
+
+        adapter = FakeAdapter()
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **_kwargs: adapter)
+        monkeypatch.setattr(maintenance, "allowed_dirs_from_env", lambda: [tmp_path])
+        path = tmp_path / "db.accdb"
+        path.write_bytes(b"fake database")
+
+        result = maintenance.maintenance_compact_repair(
+            str(path), params={"mode": "compact"}, confirm=True
+        )
+
+        assert result.isError is False
+        assert adapter.connected_at_dispatch is True
+        assert adapter.connected is False  # per-call session closes after dispatch
+        assert adapter.connected_path == str(path)
+        assert adapter.compacted == (str(path), "compact")
+
+
 class TestMaintenanceToolFunctions:
     """Test individual tool functions return CallToolResult with correct shape."""
 
@@ -123,19 +160,33 @@ class TestMaintenanceToolFunctions:
         assert isinstance(block, TextContent)
         assert result.isError is False
 
-    def test_maintenance_compact_repair_returns_result(self, tmp_path):
+    def test_maintenance_compact_repair_returns_result(self, monkeypatch, tmp_path):
+        from ms_access_mcp.backends import BackendSelector
         from ms_access_mcp.mcp_tools.maintenance import maintenance_compact_repair
 
+        class FakeAdapter:
+            connected = False
+
+            def connect(self, path):
+                self.connected = True
+
+            def disconnect(self):
+                self.connected = False
+
+        path = tmp_path / "db.accdb"
+        path.write_bytes(b"fake database")
+        monkeypatch.setenv("ACCESS_MCP_ALLOWED_DIRS", str(tmp_path))
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **_kwargs: FakeAdapter())
         with patch(
             "ms_access_mcp.mcp_tools.maintenance.MaintenanceUseCases"
         ) as MockUC:
             instance = MockUC.return_value
             instance.compact_repair.return_value = Ok(
-                data={"path": str(tmp_path / "db.accdb"), "mode": "compact", "output_path": None, "stats": {}},
+                data={"path": str(path), "mode": "compact", "output_path": None, "stats": {}},
                 rowcount=1,
             )
             result = maintenance_compact_repair(
-                str(tmp_path / "db.accdb"),
+                str(path),
                 params={"mode": "compact"},
                 confirm=True,
             )
@@ -143,6 +194,8 @@ class TestMaintenanceToolFunctions:
         block = result.content[0]
         assert isinstance(block, TextContent)
         assert result.isError is False
+        MockUC.assert_called_once()
+        assert MockUC.call_args.kwargs["db_path"] == str(path)
 
     def test_maintenance_diagnose_environment_returns_result(self):
         from ms_access_mcp.mcp_tools.maintenance import maintenance_diagnose_environment

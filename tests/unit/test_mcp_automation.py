@@ -10,6 +10,7 @@ from mcp.types import TextContent
 from ms_access_mcp.mcp_tools.automation import (
     _TOOLS,
     create_module,
+    get_forms,
     run_macro,
     set_vba_code,
 )
@@ -172,6 +173,39 @@ class TestAutomationBadInputs:
         content = json.loads(_text(result))
         assert content["success"] is False
         assert "invalid module_type" in content["error"]
+
+
+class TestAutomationConnection:
+    def test_get_forms_uses_connected_adapter_for_path(self, monkeypatch, tmp_path):
+        from ms_access_mcp.backends import BackendSelector
+
+        class FakeAdapter:
+            connected = False
+
+            def connect(self, path):
+                self.connected = True
+                self.connected_path = path
+
+            def disconnect(self):
+                self.connected = False
+
+            def get_forms(self):
+                self.connected_at_dispatch = self.connected
+                return []
+
+        adapter = FakeAdapter()
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **_kwargs: adapter)
+        monkeypatch.setenv("ACCESS_MCP_ALLOWED_DIRS", str(tmp_path))
+        path = str(tmp_path / "db.accdb")
+        (tmp_path / "db.accdb").write_bytes(b"fake database")
+
+        result = get_forms(path)
+
+        assert result.isError is False
+        assert adapter.connected_at_dispatch is True
+        assert adapter.connected is False  # per-call session closes after dispatch
+        assert adapter.connected_path == path
+        assert json.loads(_text(result))["success"] is True
 
 
 class TestAutomationProfileIsolation:

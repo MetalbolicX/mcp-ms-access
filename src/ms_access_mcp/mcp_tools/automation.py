@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import ExitStack
+from contextvars import ContextVar
+from functools import wraps
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.automation import AutomationUseCases
+from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
-from ._session_registry import registry
+from ._session_registry import SessionOpenError, registry
 from .core import _result_to_dict, to_mcp_result
 
 __all__ = ["register", "to_mcp_result", "_TOOLS"]
@@ -17,7 +22,68 @@ __all__ = ["register", "to_mcp_result", "_TOOLS"]
 _MODULE_TYPES = {"standard": 1, "class": 2}
 
 
+class _ToolSession:
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.stack = ExitStack()
+        self.database = None
+
+    def open(self, *, backend: str, readonly: bool = True):
+        if self.database is None:
+            self.database = self.stack.enter_context(
+                registry.open_session(
+                    self.path,
+                    backend=backend,
+                    readonly=readonly,
+                    allowed_dirs=allowed_dirs_from_env(),
+                )
+            )
+        return self.database
+
+
+_active_session: ContextVar[_ToolSession | None] = ContextVar("automation_tool_session", default=None)
+_CONFIRM_REQUIRED = {
+    "set_control_property", "set_control_properties", "create_form", "rename_form", "delete_form",
+    "set_form_property", "set_form_properties", "add_control", "remove_control",
+    "set_control_event_procedure", "set_form_section_property", "set_form_section_properties",
+    "import_form_from_text", "create_report", "rename_report", "delete_report",
+    "set_report_property", "set_report_properties", "set_report_control_property",
+    "set_report_control_properties", "add_report_control", "remove_report_control",
+    "set_report_section_property", "set_report_section_properties", "import_report_from_text",
+    "create_macro", "rename_macro", "delete_macro", "run_macro", "set_vba_code",
+    "add_vba_procedure", "save_database", "delete_module", "vba_replace_procedure",
+    "create_module", "rename_module",
+}
+
+
+def _connected_tool(function: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(function)
+    def wrapped(path: str, *args: Any, **kwargs: Any) -> Any:
+        confirm = kwargs.get("confirm", args[1] if len(args) > 1 else False)
+        if function.__name__ in _CONFIRM_REQUIRED and not confirm:
+            return function(path, *args, **kwargs)
+        session = _ToolSession(path)
+        token = _active_session.set(session)
+        try:
+            return function(path, *args, **kwargs)
+        except SessionOpenError as exc:
+            return to_mcp_result(_result_to_dict(exc.result))
+        finally:
+            _active_session.reset(token)
+            session.stack.close()
+
+    return wrapped
+
+
 def _new_automation(readonly: bool = True) -> AutomationUseCases:
+    session = _active_session.get()
+    if session is not None:
+        database = session.open(backend="com")
+        return AutomationUseCases(
+            adapter=database._get_adapter(),  # noqa: SLF001 - the registry-owned DB session manages this adapter
+            readonly=readonly,
+            db_path=session.path,
+        )
     return registry.track(AutomationUseCases(readonly=readonly, db_path=None))
 
 
@@ -1000,6 +1066,11 @@ _TOOLS: ToolRegistry = {
     "rename_module": (rename_module, "Rename a VBA module."),
     "module_exists": (module_exists, "Check if a VBA module exists."),
 }
+
+for _tool_name, (_tool, _description) in tuple(_TOOLS.items()):
+    _wrapped_tool = _connected_tool(_tool)
+    _TOOLS[_tool_name] = (_wrapped_tool, _description)
+    globals()[_tool.__name__] = _wrapped_tool
 
 
 def register(mcp: FastMCP) -> None:

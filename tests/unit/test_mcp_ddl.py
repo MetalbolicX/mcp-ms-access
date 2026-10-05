@@ -23,6 +23,41 @@ def _fake_ddl_uc(monkeypatch) -> dict:
     return captured
 
 
+class TestConnectedPath:
+    def test_create_table_dispatches_through_connected_adapter(self, monkeypatch, tmp_path):
+        from ms_access_mcp.backends import BackendSelector
+
+        class FakeAdapter:
+            connected = False
+
+            def connect(self, path):
+                self.connected = True
+                self.connected_path = path
+
+            def disconnect(self):
+                self.connected = False
+
+            def create_table(self, table_name, columns):
+                self.connected_at_dispatch = self.connected
+                self.received = (table_name, columns)
+                return {"success": True}
+
+        adapter = FakeAdapter()
+        monkeypatch.setattr(BackendSelector, "get_adapter", lambda **_kwargs: adapter)
+        monkeypatch.setattr(ddl, "allowed_dirs_from_env", lambda: [tmp_path])
+        path = str(tmp_path / "db.accdb")
+        (tmp_path / "db.accdb").write_bytes(b"fake database")
+
+        result = ddl.create_table(path, params={"table": "T", "columns": {"id": "Long Integer"}}, confirm=True)
+
+        assert result.isError is False
+        assert adapter.connected_at_dispatch is True
+        assert adapter.connected is False  # per-call session closes after dispatch
+        assert adapter.connected_path == path
+        assert adapter.received == ("T", [{"name": "id", "type": "Long Integer"}])
+        assert '"success": true' in result.content[0].text
+
+
 class TestToolNames:
     """All 16 DDL/admin verbatim oracle names are present in _TOOLS."""
 
