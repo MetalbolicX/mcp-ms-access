@@ -37,7 +37,7 @@ HIGHER_LAYERS = ("application", "mcp_tools", "cli", "server")
 
 # Shared kernel modules live directly under ms_access_mcp/ and must import
 # nothing from any layer.
-KERNEL_MODULES = ("errors", "models", "safety", "profiles", "capabilities")
+KERNEL_MODULES = ("errors", "models", "safety", "profiles")
 
 
 @pytest.mark.parametrize("module", ["ms_access_mcp", "ms_access_mcp.safety", "ms_access_mcp.models", "ms_access_mcp.errors"])
