@@ -276,6 +276,110 @@ class TestMigrationUseCasesUnit:
         assert "job2" in job_ids
 
 
+class TestUploadSchemaFullDdl:
+    """upload_schema must execute complete per-table DDL with failure isolation."""
+
+    @staticmethod
+    def _table(name: str) -> TableSchema:
+        from ms_access_mcp.models import ForeignKeySchema, IndexSchema
+
+        return TableSchema(
+            name=name,
+            columns=[
+                ColumnSchema(name="id", source_type="Long Integer"),
+                ColumnSchema(name="customer_id", source_type="Long Integer"),
+            ],
+            primary_key=["id"],
+            foreign_keys=[
+                ForeignKeySchema(
+                    name=f"FK_{name}_Customers",
+                    columns=["customer_id"],
+                    referenced_table="Customers",
+                    referenced_columns=["id"],
+                )
+            ],
+            indexes=[IndexSchema(name=f"IX_{name}_customer", columns=["customer_id"])],
+        )
+
+    @staticmethod
+    def _connector(fail_on: str | None = None):
+        class RecordingConnector:
+            def __init__(self):
+                self.statements: list[str] = []
+                self.failed_statements: list[str] = []
+                self.disconnected = False
+
+            def table_exists(self, _table: str) -> bool:
+                return False
+
+            def create_table(self, ddl: str) -> None:
+                self.statements.append(ddl)
+                if fail_on is not None and fail_on in ddl:
+                    self.failed_statements.append(ddl)
+                    raise RuntimeError("statement rejected")
+
+            def insert_batch(self, _table: str, _columns: list[str], _rows: list[tuple]) -> int:
+                return 0
+
+            def rollback_table(self, _table: str) -> None:
+                pass
+
+            def disconnect(self) -> None:
+                self.disconnected = True
+
+            def count_rows(self, _table: str) -> int:
+                return 0
+
+        return RecordingConnector()
+
+    def test_upload_schema_executes_create_foreign_key_and_index(self, monkeypatch):
+        from ms_access_mcp.backends.migration import render_schema_ddl
+
+        table = self._table("Orders")
+        schema = ExtractedSchema(source="source.accdb", tables=[table])
+        connector = self._connector()
+        use_cases = MigrationUseCases()
+        monkeypatch.setattr(use_cases, "_get_connector", lambda *_args: Ok(data=connector))
+
+        result = use_cases.upload_schema(
+            "postgres", "fake-connection", schema.model_dump(), confirm=True
+        )
+
+        assert isinstance(result, Ok)
+        expected = render_schema_ddl("postgres", [table])
+        assert len(expected) == 3
+        assert connector.statements == expected
+        assert result.data == {"tables_created": ["Orders"], "tables_failed": []}
+        assert connector.disconnected is True
+
+    def test_upload_schema_isolates_statement_failure_and_continues(self, monkeypatch):
+        from ms_access_mcp.backends.migration import render_schema_ddl
+
+        failed_table = self._table("Orders")
+        later_table = TableSchema(
+            name="Later",
+            columns=[ColumnSchema(name="id", source_type="Long Integer")],
+            primary_key=["id"],
+            foreign_keys=[],
+            indexes=[],
+        )
+        schema = ExtractedSchema(source="source.accdb", tables=[failed_table, later_table])
+        connector = self._connector(fail_on="ADD CONSTRAINT")
+        use_cases = MigrationUseCases()
+        monkeypatch.setattr(use_cases, "_get_connector", lambda *_args: Ok(data=connector))
+
+        result = use_cases.upload_schema(
+            "postgres", "fake-connection", schema.model_dump(), confirm=True
+        )
+
+        assert isinstance(result, Ok)
+        first_table_ddl = render_schema_ddl("postgres", [failed_table])
+        later_table_ddl = render_schema_ddl("postgres", [later_table])
+        assert connector.failed_statements == [first_table_ddl[1]]
+        assert connector.statements == [*first_table_ddl[:2], *later_table_ddl]
+        assert result.data == {"tables_created": ["Later"], "tables_failed": ["Orders"]}
+
+
 class TestODBCGranularGetters:
     """Unit tests for ODBC extraction path — verifies granular getters are used.
 

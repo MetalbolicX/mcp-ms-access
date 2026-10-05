@@ -449,8 +449,8 @@ class MigrationUseCases:
                     if connector.table_exists(table.name):
                         tables_failed.append(table.name)
                         continue
-                    ddl = render_schema_ddl(target_type, [table])[0]
-                    connector.create_table(ddl)
+                    for ddl in render_schema_ddl(target_type, [table]):
+                        connector.create_table(ddl)
                     tables_created.append(table.name)
                 except Exception:
                     tables_failed.append(table.name)
