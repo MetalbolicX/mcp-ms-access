@@ -23,6 +23,7 @@ from typing import Any, TypeVar
 from ...errors import AccessBackendError, AccessObjectNotFoundError
 from ..dispatcher import ComDispatcher
 from ..protocols import AccessDispatcherProtocol
+from ..versioning import VersioningBackend
 from . import control_types, dialog_killer, forms, macros, object_kinds, reports, trusted_locations, vba
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ class AccessAdapter:
         """Initialize an Access adapter for the specified database path."""
         self._db_path = db_path
         self._dispatcher = ComDispatcher()
+        self._versioning = VersioningBackend(self._dispatcher)
         self._connected = False
 
     # ------------------------------------------------------------------ #
@@ -724,6 +726,46 @@ class AccessAdapter:
     def import_report_from_text(self, report_name: str, report_data: str) -> bool:
         """Import a report from text data via LoadFromText."""
         return reports.import_report_from_text(self._dispatcher, report_name, report_data, load_object_from_text=self._load_object_from_text)
+
+    def export_macro_to_text(self, macro_name: str) -> str:
+        """Export a macro using the shared versioning backend."""
+        return self._versioning.export_macro_to_text(macro_name)
+
+    def import_macro_from_text(self, macro_name: str, text_data: str) -> bool:
+        """Import a macro using the shared versioning backend."""
+        return self._versioning.import_macro_from_text(macro_name, text_data)
+
+    def export_query_to_text(self, query_name: str) -> str:
+        """Export a query using the shared versioning backend."""
+        return self._versioning.export_query_to_text(query_name)
+
+    def import_query_from_text(self, query_name: str, text_data: str) -> bool:
+        """Import a query using the shared versioning backend."""
+        return self._versioning.import_query_from_text(query_name, text_data)
+
+    def export_module_to_text(self, module_name: str) -> str:
+        """Export a VBA module using the shared versioning backend."""
+        return self._versioning.export_module_to_text(module_name)
+
+    def import_module_from_text(self, module_name: str, code: str) -> bool:
+        """Import a VBA module using the shared versioning backend."""
+        return self._versioning.import_module_from_text(module_name, code)
+
+    def export_all_versioning(self, out_dir):
+        """Export all versioned objects through the shared backend."""
+        return self._versioning.export_all_versioning(out_dir)
+
+    def import_all_versioning(self, input_dir):
+        """Import all versioned objects through the shared backend."""
+        return self._versioning.import_all_versioning(input_dir)
+
+    def compare_versioning(self, export_dir):
+        """Compare database objects with versioned files through the backend."""
+        return self._versioning.compare_versioning(export_dir)
+
+    def export_schema_ddl(self, out_dir):
+        """Export schema DDL through the shared backend."""
+        return self._versioning.export_schema_ddl(out_dir)
 
     # ------------------------------------------------------------------ #
     # Macro operations
