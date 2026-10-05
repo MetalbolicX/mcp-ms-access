@@ -747,3 +747,25 @@ credential detector.
 - Plan-047's "g13 3/3 CLEAN" durability evidence — superseded pending 087's
   repaired harness re-run (row 047 annotated by 087 Step 5).
 
+### Ad-hoc follow-ups from this cycle (not numbered plans)
+
+- **COM teardown E0/E1 (branch `plan/com-teardown-e0-e1`)** — from the
+  plan-088 RPC teardown diagnostics assessment (codes recorded since the
+  0.2.0 release, `docs/release/0.2.0-report.md:31`):
+  - E0 DONE (57a3bc6): integration tests no longer `taskkill /F /IM
+    MSACCESS.EXE` (killed every Access on the machine, violating the
+    product's own PID-only policy); baseline-relative assertions +
+    test-owned-PID fallback instead.
+  - E1 DONE (581e644): AccessAdapter/DaoAdapter connect-failure paths no
+    longer leak their STA dispatcher threads (owned-only teardown);
+    ComDispatcher.shutdown() now logs the join-timeout and PID-force-kill
+    branches (previously silent — implicated in the diagnostics).
+  - **E2 PENDING (operator-authorized live run)**: re-run
+    `tests/integration/test_access_adapter.py` on the Access-equipped
+    machine with stderr + Application event log captured; 3 consecutive
+    clean runs (no fatal-exception lines, baseline orphans only) is the
+    gate. E3 (code fix) only if E2 names a remaining cause; post-Quit
+    proxy release is unavoidable by construction — if noise persists
+    under graceful quits, document as an inherent pywin32 teardown
+    artifact per the 0.2.0 precedent instead of suppressing.
+
