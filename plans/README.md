@@ -658,7 +658,7 @@ credential detector.
 | 082  | [Connect non-core MCP profiles](082-connect-non-core-profiles.md) | 27 | P1 | M | MED | Strict TDD (per profile) | 079, 080 | DONE (ab48fab) |
 | 083  | [Migration full-DDL upload (FK + indexes)](083-migration-full-ddl-upload.md) | 28 | P1 | M | MED | Strict TDD + goldens | — | DONE (c663c90) |
 | 084  | [Migration verification gates success](084-migration-verification-gating.md) | 28 | P1 | S | MED | Characterization → strict TDD | 083 | DONE (17af0fe) |
-| 085  | [Versioning production wiring](085-versioning-production-wiring.md) | 29 | P1 | M | MED | Conformance-first strict TDD | 082 | DONE (6c3bf1e) — operator round-trip gate PENDING |
+| 085  | [Versioning production wiring](085-versioning-production-wiring.md) | 29 | P1 | M | MED | Conformance-first strict TDD | 082 | DONE (6c3bf1e) — round-trip gate PASSED 2026-10-05 (live export→delete→import byte-faithful + compare zero diffs on a %TEMP% scratch accdb; 3 gate-found defects fixed: typed-envelope consumption `95955dd`, export-all lister wiring + module-encoding/temp-leak `25974de`; see ad-hoc E3/E4) |
 | 086  | [Analysis envelope correctness](086-analysis-envelope-correctness.md) | 29 | P1 | S | LOW | Strict TDD | 082 | DONE (ee0169f) |
 | 087  | [g13 chaos gate repair + stale README claims](087-g13-harness-repair.md) | 30 | P2 | M | LOW | Direct edit + registry-conformance test | 078 (recommended) | DONE (0d45a18) — operator chaos re-run PENDING |
 | 088  | [limit honored end-to-end + bounded exports](088-limit-and-bounded-data.md) | 30 | P2 | M | MED | Strict TDD, probe-gated live TOP | 080, 084 | DONE (ef2bcb4) — TOP live verification PASSED 2026-10-05: `test_query_data_limit_returns_five_rows_from_twenty` green ×3 consecutive live runs (20-row temp table through real DAO adapter → exactly 5 rows) |
@@ -772,6 +772,24 @@ credential detector.
     (docs/release/0.2.0-report.md:31), classified as an inherent
     pywin32 post-Quit proxy-release artifact under graceful quits and
     documented — NOT suppressed. **No E3 cause named.**
+  - **E3 (CLI versioning teardown gap, found 2026-10-05 during the 085
+    gate)**: `ms-access-mcp versioning <sub>` exits without
+    disconnecting its adapter — the hidden Access `-Embedding` server
+    outlives the CLI process and keeps holding the database (observed
+    PID alive >2 min after exit, blocking subsequent opens with
+    "You already have the database open"; operator PID-scoped kill
+    required between gate steps). Evidence: PID + command line via
+    Win32_Process during the run. Fix candidate: CLI finally-disconnect
+    on the versioning use cases — separate authorization needed.
+  - **E4 (repo-path read-only mystery, found 2026-10-05)**: on this
+    machine every accdb under the repo path opens READ-ONLY through
+    Access (`Updatable=False`, `CreateQueryDef` → jeterr 5003027,
+    even exclusive, even the original fixture), while %TEMP% DBs are
+    fully writable. Ruled out: lock files, live processes, NTFS ACLs,
+    Controlled Folder Access (off), MOTW streams, reparse points;
+    drive is fixed NTFS. Mechanism unexplained — gates therefore run
+    on %TEMP% scratch copies (same convention as the integration
+    fixtures' `tempfile.mkdtemp`). Diagnosis deferred.
 
 ## Plans 094–097: deferred-findings cycle (2026-10-04)
 
