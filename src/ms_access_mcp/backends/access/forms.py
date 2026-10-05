@@ -456,7 +456,7 @@ def _remove_object_control(
         dispatcher,
         kind,
         object_name,
-        save_flag=2,
+        save_flag=1,
         work=work,
         on_error=on_error,
         default=False,

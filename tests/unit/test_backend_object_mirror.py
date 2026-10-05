@@ -388,11 +388,11 @@ class TestAddRemoveControlMirror:
 
         assert result is True
         assert live._controls[0].focused is True
-        # Plan 035: helper closes exactly once with acSaveNo (was: double-close).
+        # Removal must persist the deleted control.
         assert adapter._dispatcher.access_app.DoCmd.calls == [
             (tok["open"], "Obj1", 1),
             ("RunCommand", 365),
-            ("Close", tok["ac"], "Obj1", 2),
+            ("Close", tok["ac"], "Obj1", 1),
         ]
         assert live_calls == [(tok["live"], "Obj1")]
 
