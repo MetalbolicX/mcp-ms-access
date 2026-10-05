@@ -158,6 +158,7 @@ class TestVersioningUseCases:
         assert result.data["name"] == "Form1"
         assert result.data["data"] == "form code"
         assert "output_path" in result.data
+        assert (tmp_path / "out" / "forms_Form1.txt").read_text(encoding="utf-8") == "form code"
 
     def test_export_object_report_happy(self, tmp_path):
         from ms_access_mcp.application.versioning import VersioningUseCases
@@ -182,6 +183,29 @@ class TestVersioningUseCases:
         assert isinstance(result, Ok)
         assert result.data["kind"] == "module"
         assert result.data["name"] == "Module1"
+
+    def test_export_object_rejects_disallowed_output_file(self, tmp_path, monkeypatch):
+        from ms_access_mcp.application import versioning
+        from ms_access_mcp.application.versioning import VersioningUseCases
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        checks = []
+
+        def guard(path, allowed_dirs, *, must_exist=True):
+            checks.append((path, must_exist))
+            return len(checks) == 1
+
+        monkeypatch.setattr(versioning, "is_path_allowed", guard)
+        uc = VersioningUseCases(
+            adapter=FakeVersioningAdapter(), readonly=True, allowed_dirs=[tmp_path]
+        )
+        result = uc.export_object("form", "Form1", str(out_dir))
+
+        assert isinstance(result, Err)
+        assert result.message == "Output path not allowed"
+        assert len(checks) == 2
+        assert checks[1][1] is False
 
     def test_export_object_unknown_kind(self, tmp_path):
         from ms_access_mcp.application.versioning import VersioningUseCases

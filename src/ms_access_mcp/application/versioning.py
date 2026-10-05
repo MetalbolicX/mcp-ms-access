@@ -106,7 +106,14 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             data = getattr(self._adapter, export_method)(name)
             prefix, ext = resolved[2], resolved[3]
             safe_name = "".join(c if c.isalnum() or c in "_-" else "_" for c in name)
-            output_path = str(Path(out_dir) / f"{prefix}_{safe_name}{ext}")
+            output = Path(out_dir) / f"{prefix}_{safe_name}{ext}"
+            output_path = str(output)
+            if not is_path_allowed(output.parent, self._allowed_dirs, must_exist=False):
+                return _err("Output path not allowed")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if not is_path_allowed(output_path, self._allowed_dirs, must_exist=False):
+                return _err("Output path not allowed")
+            output.write_bytes(data.encode("utf-8"))
             return _ok(data={"kind": kind, "name": name, "data": data, "output_path": output_path})
         except Exception as e:
             return _err(str(e))
