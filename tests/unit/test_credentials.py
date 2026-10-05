@@ -16,6 +16,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 # The module under test
 from ms_access_mcp import credentials
 from ms_access_mcp.errors import Err, Ok
@@ -199,6 +201,68 @@ class TestLocalShadowsGlobal:
 
         result = credentials.resolve_password(db_path)
         assert result == "local_pw"
+
+
+def test_atomic_store_hardens_staging_file_before_replace(monkeypatch, tmp_path):
+    target = tmp_path / "credentials.json"
+    target.write_bytes(b"original")
+    events = []
+
+    if os.name == "nt":
+        def harden(path):
+            events.append(("harden", Path(path)))
+
+        monkeypatch.setattr(credentials, "_harden_nt", harden)
+    else:
+        original_chmod = Path.chmod
+
+        def chmod(path, mode, *args, **kwargs):
+            events.append(("harden", path))
+            return original_chmod(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "chmod", chmod)
+
+    original_replace = os.replace
+
+    def replace(source, destination):
+        events.append(("replace", Path(source)))
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(credentials.os, "replace", replace)
+
+    credentials._atomic_write_store(target, {"version": 1, "credentials": {}, "profiles": {}})
+
+    assert [event[0] for event in events] == ["harden", "replace"]
+    assert events[0][1] == events[1][1]
+    assert events[0][1] != target
+
+
+def test_atomic_store_hardening_failure_preserves_original_and_unlinks_staging(monkeypatch, tmp_path):
+    target = tmp_path / "credentials.json"
+    original = b"original store"
+    target.write_bytes(original)
+    staging_paths = []
+
+    def fail_hardening(path):
+        staging_paths.append(Path(path))
+        raise OSError("benign hardening failure")
+
+    if os.name == "nt":
+        monkeypatch.setattr(credentials, "_harden_nt", fail_hardening)
+    else:
+        def fail_chmod(path, _mode, *args, **kwargs):
+            fail_hardening(path)
+
+        monkeypatch.setattr(Path, "chmod", fail_chmod)
+
+    with pytest.raises(OSError, match="benign hardening failure"):
+        credentials._atomic_write_store(
+            target, {"version": 1, "credentials": {}, "profiles": {}}
+        )
+
+    assert target.read_bytes() == original
+    assert len(staging_paths) == 1
+    assert not staging_paths[0].exists()
 
 
 # =============================================================================

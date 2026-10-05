@@ -88,13 +88,15 @@ def _atomic_write_store(target: Path, payload: _CredentialsDict) -> None:
             json.dump(payload, fh, indent=2, ensure_ascii=False)
             fh.flush()
             os.fsync(fh.fileno())
-        Path(tmp_path_str).replace(target)
 
-        # Restrict POSIX permissions or apply an owner-only Windows DACL.
+        # Harden the staging file before rename so a failure leaves the
+        # existing store untouched and the source security descriptor travels.
+        tmp_path = Path(tmp_path_str)
         if os.name != "nt":
-            target.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            tmp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
         else:
-            _harden_nt(target)
+            _harden_nt(tmp_path)
+        tmp_path.replace(target)
     except BaseException:
         try:
             Path(tmp_path_str).unlink()
