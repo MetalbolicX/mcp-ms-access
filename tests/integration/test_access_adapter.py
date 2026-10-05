@@ -9,6 +9,37 @@ from pathlib import Path
 
 import pytest
 
+
+def _count_msaccess() -> int:
+    result = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return len([line for line in result.stdout.splitlines() if "MSACCESS.EXE" in line])
+
+
+def _kill_owned_access(adapter) -> None:
+    """Kill only this adapter's captured PID; never terminate all Access processes."""
+    pid = adapter._dispatcher._access_pid
+    if pid is None:
+        return
+    result = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if str(pid) in result.stdout:
+        subprocess.run(
+            ["taskkill", "/F", "/PID", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+
 pytestmark = [
     pytest.mark.skipif(
         __import__("os").name != "nt",
@@ -65,19 +96,11 @@ class TestAccessAdapterHidden:
         adapter.disconnect()  # should not raise
 
     def test_no_msaccess_orphans_after_disconnect(self, temp_db_copy):
-        """Integration: connect → read get_current_db_name() → disconnect; zero orphans within 10s."""
+        """Connect/disconnect returns process count to its pre-test baseline within 10s."""
         pytest.importorskip("win32com")
         from ms_access_mcp.backends.access import connect_hidden
 
-        # Ensure no orphans before starting
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "MSACCESS.EXE"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        time.sleep(1)
-
+        baseline = _count_msaccess()
         adapter = connect_hidden(temp_db_copy)
         try:
             db_name = adapter.get_current_db_name()
@@ -86,25 +109,20 @@ class TestAccessAdapterHidden:
         finally:
             adapter.disconnect()
 
-        # Wait up to 10 seconds for MSACCESS.EXE to disappear
-        orphan_lines: list[str] = []
+        # Wait up to 10 seconds for the process count to return to baseline.
         for _ in range(20):
             time.sleep(0.5)
-            result = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            orphan_lines = [ln for ln in result.stdout.splitlines() if "MSACCESS.EXE" in ln]
-            if not orphan_lines:
+            count = _count_msaccess()
+            if count == baseline:
                 break
         else:
-            pytest.fail(f"MSACCESS.EXE orphans still present after 10s: {orphan_lines}")
+            pytest.fail(
+                f"MSACCESS.EXE count did not return to baseline {baseline} within 10s: {count}"
+            )
 
     def test_single_open_invariant_two_consecutive_connects(self, temp_db_copy):
-        """Plan-065 Step 6 operator gate: two consecutive COM adapter connects
-        reuse exactly ONE MSACCESS.EXE process (connect-once invariant).
+        """Plan-065 Step 6 operator gate: two consecutive COM connects
+        reuse one process relative to the pre-test baseline.
 
         Note: the use-case layer is backend-agnostic since plan 071 — the
         default DAO backend opens databases without spawning MSACCESS.EXE at
@@ -114,14 +132,7 @@ class TestAccessAdapterHidden:
         pytest.importorskip("win32com")
         from ms_access_mcp.backends.access import connect_hidden
 
-        # Ensure no orphans before starting
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "MSACCESS.EXE"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        time.sleep(1)
+        baseline = _count_msaccess()
 
         # The architecture serializes COM opens (plan 066's session registry
         # keeps one adapter per session; a second concurrent open on the same
@@ -132,15 +143,6 @@ class TestAccessAdapterHidden:
         # that plan 065 fixed.
         db2 = str(Path(temp_db_copy).with_name(Path(temp_db_copy).stem + "_2.accdb"))
         shutil.copy2(temp_db_copy, db2)
-
-        def _count_msaccess() -> int:
-            result = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            return len([ln for ln in result.stdout.splitlines() if "MSACCESS.EXE" in ln])
 
         adapter1 = connect_hidden(temp_db_copy)
         try:
@@ -155,24 +157,22 @@ class TestAccessAdapterHidden:
             assert adapter2.connected is True
             assert adapter2.get_current_db_name()
             time.sleep(2)  # allow COM process state to settle
-            assert _count_msaccess() == 1, (
-                f"expected exactly 1 MSACCESS.EXE during the second connect cycle, "
-                f"got {_count_msaccess()}"
+            assert _count_msaccess() == baseline + 1, (
+                f"expected baseline + 1 ({baseline + 1}) MSACCESS.EXE during the second "
+                f"connect cycle, got {_count_msaccess()}"
             )
         finally:
             adapter2.disconnect()
 
-        # Teardown returns to zero within 10s (mirrors the orphan test)
+        # Teardown returns to the pre-test baseline within 10s.
         for _ in range(20):
             time.sleep(0.5)
-            if _count_msaccess() == 0:
+            count = _count_msaccess()
+            if count == baseline:
                 break
         else:
-            pytest.fail(f"MSACCESS.EXE orphans still present after 10s: count={_count_msaccess()}")
-        # Fallback cleanup: never leave MSACCESS.EXE behind
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "MSACCESS.EXE"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+            pytest.fail(
+                f"MSACCESS.EXE count did not return to baseline {baseline} within 10s: {count}"
+            )
+        # Fallback cleanup is scoped to this adapter's captured process only.
+        _kill_owned_access(adapter2)
