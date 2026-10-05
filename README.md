@@ -154,4 +154,4 @@ The G13 harness (`scripts/g13_kill_mid_write.py`) runs N rounds of: spawn server
 python scripts/g13_kill_mid_write.py --rounds 20 --seed 1
 ```
 
-The regression gate (`tests/integration/test_kill_mid_write.py`) runs 5 rounds in CI.```
+The kill-mid-write harness is a local operator gate and requires Windows with ACE; CI runs the unit suite.

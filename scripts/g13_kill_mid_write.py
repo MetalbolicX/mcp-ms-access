@@ -193,6 +193,13 @@ VERDICT_LOCK_STALE = "LOCK_STALE"
 VERDICT_REPAIRABLE = "REPAIRABLE"
 VERDICT_FATAL = "FATAL"
 
+# MCP calls made by this harness, kept inspectable for registry conformance.
+TOOL_CALLS = {
+    "open": ("connect_access", ("path",)),
+    "insert": ("insert_data", ("path", "table", "data", "confirm")),
+    "list": ("get_tables", ("path",)),
+}
+
 
 @dataclass
 class RoundResult:
@@ -209,6 +216,7 @@ class RoundResult:
     baseline_rows: dict[str, int] = field(default_factory=dict)  # table -> row count
     final_rows: dict[str, int] = field(default_factory=dict)
     committed_after_kill: list[str] = field(default_factory=list)  # ops confirmed before kill
+    successful_writes: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -312,32 +320,54 @@ def _mcp_handshake(proc: subprocess.Popen, tmpdir: Path) -> tuple:
     return stdin, stdout, reader, watchdog
 
 
+def _check_tool_response(resp: dict | None, tool_name: str) -> dict:
+    """Raise when a JSON-RPC tool call failed or returned success=false."""
+    if resp is None or "error" in resp:
+        raise RuntimeError(f"{tool_name} failed: {resp}")
+    result = resp.get("result")
+    if not isinstance(result, dict) or result.get("isError"):
+        raise RuntimeError(f"{tool_name} failed: {resp}")
+    payloads = [result.get("structuredContent")]
+    for item in result.get("content", []):
+        if item.get("type") == "text":
+            try:
+                payloads.append(json.loads(item.get("text", "")))
+            except (json.JSONDecodeError, TypeError):
+                continue
+    if any(isinstance(payload, dict) and payload.get("success") is False for payload in payloads):
+        raise RuntimeError(f"{tool_name} returned success=false: {resp}")
+    return result
+
+
 def _open_database(stdin, reader, watchdog: _Watchdog, tmpdir: Path, db_path: Path) -> int:
-    """Call open_database tool. Returns request_id of the call."""
+    """Call connect_access tool. Returns request_id of the call."""
     _send(stdin, {
         "jsonrpc": "2.0", "id": 10, "method": "tools/call",
         "params": {
-            "name": "open_database",
-            "arguments": {"path": str(db_path)},
+            "name": TOOL_CALLS["open"][0],
+            "arguments": {key: str(db_path) for key in TOOL_CALLS["open"][1]},
         },
     })
     resp = _recv(reader, 15.0, watchdog)
-    if resp is None or "error" in (resp or {}):
-        raise RuntimeError(f"open_database failed: {resp}")
+    _check_tool_response(resp, TOOL_CALLS["open"][0])
     return 10
 
 
-def _insert_data(stdin, reader, watchdog: _Watchdog, table: str, values: list[dict]) -> dict | None:
-    """Call insert_data tool. Returns the response or None on error."""
+def _insert_data(
+    stdin, reader, watchdog: _Watchdog, db_path: Path, table: str, data: dict
+) -> dict:
+    """Insert one row and raise if the tool reports failure."""
     _send(stdin, {
         "jsonrpc": "2.0", "id": 20, "method": "tools/call",
         "params": {
-            "name": "insert_data",
-            "arguments": {"table": table, "values": values},
+            "name": TOOL_CALLS["insert"][0],
+            "arguments": {
+                "path": str(db_path), "table": table, "data": data, "confirm": True,
+            },
         },
     })
     resp = _recv(reader, 20.0, watchdog)
-    return resp
+    return _check_tool_response(resp, TOOL_CALLS["insert"][0])
 
 
 # ---------------------------------------------------------------------------
@@ -391,17 +421,24 @@ def _run_kill_round(
 
         # Open the database
         _open_database(stdin, reader, watchdog, tmpdir, tmp_db)
+        successful_writes = 0
 
         # Determine kill timing based on phase
         if phase == PHASE_MID_BATCH:
-            # Insert some rows, kill during a large batch
+            # Confirm successful writes, then kill during an in-flight insert.
             for i in range(3):
-                _insert_data(stdin, reader, watchdog, "tasks", [{"title": f"pre_kill_{i}"}])
-            # Large batch — kill in the middle
-            large_batch = [{"title": f"batch_{j}"} for j in range(100)]
+                _insert_data(stdin, reader, watchdog, tmp_db, "tasks", {"title": f"pre_kill_{i}"})
+                successful_writes += 1
+            # Insert one row and kill while the operation is in flight.
+            batch_row = {"title": f"batch_{rng.randrange(100000)}"}
             _send(stdin, {
                 "jsonrpc": "2.0", "id": 30, "method": "tools/call",
-                "params": {"name": "insert_data", "arguments": {"table": "tasks", "values": large_batch}},
+                "params": {
+                    "name": TOOL_CALLS["insert"][0],
+                    "arguments": {
+                        "path": str(tmp_db), "table": "tasks", "data": batch_row, "confirm": True,
+                    },
+                },
             })
             # Kill immediately after sending (mid-batch)
             proc.kill()
@@ -411,9 +448,11 @@ def _run_kill_round(
         elif phase == PHASE_POST_COMMIT:
             # Insert + commit, then kill within 50ms window
             for i in range(3):
-                _insert_data(stdin, reader, watchdog, "tasks", [{"title": f"commit_{i}"}])
+                _insert_data(stdin, reader, watchdog, tmp_db, "tasks", {"title": f"commit_{i}"})
+                successful_writes += 1
             # Small insert that commits
-            _insert_data(stdin, reader, watchdog, "tasks", [{"title": "post_commit_target"}])
+            _insert_data(stdin, reader, watchdog, tmp_db, "tasks", {"title": "post_commit_target"})
+            successful_writes += 1
             # Kill within 50ms — just kill immediately after the response was received
             proc.kill()
             proc.wait(timeout=5)
@@ -422,11 +461,15 @@ def _run_kill_round(
         elif phase == PHASE_MID_READ:
             # Insert some data first, then do a SELECT and kill mid-read
             for i in range(5):
-                _insert_data(stdin, reader, watchdog, "tasks", [{"title": f"read_phase_{i}"}])
+                _insert_data(stdin, reader, watchdog, tmp_db, "tasks", {"title": f"read_phase_{i}"})
+                successful_writes += 1
             # Send a read tool call
             _send(stdin, {
                 "jsonrpc": "2.0", "id": 40, "method": "tools/call",
-                "params": {"name": "list_tables", "arguments": {}},
+                "params": {
+                    "name": TOOL_CALLS["list"][0],
+                    "arguments": {"path": str(tmp_db)},
+                },
             })
             # Kill during the read
             time.sleep(0.1)
@@ -465,6 +508,9 @@ def _run_kill_round(
 
     # Classify the outcome using a fresh server spawn
     verdict, fail_reason = _classify_outcome(tmp_db, baseline_checksum, baseline_rows)
+    verdict = _classify_round(verdict, successful_writes)
+    if successful_writes == 0 and not fail_reason:
+        fail_reason = "no successful writes before kill"
 
     return RoundResult(
         round_idx=round_idx,
@@ -476,7 +522,13 @@ def _run_kill_round(
         killed_orphans=killed_orphans,
         fail_reason=fail_reason,
         baseline_rows=baseline_rows,
+        successful_writes=successful_writes,
     )
+
+
+def _classify_round(verdict: str, successful_writes: int) -> str:
+    """A round without a confirmed write cannot establish a durability verdict."""
+    return "FAIL" if successful_writes == 0 else verdict
 
 
 def _classify_outcome(tmp_db: Path, baseline_checksum: str, baseline_rows: dict[str, int]) -> tuple[str, str]:
@@ -595,6 +647,10 @@ def _main() -> int:
         has_fatal = any(r.verdict == VERDICT_FATAL for r in results)
         if has_fatal:
             print("[FAIL] FATAL verdict(s) detected — unrecovered corruption")
+            return 1
+        failed_rounds = [r for r in results if r.verdict == "FAIL"]
+        if failed_rounds:
+            print(f"[FAIL] {len(failed_rounds)} round(s) failed")
             return 1
 
         print("[PASS] all rounds recovered or retryable")
