@@ -31,9 +31,6 @@ logger = logging.getLogger(__name__)
 # Compile command IDs by Access version (most likely first)
 _COMPILE_CMD_IDS = [301, 206, 317, 232]
 
-# Module-level cache for preserve_trusted_locations
-_TRUSTED_LOCATIONS_PRESERVE = False
-
 # XML template for creating empty macros (kept here for backward compatibility)
 _MACRO_TEMPLATE = (
     '<?xml version="1.0" encoding="UTF-16" standalone="no"?>\n'
@@ -253,10 +250,10 @@ class AccessAdapter:
         )
 
     def _trusted_locations_wrap(self, func, *args, **kwargs):
-        """Execute func(*args, **kwargs) with Trusted Locations preservation if enabled.
+        """Run the operation unchanged; no Trusted Locations registry mutation occurs.
 
-        Captures Trusted Locations before the call and restores after,
-        controlled by ACCESS_MCP_PRESERVE_TRUSTED_LOCATIONS env var (default False).
+        The preserve opt-in was never enabled. The cross-hive restore defect
+        recorded in the plans ledger is a precondition for any future implementation.
         """
         return trusted_locations.trusted_locations_wrap(func, *args, **kwargs)
 

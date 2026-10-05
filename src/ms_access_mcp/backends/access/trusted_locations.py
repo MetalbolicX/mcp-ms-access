@@ -9,11 +9,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from ..trusted_locations import capture_trusted_locations, restore_trusted_locations
-
 logger = logging.getLogger(__name__)
-
-_TRUSTED_LOCATIONS_PRESERVE = False
 
 _T = TypeVar("_T")
 
@@ -21,21 +17,13 @@ _T = TypeVar("_T")
 def trusted_locations_wrap(
     func: Callable[..., _T], *args: Any, **kwargs: Any
 ) -> _T:
-    """Execute func(*args, **kwargs) with Trusted Locations preservation if enabled.
+    """Run the operation unchanged; no Trusted Locations registry mutation occurs.
 
-    Captures Trusted Locations before the call and restores after,
-    controlled by ACCESS_MCP_PRESERVE_TRUSTED_LOCATIONS env var (default False).
+    The preserve opt-in was never enabled. The underlying cross-hive restore
+    defect recorded in the plans ledger is a precondition for any future
+    implementation, so this wrapper deliberately remains a passthrough.
     """
-    global _TRUSTED_LOCATIONS_PRESERVE
-    if not _TRUSTED_LOCATIONS_PRESERVE:
-        return func(*args, **kwargs)
-
-    captured = capture_trusted_locations()
-    try:
-        return func(*args, **kwargs)
-    finally:
-        if captured:
-            restore_trusted_locations(captured)
+    return func(*args, **kwargs)
 
 
 def list_objects(
