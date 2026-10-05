@@ -656,7 +656,7 @@ credential detector.
 | 080  | [Facade↔backend contract truth](080-facade-adapter-contract-truth.md) | 27 | P1 | M | MED | Characterization → strict TDD | 077 | DONE (140cdac) |
 | 081  | [Action-SQL routing + db-property honesty](081-action-sql-db-property-honesty.md) | 27 | P1 | S | MED | Strict TDD | 080 | DONE (d22ada3) |
 | 082  | [Connect non-core MCP profiles](082-connect-non-core-profiles.md) | 27 | P1 | M | MED | Strict TDD (per profile) | 079, 080 | DONE (ab48fab) |
-| 083  | [Migration full-DDL upload (FK + indexes)](083-migration-full-ddl-upload.md) | 28 | P1 | M | MED | Strict TDD + goldens | — | TODO |
+| 083  | [Migration full-DDL upload (FK + indexes)](083-migration-full-ddl-upload.md) | 28 | P1 | M | MED | Strict TDD + goldens | — | DONE (c663c90) |
 | 084  | [Migration verification gates success](084-migration-verification-gating.md) | 28 | P1 | S | MED | Characterization → strict TDD | 083 | TODO |
 | 085  | [Versioning production wiring](085-versioning-production-wiring.md) | 29 | P1 | M | MED | Conformance-first strict TDD | 082 | TODO |
 | 086  | [Analysis envelope correctness](086-analysis-envelope-correctness.md) | 29 | P1 | S | LOW | Strict TDD | 082 | TODO |
