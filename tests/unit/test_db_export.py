@@ -5,8 +5,50 @@ Plan 057 — SQL injection hardening for the application-layer export path.
 
 from __future__ import annotations
 
-from ms_access_mcp.application.db_export import _build_iisam_insert_sql
+from ms_access_mcp.application.db_export import _build_iisam_insert_sql, export_data
 from ms_access_mcp.errors import Err, Ok
+from ms_access_mcp.models import QueryResult
+
+
+class TestCsvExportStreaming:
+    def test_csv_streaming_preserves_exact_output_bytes(self, tmp_path):
+        class StreamRows:
+            def __init__(self):
+                self.rows = [{"id": 1, "name": "Ada"}, {"id": 2, "name": "Zoë"}]
+
+            def __iter__(self):
+                return iter(self.rows)
+
+            def __len__(self):
+                raise AssertionError("CSV export must count while writing, not materialize rows")
+
+            def __getitem__(self, _index):
+                raise AssertionError("CSV export must stream rather than index the row set")
+
+            def __deepcopy__(self, _memo):
+                return self
+
+        rows = StreamRows()
+
+        class Adapter:
+            def execute_query(self, sql, params=None, limit=None):
+                assert sql == "SELECT * FROM [Users]"
+                assert params is None and limit is None
+                return QueryResult(success=True, rows=rows, count=2, columns=["id", "name"])
+
+        output_path = tmp_path / "users.csv"
+        result = export_data(
+            Adapter(),
+            policy=None,
+            allowed_dirs=[tmp_path],
+            table_or_query="Users",
+            output_path=str(output_path),
+            format="csv",
+        )
+
+        assert isinstance(result, Ok)
+        assert result.rowcount == 2
+        assert output_path.read_bytes() == b"id,name\r\n1,Ada\r\n2,Zo\xc3\xab\r\n"
 
 
 class TestBuildIisamInsertSqlConnectionStringHardening:

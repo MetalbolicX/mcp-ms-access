@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import dataclasses
 import inspect
 import json
 import os
@@ -83,7 +82,7 @@ def _query_adapter(adapter: Any, sql: str) -> Result:
             kwargs["limit"] = None
         result = method(sql, **kwargs)
         if isinstance(result, QueryResult):
-            result = dataclasses.asdict(result)
+            return _ok(data=result.rows, rowcount=result.count)
         if isinstance(result, dict):
             if "rows" in result:
                 return _ok(data=result.get("rows", []), rowcount=result.get("count", 0))
@@ -165,16 +164,23 @@ def export_data(
 
         # Export to file
         if format == "csv":
+            row_iterator = iter(rows)
+            first_row = next(row_iterator, None)
+            written_rows = 0
             with Path(output_path).open("w", newline="", encoding="utf-8") as f:
-                if rows:
-                    writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+                if first_row is not None:
+                    writer = csv.DictWriter(f, fieldnames=first_row.keys())
                     writer.writeheader()
-                    writer.writerows(rows)
-                else:
-                    f.write("")
-        else:  # json
-            with Path(output_path).open("w", encoding="utf-8") as f:
-                json.dump(rows, f, indent=2, default=str)
+                    writer.writerow(first_row)
+                    written_rows = 1
+                    for row in row_iterator:
+                        writer.writerow(row)
+                        written_rows += 1
+            return _ok(rowcount=written_rows)
+
+        # JSON remains a single document; its encoder needs the complete payload.
+        with Path(output_path).open("w", encoding="utf-8") as f:
+            json.dump(rows, f, indent=2, default=str)
 
         return _ok(rowcount=len(rows))
     except Exception as e:
