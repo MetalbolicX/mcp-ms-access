@@ -1374,7 +1374,7 @@ class TestVBA:
         assert isinstance(result, Ok)
 
     def test_compile_vba_success_no_errors(self):
-        """compile_vba returns Ok with empty compileErrors."""
+        """compile_vba treats command acceptance as success; errors are optional."""
         from ms_access_mcp.application.automation import AutomationUseCases
 
         fake = FakeAccessAdapter()
@@ -1383,8 +1383,20 @@ class TestVBA:
         assert isinstance(result, Ok)
         assert result.data["compileErrors"] == []
 
-    def test_compile_vba_success_with_errors(self):
-        """compile_vba passes through compileErrors."""
+    def test_compile_vba_omits_errors_when_backend_does_not_provide_them(self):
+        """An accepted compile command must not imply an empty detected-error list."""
+        from ms_access_mcp.application.automation import AutomationUseCases
+
+        class FakeWithoutErrors(FakeAccessAdapter):
+            def compile_vba(self):
+                return {"success": True}
+
+        result = AutomationUseCases(adapter=FakeWithoutErrors()).compile_vba()
+        assert isinstance(result, Ok)
+        assert "compileErrors" not in result.data
+
+    def test_compile_vba_passes_backend_provided_compile_errors(self):
+        """compileErrors pass through only when provided by the backend."""
         from ms_access_mcp.application.automation import AutomationUseCases
 
         class FakeWithErrors(FakeAccessAdapter):

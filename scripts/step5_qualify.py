@@ -5,7 +5,7 @@ shell (subagent COM claims are not trusted).
 
 Verifies:
 1. Hidden-session invariant (no visible window) during form-open + VBA-compile workload.
-2. VBA lifecycle: inject deliberate compile error → structured errors returned; fix → clean compile.
+2. VBA lifecycle: inject deliberately invalid code, verify the compile command is accepted, then fix it.
 3. 10 open/close session rounds → zero orphans.
 4. Canonical fixture hash unchanged.
 
@@ -127,7 +127,7 @@ def test_hidden_session_invariant(temp_db: Path) -> None:
 
 
 def test_vba_lifecycle(temp_db: Path) -> None:
-    """Inject a deliberate compile error → structured error; fix → clean compile."""
+    """Verify the compile command is accepted for invalid code, then fix the module."""
     from ms_access_mcp.backends.access import AccessAdapter
 
     print("\n=== TEST 2: VBA lifecycle (error injection + fix) ===")
@@ -158,10 +158,9 @@ def test_vba_lifecycle(temp_db: Path) -> None:
             fail("set_vba_code returned False")
         print("  set broken code: ok")
 
-        # Compile — should succeed at write-level but may report errors
-        # Actually compile_vba's success=False indicates dialog/cmd failure, not compile errors.
-        # Compile errors surface in the VBE as dialog boxes (handled by _dialog_killer).
-        # For now, verify compile_vba returns a structured dict with 'success' key
+        # Success means the compile command was accepted, not that the project compiled.
+        # Whether RunCommand raises for compile errors with the PID-scoped dialog killer
+        # is an open, operator-verified question; this script cannot establish it.
         result = adapter.compile_vba()
         print(f"  compile_vba after bad code: {result}")
         if not isinstance(result, dict):
@@ -195,7 +194,7 @@ def test_vba_lifecycle(temp_db: Path) -> None:
         else:
             print(f"  deleted {bad_module}: ok")
 
-        pass_("VBA lifecycle: error injection, fix, and clean compile all worked")
+        pass_("VBA lifecycle: compile command accepted for invalid code, then fixed")
     finally:
         adapter.disconnect()
 

@@ -820,8 +820,9 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
         """Compile the VBA project.
 
         Returns:
-            Ok with {"compileErrors": [...]} on success,
-            Err with error message on failure.
+            Ok when a compile command is accepted; ``compileErrors`` is included
+            only when the backend provides it (the Access adapter does not).
+            Err with error message when no compile command is accepted.
         """
         if err := self._ensure_adapter():
             return err
@@ -835,7 +836,10 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
             if isinstance(result, dict):
                 if not result.get("success", False):
                     return _err(result.get("error", "compile failed"))
-                return _ok(data={"compileErrors": result.get("compileErrors", [])})
+                data = {}
+                if "compileErrors" in result:
+                    data["compileErrors"] = result["compileErrors"]
+                return _ok(data=data)
             return _err(f"compile_vba returned unexpected type: {type(result)}")
         except Exception as e:
             return _err(str(e))
