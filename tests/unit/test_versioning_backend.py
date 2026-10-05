@@ -522,6 +522,18 @@ class TestImportAllOrder:
                 f.write(b"\xff\xfe")
                 f.write(f"Content_{name}".encode("utf-16-le"))
 
+    def test_bas_module_files_are_imported(self):
+        modules = self.tmpdir / "modules"
+        modules.mkdir()
+        (modules / "modules_modBas.bas").write_text("Sub Test()\nEnd Sub", encoding="utf-8")
+        imported = []
+        self.backend.import_module_from_text = lambda name, code: imported.append(name) or True
+
+        result = self.backend.import_all_versioning(self.tmpdir)
+
+        assert result.imported["modules"] == ["modBas"]
+        assert imported == ["modBas"]
+
     def test_modules_loaded_first(self):
         self._install_mocks()
         self._make_files()
@@ -650,6 +662,18 @@ class TestCompareVersioning:
         result = self.backend.compare_versioning(self.tmpdir)
         changed_names = [x.name for x in result.changed]
         assert "frmChanged" in changed_names
+
+    def test_bas_module_files_are_compared(self):
+        modules = self.tmpdir / "modules"
+        modules.mkdir()
+        module_file = modules / "modules_modTest.bas"
+        self._write_bom_text(str(module_file), "module contents")
+        self.backend._list_db_modules = lambda: ["modTest"]
+        self.backend.export_module_to_text = lambda name: "module contents"
+
+        result = self.backend.compare_versioning(self.tmpdir)
+
+        assert [(item.kind, item.name) for item in result.unchanged] == [("module", "modTest")]
 
     def test_unchanged(self):
         same_content = "samecontent"

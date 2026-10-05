@@ -19,6 +19,8 @@ from ..models import (
 )
 from .protocols import VersioningDispatcherProtocol
 
+MODULE_EXT = ".bas"
+
 
 class VersioningBackend:
     """SaveAsText/LoadFromText operations for forms, reports, macros, queries, and VBA modules.
@@ -254,7 +256,7 @@ class VersioningBackend:
         out_dir: Path | str,
         *,
         dedup: bool = True,
-        module_ext: str = ".bas",
+        module_ext: str = MODULE_EXT,
         list_forms: Callable[[], Sequence[Any]] | None = None,
         list_reports: Callable[[], Sequence[Any]] | None = None,
         list_modules: Callable[[], Sequence[Any]] | None = None,
@@ -351,7 +353,7 @@ class VersioningBackend:
                 content = self.export_module_to_text(module_name)
                 if content:
                     safe = self._safe_filename(module_name)
-                    ext = module_ext if module_ext else ".bas"
+                    ext = module_ext if module_ext else MODULE_EXT
                     filename = f"modules_{safe}{ext}"
                     if write_if_changed("module", subdirs["modules"], filename, content):
                         exported["modules"].append(module_name)
@@ -407,8 +409,11 @@ class VersioningBackend:
             if not subdir.is_dir():
                 continue
 
-            pattern = f"{subdir_name}_*.txt"
-            for file_path in sorted(subdir.glob(pattern)):
+            patterns = [f"{subdir_name}_*.txt"]
+            if subdir_name == "modules":
+                patterns.append(f"{subdir_name}_*{MODULE_EXT}")
+            file_paths = sorted({path for pattern in patterns for path in subdir.glob(pattern)})
+            for file_path in file_paths:
                 content = self._decode_file(file_path)
                 name = file_path.stem[len(subdir_name) + 1:]
                 try:
@@ -449,11 +454,14 @@ class VersioningBackend:
         export_path = Path(export_dir)
         kind_map = ObjectKind.KIND_MAP()
 
-        def scan_dir(subdir: Path, prefix: str) -> dict[str, str]:
+        def scan_dir(subdir: Path, prefix: str, module_files: bool = False) -> dict[str, str]:
             result = {}
             if not subdir.is_dir():
                 return result
-            for fp in subdir.glob(f"{prefix}_*.txt"):
+            patterns = [f"{prefix}_*.txt"]
+            if module_files:
+                patterns.append(f"{prefix}_*{MODULE_EXT}")
+            for fp in sorted({path for pattern in patterns for path in subdir.glob(pattern)}):
                 name = fp.stem[len(prefix) + 1:]
                 result[name] = VersioningBackend._decode_file(fp)
             return result
@@ -495,7 +503,9 @@ class VersioningBackend:
 
             # Exported files: subdir and filename prefix use plural kind_name
             subdir = export_path / f"{kind_name}s"
-            exported_objects[kind_name] = scan_dir(subdir, f"{kind_name}s")
+            exported_objects[kind_name] = scan_dir(
+                subdir, f"{kind_name}s", module_files=kind_name == "module"
+            )
 
         new: list[ObjectTextRef] = []
         missing: list[ObjectTextRef] = []
