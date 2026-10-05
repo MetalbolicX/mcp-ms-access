@@ -192,16 +192,16 @@ class SchemaInspector:
                 name = rel.Name
                 if name.startswith("~") or name.startswith("MSys"):
                     continue
-                child_cols: list[str] = []
                 parent_cols: list[str] = []
+                child_cols: list[str] = []
                 for j in range(rel.Fields.Count):
-                    child_cols.append(rel.Fields(j).Name)
-                    parent_cols.append(rel.Fields(j).ForeignName)
+                    parent_cols.append(rel.Fields(j).Name)
+                    child_cols.append(rel.Fields(j).ForeignName)
                 rels.append(
                     RelationshipInfo(
                         name=name,
-                        table=rel.Table,
-                        foreign_table=rel.ForeignTable,
+                        table=rel.ForeignTable,
+                        foreign_table=rel.Table,
                         attributes=str(rel.Attributes),
                         columns=child_cols,
                         foreign_columns=parent_cols,
@@ -414,16 +414,16 @@ class SchemaInspector:
             for rel in db.Relations:
                 if rel.Name.startswith("~") or rel.Name.startswith("MSys"):
                     continue
-                child_cols: list[str] = []
                 parent_cols: list[str] = []
+                child_cols: list[str] = []
                 for j in range(rel.Fields.Count):
-                    child_cols.append(rel.Fields(j).Name)
-                    parent_cols.append(rel.Fields(j).ForeignName)
+                    parent_cols.append(rel.Fields(j).Name)
+                    child_cols.append(rel.Fields(j).ForeignName)
                 relationships.append(
                     RelationshipInfo(
                         name=rel.Name,
-                        table=rel.Table,
-                        foreign_table=rel.ForeignTable,
+                        table=rel.ForeignTable,
+                        foreign_table=rel.Table,
                         attributes=str(rel.Attributes),
                         columns=child_cols,
                         foreign_columns=parent_cols,
@@ -433,7 +433,7 @@ class SchemaInspector:
                     ForeignKeyInfo(
                         name=rel.Name,
                         columns=child_cols,
-                        foreign_table=rel.ForeignTable,
+                        foreign_table=rel.Table,
                         foreign_columns=parent_cols,
                     )
                 )

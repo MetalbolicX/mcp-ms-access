@@ -204,26 +204,26 @@ class TestDaoSchemaExtraction:
             if rels:
                 # Reuse the first relationship's table pair to avoid inventing data
                 rel = rels[0]
-                t1, t2 = rel.table, rel.foreign_table
-                # Pick the first column pair that exists
-                columns = rel.columns[:1]
-                foreign_columns = rel.foreign_columns[:1]
+                child_table, parent_table = rel.table, rel.foreign_table
+                # The DAO create API takes parent-side fields first.
+                parent_columns = rel.foreign_columns[:1]
+                child_columns = rel.columns[:1]
             else:
                 # Fallback: use first two tables, assuming they share an "id" column
-                t1 = tables[0].name
-                t2 = tables[1].name
-                columns = ["id"]
-                foreign_columns = ["id"]
+                parent_table = tables[0].name
+                child_table = tables[1].name
+                parent_columns = ["id"]
+                child_columns = ["id"]
 
             test_rel_name = "temp_test_fk_relationship"
 
             # Create
             create_result = adapter.create_relationship(
-                table_name=t1,
+                table_name=parent_table,
                 relationship_name=test_rel_name,
-                columns=columns,
-                foreign_table=t2,
-                foreign_columns=foreign_columns,
+                columns=parent_columns,
+                foreign_table=child_table,
+                foreign_columns=child_columns,
             )
             assert create_result.success is True, (
                 f"create_relationship failed: {create_result.error or 'unknown'}"
@@ -236,9 +236,14 @@ class TestDaoSchemaExtraction:
                 f"Created relationship '{test_rel_name}' not found in "
                 f"{[r.name for r in rels_after]}"
             )
+            created_rel = next(r for r in rels_after if r.name == test_rel_name)
+            assert created_rel.table == child_table
+            assert created_rel.foreign_table == parent_table
+            assert created_rel.columns == child_columns
+            assert created_rel.foreign_columns == parent_columns
 
             # Delete
-            delete_result = adapter.delete_relationship(t1, test_rel_name)
+            delete_result = adapter.delete_relationship(parent_table, test_rel_name)
             assert delete_result.success is True, (
                 f"delete_relationship failed: {delete_result.error or 'unknown'}"
             )

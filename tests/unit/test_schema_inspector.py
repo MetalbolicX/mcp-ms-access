@@ -387,10 +387,10 @@ class TestGetRelationships:
         rels_out = insp.get_relationships()
         assert len(rels_out) == 1
         assert rels_out[0].name == "FK_Customers_Orders"
-        assert rels_out[0].table == "Customers"
-        assert rels_out[0].foreign_table == "Orders"
-        assert rels_out[0].columns == ["id"]  # child
-        assert rels_out[0].foreign_columns == ["customer_id"]  # parent
+        assert rels_out[0].table == "Orders"  # child
+        assert rels_out[0].foreign_table == "Customers"  # parent
+        assert rels_out[0].columns == ["customer_id"]
+        assert rels_out[0].foreign_columns == ["id"]
 
     def test_skips_msys_relationships(self) -> None:
         rels = [
@@ -406,6 +406,30 @@ class TestGetRelationships:
 
 
 class TestGetTableSchemaPlan:
+    def test_attaches_foreign_key_to_child_table(self) -> None:
+        customer_id = FakeField("id", 4, attributes=0x10)
+        order_id = FakeField("id", 4, attributes=0x10)
+        customer_fk = FakeField("customer_id", 4)
+        tables = [
+            FakeTableDef("Customers", [customer_id], [FakeIndex("PK_Customers", [customer_id], primary=True)]),
+            FakeTableDef("Orders", [order_id, customer_fk], [FakeIndex("PK_Orders", [order_id], primary=True)]),
+        ]
+        relation = FakeRelation(
+            "FK_Orders_Customers",
+            "Customers",
+            "Orders",
+            [FakeRelField("id", "customer_id")],
+        )
+        inspector = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=tables, rels=[relation])))
+
+        schemas, _ = inspector.get_table_schema_plan()
+        by_name = {schema.name: schema for schema in schemas}
+
+        assert by_name["Orders"].foreign_keys[0].columns == ["customer_id"]
+        assert by_name["Orders"].foreign_keys[0].referenced_table == "Customers"
+        assert by_name["Orders"].foreign_keys[0].referenced_columns == ["id"]
+        assert by_name["Customers"].foreign_keys == []
+
     def test_returns_table_schemas(self) -> None:
         id_field = FakeField("id", 4, attributes=0x10)  # autoincrement
         name_field = FakeField("Name", 10, size=100, required=True)
@@ -558,6 +582,31 @@ class TestGenerateSql:
         assert "[id]" in content
         assert "[Name]" in content
         assert "PRIMARY KEY" in content
+
+    def test_generate_sql_uses_child_and_parent_fk_orientation(self, tmp_path: Any) -> None:
+        from pathlib import Path
+
+        customer_id = FakeField("id", 4)
+        order_id = FakeField("id", 4)
+        customer_fk = FakeField("customer_id", 4)
+        tables = [
+            FakeTableDef("Customers", [customer_id], [FakeIndex("PK_Customers", [customer_id], primary=True)]),
+            FakeTableDef("Orders", [order_id, customer_fk], [FakeIndex("PK_Orders", [order_id], primary=True)]),
+        ]
+        relation = FakeRelation(
+            "FK_Orders_Customers",
+            "Customers",
+            "Orders",
+            [FakeRelField("id", "customer_id")],
+        )
+        inspector = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=tables, rels=[relation])))
+        output_path = tmp_path / "foreign_keys.sql"
+
+        result = inspector.generate_sql(str(output_path))
+
+        assert result.success is True
+        content = Path(output_path).read_text(encoding="utf-8")
+        assert "FOREIGN KEY ([customer_id]) REFERENCES [Customers]([id])" in content
 
     def test_generate_sql_disconnected_returns_error(self) -> None:
         dispatcher = FakeDispatcher(db=None, connected=False)
