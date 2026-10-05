@@ -146,3 +146,17 @@ def test_database_linked_table_scrubs_error(method, args, marker):
     assert isinstance(result, Err)
     assert "sekret" not in result.message
     assert "PWD=" not in result.message and "Password=" not in result.message
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "; PWD=scrubme;X=1",
+        "PWD = scrubme",
+        "Server=x; PWD=scrubme",
+    ],
+)
+def test_strip_password_tolerates_whitespace_boundaries(text):
+    from ms_access_mcp.errors import strip_password
+
+    assert "scrubme" not in strip_password(text)

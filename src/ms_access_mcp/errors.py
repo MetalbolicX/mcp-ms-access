@@ -16,9 +16,9 @@ def strip_password(text: str) -> str:
     import re
 
     patterns = [
-        re.compile(r"(?i)(?:^|;)PWD=(?:\"[^\"]*\"|'[^']*'|[^;]*)(?=[;:]|$)", re.IGNORECASE),
-        re.compile(r"(?i)(?:^|;)Password=(?:\"[^\"]*\"|'[^']*'|[^;]*)(?=[;:]|$)", re.IGNORECASE),
-        re.compile(r"(?i)(?:^|;)Jet OLEDB:Database Password=(?:\"[^\"]*\"|'[^']*'|[^;]*)(?=[;:]|$)", re.IGNORECASE),
+        re.compile(r"(?i)(?:^|;)\s*PWD\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^;]*)(?=[;:]|$)", re.IGNORECASE),
+        re.compile(r"(?i)(?:^|;)\s*Password\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^;]*)(?=[;:]|$)", re.IGNORECASE),
+        re.compile(r"(?i)(?:^|;)\s*Jet OLEDB:Database Password\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^;]*)(?=[;:]|$)", re.IGNORECASE),
     ]
     result = text
     for pattern in patterns:

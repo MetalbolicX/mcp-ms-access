@@ -191,6 +191,31 @@ class TestResultEnvelopes:
         assert result.message == "error occurred"
 
 
+def test_open_database_scrubs_repr_escaped_password_without_stderr(monkeypatch, tmp_path, capsys):
+    password = 'scrub\\me"quote'
+    connect_string = f"Driver={{ODBC}};PWD={password};Server=example"
+    database_path = tmp_path / "database.accdb"
+    database_path.touch()
+
+    class FailingAdapter:
+        def connect(self, _path, **_kwargs):
+            raise RuntimeError(connect_string)
+
+    monkeypatch.setattr(
+        "ms_access_mcp.application.database.BackendSelector.get_adapter",
+        lambda **_kwargs: FailingAdapter(),
+    )
+    monkeypatch.setattr("ms_access_mcp.credentials.resolve_password", lambda _path: password)
+
+    result = DatabaseUseCases(allowed_dirs=[tmp_path]).open_database(str(database_path))
+
+    captured = capsys.readouterr()
+    assert isinstance(result, Err)
+    assert password not in result.message
+    assert "PWD=" not in result.message
+    assert captured.err == ""
+
+
 class TestConnectionManagement:
     """Test connection management use cases."""
 

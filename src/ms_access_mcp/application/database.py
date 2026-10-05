@@ -7,6 +7,7 @@ All destructive ops gated via safety.require_acknowledgment.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import os
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -32,6 +33,7 @@ from .db_export import export_data as _export_data
 
 _ok = ok  # backward-compat aliases; remove in a later cleanup
 _err = err
+_logger = logging.getLogger(__name__)
 
 
 def _get_lock_file(db_path: str) -> str | None:
@@ -191,12 +193,13 @@ class DatabaseUseCases:
 
             return _ok(data=extra_data)
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
-            message = f"connect failed: {e!r}"
+            raw_message = f"connect failed: {e}"
+            message = strip_password(raw_message)
             if password:
                 message = message.replace(password, "***")
+                if password in raw_message and password not in message:
+                    message = f"{message} ***"
+            _logger.debug("%s", message)
             return _err(message)
 
     def close_database(self, connection_name: str = "default") -> Result:
