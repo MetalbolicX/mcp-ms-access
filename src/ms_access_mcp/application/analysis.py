@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any
+
+from ..errors import Err, Ok
 
 __all__ = ["QueryAnalyzerService", "SQLParseResult", "generate_recommendations"]
 
@@ -254,6 +257,7 @@ class QueryAnalyzerService:
         db_use_cases: Any,
         dry_run: bool = False,
         sample_size: int = 0,
+        connection_name: str = "default",
     ) -> dict[str, Any]:
         """Analyze a SQL query.
 
@@ -262,7 +266,9 @@ class QueryAnalyzerService:
             params: Optional query parameters
             db_use_cases: DatabaseUseCases instance (adapter seam)
             dry_run: If True, skip execution and return structural analysis only
-            sample_size: Number of rows to sample for timing (0 = full execution)
+            sample_size: Limit analyzed rows after query execution (0 = all rows).
+                This is post-execution row limiting, not a SQL TOP rewrite.
+            connection_name: Named database connection used for schema and query calls.
 
         Returns:
             Dict with analysis results: success, statement_type, tables_involved,
@@ -284,6 +290,7 @@ class QueryAnalyzerService:
                 "tables_involved": parse_result.tables_involved,
                 "complexity": cls._complexity_rating(parse_result),
                 "is_select": False,
+                "connection_name": connection_name,
                 "error": "Not a SELECT statement",
             }
 
@@ -291,13 +298,17 @@ class QueryAnalyzerService:
         schema_info: dict[str, Any] = {}
         for table_name in parse_result.tables_involved:
             try:
-                schema_result = db_use_cases.get_table_schema(table_name)
-                if hasattr(schema_result, "is_ok") and schema_result.is_ok():
-                    schema_info[table_name] = schema_result.unwrap()
-                elif hasattr(schema_result, "data"):
-                    schema_info[table_name] = schema_result["data"]
-            except Exception:
-                schema_info[table_name] = {}
+                schema_result = db_use_cases.get_table_schema(
+                    table_name, connection_name=connection_name
+                )
+                if isinstance(schema_result, Ok):
+                    schema_info[table_name] = schema_result.data
+                elif isinstance(schema_result, Err):
+                    schema_info[table_name] = {"error": schema_result.message}
+                else:
+                    schema_info[table_name] = {"error": "Unexpected schema result"}
+            except Exception as e:
+                schema_info[table_name] = {"error": str(e)}
 
         # Generate structural recommendations
         recommendations = generate_recommendations(parse_result, schema_info, None, sql)
@@ -320,43 +331,58 @@ class QueryAnalyzerService:
             "schema": schema_info,
             "recommendations": recommendations,
             "is_select": True,
+            "connection_name": connection_name,
         }
 
         # Execute if not dry run
         if not dry_run:
+            start_time = perf_counter()
             try:
-                query_result = db_use_cases.query_data(sql, params=params)
-                if hasattr(query_result, "is_ok"):
-                    if query_result.is_ok():
-                        data = query_result.unwrap() if hasattr(query_result, "unwrap") else {}
-                        rowcount = getattr(query_result, "rowcount", len(data)) if isinstance(data, (list, tuple)) else 0
-                        result["timing"] = {"executed": True, "rowcount": rowcount}
-                        result["recommendations"] = generate_recommendations(
-                            parse_result, schema_info,
-                            {"rowcount": rowcount}, sql
-                        )
-                    else:
-                        result["timing"] = {
+                query_result = db_use_cases.query_data(
+                    sql, params=params, connection_name=connection_name
+                )
+                duration_ms = (perf_counter() - start_time) * 1000
+                if isinstance(query_result, Err):
+                    result.update(
+                        success=False,
+                        error=query_result.message,
+                        timing={
                             "executed": False,
-                            "error": str(query_result) if query_result else "Unknown error"
-                        }
-                elif isinstance(query_result, dict):
-                    if query_result.get("success"):
-                        result["timing"] = {
-                            "executed": True,
-                            "rowcount": query_result.get("rowcount", 0)
-                        }
-                        result["recommendations"] = generate_recommendations(
-                            parse_result, schema_info,
-                            {"rowcount": query_result.get("rowcount", 0)}, sql
-                        )
-                    else:
-                        result["timing"] = {
-                            "executed": False,
-                            "error": query_result.get("error", "Query failed")
-                        }
+                            "duration_ms": duration_ms,
+                            "error": query_result.message,
+                        },
+                    )
+                elif isinstance(query_result, Ok):
+                    rows = query_result.data or []
+                    if sample_size > 0:
+                        rows = rows[:sample_size]
+                    sampled_rows = len(rows)
+                    result["timing"] = {
+                        "executed": True,
+                        "duration_ms": duration_ms,
+                        "rowcount": query_result.rowcount,
+                        "sampled_rows": sampled_rows,
+                    }
+                    result["recommendations"] = generate_recommendations(
+                        parse_result,
+                        schema_info,
+                        {"rowcount": sampled_rows},
+                        sql,
+                    )
+                else:
+                    error = "Unexpected query result"
+                    result.update(
+                        success=False,
+                        error=error,
+                        timing={"executed": False, "duration_ms": duration_ms, "error": error},
+                    )
             except Exception as e:
-                result["timing"] = {"executed": False, "error": str(e)}
+                duration_ms = (perf_counter() - start_time) * 1000
+                result.update(
+                    success=False,
+                    error=str(e),
+                    timing={"executed": False, "duration_ms": duration_ms, "error": str(e)},
+                )
 
         return result
 

@@ -74,6 +74,26 @@ class TestParamValidation:
         assert result.isError is True
         assert "sql parameter is required" in result.content[0].text
 
+    def test_analyze_query_passes_connection_name_to_analyzer(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(analysis, "_new_db", lambda **_kwargs: object())
+
+        def fake_analyze(**kwargs):
+            captured.update(kwargs)
+            return {"success": True, "connection_name": kwargs.get("connection_name")}
+
+        monkeypatch.setattr(analysis.QueryAnalyzerService, "analyze", fake_analyze)
+        fn, _desc = analysis._TOOLS["analyze_query"]
+
+        result = fn(
+            path="ignored-by-fake-session",
+            params={"sql": "SELECT id FROM Users", "connection_name": "reporting"},
+            confirm=False,
+        )
+
+        assert captured["connection_name"] == "reporting"
+        assert '"connection_name": "reporting"' in result.content[0].text
+
     def test_generate_sql_rejects_empty_params(self):
         """generate_sql with {} returns isError (output_path required)."""
         fn, _desc = analysis._TOOLS["generate_sql"]

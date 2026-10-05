@@ -125,6 +125,7 @@ def analyze_query(path: str, params: dict[str, Any] | None = None, confirm: bool
         db_use_cases=uc,
         dry_run=dry_run,
         sample_size=sample_size,
+        connection_name=_connection_name,
     )
     return to_mcp_result(result)
 
