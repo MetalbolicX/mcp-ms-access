@@ -661,7 +661,7 @@ credential detector.
 | 085  | [Versioning production wiring](085-versioning-production-wiring.md) | 29 | P1 | M | MED | Conformance-first strict TDD | 082 | DONE (6c3bf1e) — operator round-trip gate PENDING |
 | 086  | [Analysis envelope correctness](086-analysis-envelope-correctness.md) | 29 | P1 | S | LOW | Strict TDD | 082 | DONE (ee0169f) |
 | 087  | [g13 chaos gate repair + stale README claims](087-g13-harness-repair.md) | 30 | P2 | M | LOW | Direct edit + registry-conformance test | 078 (recommended) | DONE (0d45a18) — operator chaos re-run PENDING |
-| 088  | [limit honored end-to-end + bounded exports](088-limit-and-bounded-data.md) | 30 | P2 | M | MED | Strict TDD, probe-gated live TOP | 080, 084 | TODO |
+| 088  | [limit honored end-to-end + bounded exports](088-limit-and-bounded-data.md) | 30 | P2 | M | MED | Strict TDD, probe-gated live TOP | 080, 084 | DONE (ef2bcb4) — TOP live verification PENDING (probe passed locally w/ RPC teardown diagnostics; operator re-check) |
 | 089  | [Credential staging + scrub hardening](089-credential-scrub-hardening.md) | 31 | P1 | S | MED | Strict TDD | 077 | TODO |
 | 090  | [SQL literals + identifier escaping](090-sql-literals-and-escaping.md) | 31 | P2 | S | MED | Strict TDD (goldens) | — | TODO |
 | 091  | [Dialog-killer PID scope + doctor ACE classification](091-dialog-killer-doctor-ace.md) | 32 | P2 | S | LOW | Strict TDD + pin refresh | — | TODO |
