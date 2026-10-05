@@ -783,7 +783,7 @@ has no cheap row count; row counts stay reachable via an explicit
 | 094  | [Migration transfer honesty (zero-table, tables_failed split)](094-migration-transfer-honesty.md) | 34 | P1 | S | MED | Strict TDD | 077–093 | DONE (c521edc) |
 | 095  | [Stream migration transfers (bounded memory)](095-transfer-streaming.md) | 34 | P2 | M | MED | Strict TDD | 094 | DONE (d6ff99a) |
 | 096  | [Schema inspection performance (counts out, batch, direct lookup, salvage)](096-schema-perf.md) | 35 | P2 | M | MED | Contract change + strict TDD | 094–095 | DONE (7ea31fe) |
-| 097  | [FK orientation — one contract, proven live](097-fk-orientation.md) | 36 | P1 | M | MED | Matrix + live probe + fix | 096 | TODO |
+| 097  | [FK orientation — one contract, proven live](097-fk-orientation.md) | 36 | P1 | M | MED | Matrix + live probe + fix | 096 | DONE (713e895, live probe PASSED: Relation.Table=parent confirmed; get_relationships + generate_sql were reversed, now aligned) |
 
 Notes: 095's design changed from the audit's "keyset paging" sketch —
 DAO already streams row-by-row, so an `iter_query` iterator bounds memory
