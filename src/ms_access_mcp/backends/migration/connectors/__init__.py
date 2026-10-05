@@ -47,11 +47,15 @@ class BaseConnector(ABC):
         self.connection_string = connection_string
         self._conn: Any
 
+    def quote_identifier(self, name: str) -> str:
+        """Quote an identifier using Jet brackets by default."""
+        return quote_ident(name)
+
     def count_rows(self, table: str) -> int:
         """Count rows in *table* (used by migration verification)."""
         cursor = self._conn.cursor()
         try:
-            cursor.execute(f"SELECT COUNT(*) FROM {quote_ident(table)}")
+            cursor.execute(f"SELECT COUNT(*) FROM {self.quote_identifier(table)}")
             return int(cursor.fetchone()[0])
         finally:
             try:

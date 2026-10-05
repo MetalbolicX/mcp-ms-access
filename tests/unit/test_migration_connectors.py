@@ -394,3 +394,57 @@ class TestFkTopologicalSort:
         assert parent_idx < child_idx, "Parent CREATE TABLE should come before Child"
         assert 'FOREIGN KEY ("parent_id") REFERENCES "Parent"("id")' in create_stmts[child_idx]
         assert all("ALTER TABLE" not in statement for statement in ddl_stmts)
+
+
+@pytest.mark.parametrize(
+    ("dialect", "expected_sql"),
+    [
+        ("sqlite", 'SELECT COUNT(*) FROM "table_name"'),
+        ("postgres", 'SELECT COUNT(*) FROM "table_name"'),
+        ("mysql", "SELECT COUNT(*) FROM `table_name`"),
+        ("sqlserver", "SELECT COUNT(*) FROM [table_name]"),
+    ],
+)
+def test_count_rows_uses_dialect_identifier_quoting(dialect, expected_sql):
+    class Cursor:
+        sql = None
+
+        def execute(self, sql):
+            self.sql = sql
+
+        def fetchone(self):
+            return (7,)
+
+        def close(self):
+            pass
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+
+        def cursor(self):
+            return self.cursor_instance
+
+    if dialect == "sqlite":
+        from ms_access_mcp.backends.migration.connectors.sqlite import SqliteConnector
+
+        connector_type = SqliteConnector
+    elif dialect == "postgres":
+        from ms_access_mcp.backends.migration.connectors.postgres import PostgresConnector
+
+        connector_type = PostgresConnector
+    elif dialect == "mysql":
+        from ms_access_mcp.backends.migration.connectors.mysql import MySqlConnector
+
+        connector_type = MySqlConnector
+    else:
+        from ms_access_mcp.backends.migration.connectors.sqlserver import SqlServerConnector
+
+        connector_type = SqlServerConnector
+
+    connector = connector_type("connection")
+    connection = Connection()
+    connector._conn = connection
+
+    assert connector.count_rows("table_name") == 7
+    assert connection.cursor_instance.sql == expected_sql

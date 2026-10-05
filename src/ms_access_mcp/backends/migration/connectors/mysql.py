@@ -94,6 +94,9 @@ def render_table_ddl(table: TableSchema) -> str:
 class MySqlConnector(BaseConnector):
     """MySQL migration connector with lazy mysql-connector import."""
 
+    def quote_identifier(self, name: str) -> str:
+        return quote_identifier(name)
+
     def __init__(self, connection_string: str) -> None:
         """Initialize MySQL connector.
 

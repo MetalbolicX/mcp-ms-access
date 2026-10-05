@@ -85,6 +85,9 @@ def render_table_ddl(table: TableSchema) -> str:
 class PostgresConnector(BaseConnector):
     """PostgreSQL migration connector with lazy psycopg2 import."""
 
+    def quote_identifier(self, name: str) -> str:
+        return quote_identifier(name)
+
     def __init__(self, connection_string: str) -> None:
         """Initialize PostgreSQL connector.
 

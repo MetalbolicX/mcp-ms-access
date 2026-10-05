@@ -57,6 +57,67 @@ class TestSqliteConnectorIntegration:
 
         conn.disconnect()
 
+    def test_transfer_reports_failure_when_sqlite_loses_inserted_row(self, tmp_path, monkeypatch):
+        from ms_access_mcp.application import migration as migration_module
+        from ms_access_mcp.application.migration import MigrationUseCases
+        from ms_access_mcp.backends.migration.connectors.sqlite import SqliteConnector
+
+        database_path = str(tmp_path / "row-loss.db")
+        schema = ExtractedSchema(
+            source="source.accdb",
+            tables=[
+                TableSchema(
+                    name="Customers",
+                    columns=[ColumnSchema(name="id", source_type="Long Integer")],
+                    primary_key=[],
+                    foreign_keys=[],
+                    indexes=[],
+                )
+            ],
+        )
+        use_cases = MigrationUseCases()
+        use_cases.upload_schema(
+            target_type="sqlite",
+            connection_string=database_path,
+            schema_json=schema.model_dump(),
+            confirm=True,
+        )
+
+        class Adapter:
+            def connect(self, database_path):
+                pass
+
+            def execute_query(self, query):
+                return {"rows": [{"id": 1}, {"id": 2}]}
+
+            def disconnect(self):
+                pass
+
+        monkeypatch.setattr(
+            migration_module, "_select_migration_adapter", lambda _path: Adapter()
+        )
+        insert_batch = SqliteConnector.insert_batch
+
+        def lose_one_row(connector, table, columns, rows):
+            return insert_batch(connector, table, columns, rows[:1])
+
+        monkeypatch.setattr(SqliteConnector, "insert_batch", lose_one_row)
+        result = use_cases.transfer_data(
+            target_type="sqlite",
+            connection_string=database_path,
+            database_path="source.accdb",
+            schema_json=schema.model_dump(),
+            confirm=True,
+        )
+
+        assert result.data["success"] is False
+        job = migration_module._JOBS[result.data["job_id"]]
+        assert job.results[0].success is False
+        assert job.results[0].verification["source_rows"] == 2
+        assert job.results[0].verification["target_rows"] == 1
+        assert "source 2" in job.results[0].error
+        assert "target 1" in job.results[0].error
+
     def test_insert_batch_and_count(self, temp_sqlite_db):
         """Connector inserts rows and they are queryable."""
         from ms_access_mcp.backends.migration.connectors.sqlite import SqliteConnector

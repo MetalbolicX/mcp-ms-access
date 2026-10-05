@@ -103,6 +103,9 @@ def render_table_ddl(table: TableSchema) -> str:
 class SqliteConnector(BaseConnector):
     """SQLite migration connector using stdlib sqlite3."""
 
+    def quote_identifier(self, name: str) -> str:
+        return quote_identifier(name)
+
     def __init__(self, connection_string: str) -> None:
         """Initialize SQLite connector.
 
