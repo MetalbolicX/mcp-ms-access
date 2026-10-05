@@ -653,18 +653,27 @@ class MigrationUseCases:
             result.strategy_used = "batch"
 
             # Verification
+            target_count = self._count_target_rows(connector, table.name)
+            result.verification = {
+                "source_rows": result.source_rows,
+                "target_rows": target_count,
+                "mode": verification_mode,
+            }
             if verification_mode == "full":
-                # Simple count verification
-                target_count = self._count_target_rows(connector, table.name)
-                result.verification = {
-                    "source_rows": result.source_rows,
-                    "target_rows": target_count,
-                    "mode": "full",
-                }
+                if target_count == -1:
+                    result.success = False
+                    result.error = "row-count verification unavailable"
+                elif target_count != result.source_rows:
+                    result.success = False
+                    result.error = (
+                        f"verification failed: source {result.source_rows} "
+                        f"!= target {target_count}"
+                    )
+                else:
+                    result.success = True
             else:
-                result.verification = {"mode": "count-only"}
-
-            result.success = True
+                # Count-only records counts for diagnostics without gating success.
+                result.success = True
 
         except Exception as e:
             result.success = False

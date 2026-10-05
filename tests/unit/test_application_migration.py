@@ -738,6 +738,7 @@ class TestSourceAdapterLifecycle:
             migration_module.BackendSelector, "get_adapter", MagicMock(return_value=adapter)
         )
         connector = FakeConnector("Driver={ODBC};Database=test.db")
+        connector.count_rows = lambda table: 1
         use_cases = MigrationUseCases()
         monkeypatch.setattr(use_cases, "_get_connector", lambda *_: Ok(data=connector))
         schema = ExtractedSchema(
@@ -951,6 +952,56 @@ class TestCountTargetRowsQuoting:
         assert "[x]]" in captured, (
             f"Embedded bracket must be doubled, got: {captured!r}"
         )
+
+
+class TestMigrationVerificationGating:
+    @staticmethod
+    def _transfer(connector, mode="full", count=2, count_error=None, count_rows=None):
+        table = TableSchema(
+            name="Customers",
+            columns=[ColumnSchema(name="id", source_type="Long Integer")],
+            primary_key=[],
+            foreign_keys=[],
+            indexes=[],
+        )
+
+        class Adapter:
+            def execute_query(self, query):
+                return {"rows": [{"id": 1}, {"id": 2}]}
+
+        if count_rows is not None:
+            connector.count_rows = count_rows
+        elif count_error is not None:
+            def fail_count(table_name):
+                raise count_error
+            connector.count_rows = fail_count
+        else:
+            connector.count_rows = lambda table_name: count
+        return MigrationUseCases()._transfer_table(connector, table, None, mode, Adapter())
+
+    def test_full_mode_mismatch_fails_and_names_both_counts(self):
+        result = self._transfer(FakeConnector("connection"), count=999)
+
+        assert result.success is False
+        assert "2" in result.error and "999" in result.error
+
+    def test_full_mode_count_error_fails_as_unavailable(self):
+        result = self._transfer(
+            FakeConnector("connection"), count_error=RuntimeError("db unavailable")
+        )
+
+        assert result.success is False
+        assert "verification unavailable" in result.error
+
+    def test_count_only_records_both_counts_without_gating_success(self):
+        result = self._transfer(FakeConnector("connection"), mode="count-only", count=999)
+
+        assert result.success is True
+        assert result.verification == {
+            "source_rows": 2,
+            "target_rows": 999,
+            "mode": "count-only",
+        }
 
 
 class TestCountRowsProtocol:
