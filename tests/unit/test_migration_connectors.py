@@ -392,3 +392,5 @@ class TestFkTopologicalSort:
         parent_idx = next(i for i, s in enumerate(create_stmts) if "Parent" in s)
         child_idx = next(i for i, s in enumerate(create_stmts) if "Child" in s)
         assert parent_idx < child_idx, "Parent CREATE TABLE should come before Child"
+        assert 'FOREIGN KEY ("parent_id") REFERENCES "Parent"("id")' in create_stmts[child_idx]
+        assert all("ALTER TABLE" not in statement for statement in ddl_stmts)

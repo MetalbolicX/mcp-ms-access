@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from ms_access_mcp.models import ColumnSchema, ForeignKeySchema, TableSchema
+from ms_access_mcp.models import ColumnSchema, ForeignKeySchema, IndexSchema, TableSchema
+from ms_access_mcp.models.migration import ExtractedSchema
 
 pytestmark = pytest.mark.odbc_integration
 
@@ -135,12 +136,7 @@ class TestSqliteRenderTableDdlIntegration:
                 pass  # Windows temp file lock
 
     def test_render_table_with_fk_via_schema_ddl(self):
-        """render_schema_ddl produces FK constraints via ALTER TABLE.
-
-        Note: SQLite does not support ALTER TABLE ADD CONSTRAINT FOREIGN KEY.
-        This test verifies the connector handles this gracefully — the CREATE TABLE
-        succeeds but the FK cannot be added via ALTER TABLE in SQLite.
-        """
+        """SQLite schema DDL renders FKs inline and emits no FK ALTER statement."""
         from ms_access_mcp.backends.migration import render_schema_ddl
 
         parent = TableSchema(
@@ -179,11 +175,17 @@ class TestSqliteRenderTableDdlIntegration:
         conn = None
         try:
             conn = sqlite3.connect(db_path)
-            # First statement is CREATE TABLE for Categories
-            conn.execute(ddl_stmts[0])
-            # Second is CREATE TABLE for Products
-            conn.execute(ddl_stmts[1])
+            assert all("ALTER TABLE" not in statement for statement in ddl_stmts)
+            assert any(
+                'FOREIGN KEY ("category_id") REFERENCES "Categories"("id")' in statement
+                for statement in ddl_stmts
+            )
+            for statement in ddl_stmts:
+                conn.execute(statement)
             conn.commit()
+
+            foreign_keys = conn.execute('PRAGMA foreign_key_list("Products")').fetchall()
+            assert any(row[2] == "Categories" and row[3] == "category_id" for row in foreign_keys)
 
             # Verify both tables exist
             cursor = conn.execute(
@@ -199,6 +201,59 @@ class TestSqliteRenderTableDdlIntegration:
                 Path(db_path).unlink(missing_ok=True)
             except PermissionError:
                 pass  # Windows temp file lock — best effort cleanup
+
+    def test_upload_schema_creates_sqlite_foreign_key_and_index(self, tmp_path):
+        from ms_access_mcp.application.migration import MigrationUseCases
+
+        temp_sqlite_db = str(tmp_path / "upload.db")
+        schema = ExtractedSchema(
+            source="source.accdb",
+            tables=[
+                TableSchema(
+                    name="Customers",
+                    columns=[ColumnSchema(name="id", source_type="Long Integer", allow_null=False)],
+                    primary_key=["id"],
+                    foreign_keys=[],
+                    indexes=[],
+                ),
+                TableSchema(
+                    name="Orders",
+                    columns=[
+                        ColumnSchema(name="id", source_type="Long Integer", allow_null=False),
+                        ColumnSchema(name="customer_id", source_type="Long Integer", allow_null=False),
+                    ],
+                    primary_key=["id"],
+                    foreign_keys=[
+                        ForeignKeySchema(
+                            name="FK_Orders_Customers",
+                            columns=["customer_id"],
+                            referenced_table="Customers",
+                            referenced_columns=["id"],
+                        )
+                    ],
+                    indexes=[IndexSchema(name="IX_Orders_customer", columns=["customer_id"])],
+                ),
+            ],
+        )
+
+        result = MigrationUseCases().upload_schema(
+            target_type="sqlite",
+            connection_string=temp_sqlite_db,
+            schema_json=schema.model_dump(),
+            confirm=True,
+        )
+
+        assert result.data["tables_created"] == ["Customers", "Orders"]
+        assert result.data["tables_failed"] == []
+
+        with sqlite3.connect(temp_sqlite_db) as conn:
+            foreign_keys = conn.execute('PRAGMA foreign_key_list("Orders")').fetchall()
+            assert any(
+                row[2] == "Customers" and row[3] == "customer_id" and row[4] == "id"
+                for row in foreign_keys
+            )
+            indexes = conn.execute('PRAGMA index_list("Orders")').fetchall()
+            assert any(row[1] == "IX_Orders_customer" for row in indexes)
 
     def test_quote_identifier_produces_valid_sql(self):
         """Quoted identifiers are accepted by SQLite."""

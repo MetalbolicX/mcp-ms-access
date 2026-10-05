@@ -24,6 +24,7 @@ class DialectSpec:
     quote: Callable[[str], str]
     autoincrement_clause: str  # e.g. "PRIMARY KEY AUTOINCREMENT", "IDENTITY(1,1)"
     inline_autoincrement_consumes_pk: bool  # True only for sqlite
+    inline_foreign_keys: bool = False
 
 
 def render_table_ddl(spec: DialectSpec, table: TableSchema) -> str:
@@ -52,6 +53,17 @@ def render_table_ddl(spec: DialectSpec, table: TableSchema) -> str:
     if table.primary_key and not pk_consumed:
         pk_parts = [spec.quote(pk) for pk in table.primary_key]
         columns_ddl.append(f"PRIMARY KEY ({', '.join(pk_parts)})")
+
+    if spec.inline_foreign_keys:
+        for foreign_key in table.foreign_keys:
+            fk_columns = ", ".join(spec.quote(column) for column in foreign_key.columns)
+            referenced_columns = ", ".join(
+                spec.quote(column) for column in foreign_key.referenced_columns
+            )
+            columns_ddl.append(
+                f"FOREIGN KEY ({fk_columns}) REFERENCES "
+                f"{spec.quote(foreign_key.referenced_table)}({referenced_columns})"
+            )
 
     col_defs = ",\n    ".join(columns_ddl)
     return f"CREATE TABLE {spec.quote(table.name)} (\n    {col_defs}\n)"

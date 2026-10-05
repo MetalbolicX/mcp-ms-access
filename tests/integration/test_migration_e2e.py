@@ -178,9 +178,8 @@ class TestMigrationE2E:
         Orders and Products from the fixture have indexes; the is_primary fix
         must not raise AttributeError when processing them.
 
-        SQLite ALTER TABLE does not support ADD CONSTRAINT FOREIGN KEY, so only
-        CREATE TABLE statements (phase 1) are executed — matching the existing
-        integration test pattern from test_migration_sqlite.py.
+        SQLite foreign keys render inline in CREATE TABLE statements; schema DDL
+        contains no phase-2 FK ALTER statements.
         """
         use_cases = MigrationUseCases()
 
@@ -198,11 +197,9 @@ class TestMigrationE2E:
 
         conn = sqlite3.connect(temp_sqlite_db)
         try:
-            # Only execute CREATE TABLE statements — SQLite ALTER TABLE ADD CONSTRAINT
-            # is not supported, matching the pattern from test_migration_sqlite.py
+            assert all("ALTER TABLE" not in stmt for stmt in ddl_stmts)
             for stmt in ddl_stmts:
-                if stmt.startswith("CREATE TABLE"):
-                    conn.execute(stmt)
+                conn.execute(stmt)
             conn.commit()
         finally:
             conn.close()

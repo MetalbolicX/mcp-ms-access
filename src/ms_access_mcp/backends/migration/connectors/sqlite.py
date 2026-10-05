@@ -84,6 +84,7 @@ DIALECT = _dialect.DialectSpec(
     quote=quote_identifier,
     autoincrement_clause="PRIMARY KEY AUTOINCREMENT",
     inline_autoincrement_consumes_pk=True,
+    inline_foreign_keys=True,
 )
 
 

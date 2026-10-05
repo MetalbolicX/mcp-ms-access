@@ -95,13 +95,21 @@ def render_schema_ddl(target_type: str, tables: list) -> list[str]:
 
     # Import the dialect module for rendering
     if target_type == "postgres":
-        from .connectors.postgres import quote_identifier, render_table_ddl
+        from .connectors.postgres import DIALECT, quote_identifier, render_table_ddl
+
+        dialect_spec = DIALECT
     elif target_type == "mysql":
-        from .connectors.mysql import quote_identifier, render_table_ddl
+        from .connectors.mysql import DIALECT, quote_identifier, render_table_ddl
+
+        dialect_spec = DIALECT
     elif target_type == "sqlite":
-        from .connectors.sqlite import quote_identifier, render_table_ddl
+        from .connectors.sqlite import DIALECT, quote_identifier, render_table_ddl
+
+        dialect_spec = DIALECT
     elif target_type == "sqlserver":
-        from .connectors.sqlserver import quote_identifier, render_table_ddl
+        from .connectors.sqlserver import DIALECT, quote_identifier, render_table_ddl
+
+        dialect_spec = DIALECT
     else:
         raise ValueError(f"Unknown target type: {target_type!r}. Valid: postgres, mysql, sqlite, sqlserver")
 
@@ -111,20 +119,21 @@ def render_schema_ddl(target_type: str, tables: list) -> list[str]:
     for table in sorted_tables:
         ddl_statements.append(render_table_ddl(table))
 
-    # Phase 2: ALTER TABLE for foreign keys
-    for table in sorted_tables:
-        for fk in table.foreign_keys:
-            fk_col = fk.columns[0] if fk.columns else ""
-            ref_col = fk.referenced_columns[0] if fk.referenced_columns else ""
-            ref_table = fk.referenced_table
-            fk_name = fk.name
-            ddl = (
-                f"ALTER TABLE {quote_identifier(table.name)} "
-                f"ADD CONSTRAINT {quote_identifier(fk_name)} "
-                f"FOREIGN KEY ({quote_identifier(fk_col)}) "
-                f"REFERENCES {quote_identifier(ref_table)}({quote_identifier(ref_col)})"
-            )
-            ddl_statements.append(ddl)
+    # Phase 2: ALTER TABLE for foreign keys not rendered inline by this dialect.
+    if not dialect_spec.inline_foreign_keys:
+        for table in sorted_tables:
+            for fk in table.foreign_keys:
+                fk_col = fk.columns[0] if fk.columns else ""
+                ref_col = fk.referenced_columns[0] if fk.referenced_columns else ""
+                ref_table = fk.referenced_table
+                fk_name = fk.name
+                ddl = (
+                    f"ALTER TABLE {quote_identifier(table.name)} "
+                    f"ADD CONSTRAINT {quote_identifier(fk_name)} "
+                    f"FOREIGN KEY ({quote_identifier(fk_col)}) "
+                    f"REFERENCES {quote_identifier(ref_table)}({quote_identifier(ref_col)})"
+                )
+                ddl_statements.append(ddl)
 
     # Phase 3: CREATE INDEX statements (non-primary)
     for table in sorted_tables:

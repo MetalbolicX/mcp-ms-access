@@ -321,6 +321,51 @@ CREATE_TABLE_SQLSERVER_WITH_DEFAULT = (
 # ─── Parametric golden tests ─────────────────────────────────────────────────
 
 
+def test_sqlite_foreign_key_is_golden_inline_and_has_no_alter_statement():
+    from ms_access_mcp.backends.migration import render_schema_ddl
+
+    parent = TableSchema(
+        name="Customers",
+        columns=[ColumnSchema(name="id", source_type="Long Integer", allow_null=False)],
+        primary_key=["id"],
+        foreign_keys=[],
+        indexes=[],
+    )
+    child = TableSchema(
+        name="Orders",
+        columns=[
+            ColumnSchema(name="id", source_type="Long Integer", allow_null=False),
+            ColumnSchema(name="customer_id", source_type="Long Integer", allow_null=False),
+        ],
+        primary_key=["id"],
+        foreign_keys=[
+            ForeignKeySchema(
+                name="FK_Orders_Customers",
+                columns=["customer_id"],
+                referenced_table="Customers",
+                referenced_columns=["id"],
+            )
+        ],
+        indexes=[],
+    )
+
+    expected_child = (
+        'CREATE TABLE "Orders" (\n'
+        '    "id" INTEGER NOT NULL,\n'
+        '    "customer_id" INTEGER NOT NULL,\n'
+        '    PRIMARY KEY ("id"),\n'
+        '    FOREIGN KEY ("customer_id") REFERENCES "Customers"("id")\n'
+        ')'
+    )
+    assert sqlite.render_table_ddl(child) == expected_child
+    statements = render_schema_ddl("sqlite", [child, parent])
+    assert statements == [
+        'CREATE TABLE "Customers" (\n    "id" INTEGER NOT NULL,\n    PRIMARY KEY ("id")\n)',
+        expected_child,
+    ]
+    assert all("ALTER TABLE" not in statement for statement in statements)
+
+
 @pytest.mark.parametrize(
     ("dialect", "fixture", "expected"),
     [
