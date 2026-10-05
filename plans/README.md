@@ -652,7 +652,7 @@ credential detector.
 |------|-------|-------|----------|--------|------|------|------------|--------|
 | 077  | [Password-scrub test seam + green baseline](077-password-scrub-test-seam.md) | 26 | P1 | S | LOW | Test-only repair (existing failure IS the RED) | — | DONE (beea53d) |
 | 078  | [Exit codes, mcp argv, tool-budget honesty, config hygiene](078-cli-gate-honesty.md) | 26 | P1 | S | LOW | Strict TDD (code) + direct edit (config) | 077 | DONE (4fe319d) |
-| 079  | [Session ownership + dispatcher teardown](079-session-ownership-teardown.md) | 27 | P1 | M | MED | Strict TDD | 077 | TODO |
+| 079  | [Session ownership + dispatcher teardown](079-session-ownership-teardown.md) | 27 | P1 | M | MED | Strict TDD | 077 | DONE (5305330) |
 | 080  | [Facade↔backend contract truth](080-facade-adapter-contract-truth.md) | 27 | P1 | M | MED | Characterization → strict TDD | 077 | TODO |
 | 081  | [Action-SQL routing + db-property honesty](081-action-sql-db-property-honesty.md) | 27 | P1 | S | MED | Strict TDD | 080 | TODO |
 | 082  | [Connect non-core MCP profiles](082-connect-non-core-profiles.md) | 27 | P1 | M | MED | Strict TDD (per profile) | 079, 080 | TODO |
