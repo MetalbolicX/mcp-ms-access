@@ -7,6 +7,7 @@ Unsupported operations raise BackendCapabilityMismatchError directly.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import pyodbc
@@ -84,17 +85,31 @@ class OdbcAdapter:
     # Parameterized CRUD
     # ------------------------------------------------------------------ #
 
-    def execute_query(self, sql: str, params: Any = None) -> QueryResult:
-        """Execute a SELECT with parameter binding."""
+    def execute_query(self, sql: str, params: Any = None, limit: int | None = None) -> QueryResult:
+        """Execute a SELECT with parameter binding and an optional row limit."""
         if not self._connected or self._conn is None:
             return QueryResult(success=False, rows=[], count=0, columns=[], error="Not connected")
 
         try:
+            query_sql = sql
+            if limit is not None:
+                select_prefix = re.match(
+                    r"^(\s*SELECT\s+(?:DISTINCT\s+)?)(?!DISTINCTROW\b|ALL\b)",
+                    sql,
+                    re.IGNORECASE,
+                )
+                if select_prefix is not None:
+                    query_sql = (
+                        f"{select_prefix.group(1)}TOP {limit} "
+                        f"{sql[select_prefix.end():]}"
+                    )
             cursor = self._conn.cursor()
-            cursor.execute(sql, params)
+            cursor.execute(query_sql, params)
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
             results = [dict(zip(columns, row)) for row in rows]
+            if limit is not None:
+                results = results[:limit]
             cursor.close()
             return QueryResult(success=True, rows=results, count=len(results), columns=columns)
         except Exception as e:

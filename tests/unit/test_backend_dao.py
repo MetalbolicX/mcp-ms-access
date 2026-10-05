@@ -451,6 +451,38 @@ class TestRowCrud:
         assert result.columns == ["id", "name"]
         assert result.rows == [{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}]
 
+    @pytest.mark.parametrize(
+        ("sql", "expected_prefix"),
+        [
+            ("select id from t", "SELECT TOP 5"),
+            ("select distinct id from t", "SELECT DISTINCT TOP 5"),
+            ("SELECT DISTINCTROW id FROM t", None),
+            ("UPDATE t SET id = 1", None),
+        ],
+    )
+    def test_execute_query_limit_rewrites_select_and_slices_all_results(
+        self, adapter: DaoAdapter, dispatcher: FakeDispatcher, sql: str, expected_prefix: str | None
+    ):
+        dispatcher.db.recordset_rows = [{"id": row_id} for row_id in range(20)]
+        executed: list[str] = []
+        original_open = dispatcher.db.OpenRecordset
+
+        def record_open(query: str):
+            executed.append(query)
+            return original_open(query)
+
+        dispatcher.db.OpenRecordset = record_open
+
+        result = adapter.execute_query(sql, limit=5)
+
+        assert result.success is True
+        assert len(result.rows) == 5
+        assert result.count == 5
+        if expected_prefix is None:
+            assert executed == [sql]
+        else:
+            assert executed[0].upper().startswith(expected_prefix)
+
     def test_execute_query_empty_recordset(self, adapter: DaoAdapter):
         result = adapter.execute_query("SELECT 1")
 

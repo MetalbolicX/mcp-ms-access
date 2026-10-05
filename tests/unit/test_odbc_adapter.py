@@ -49,6 +49,55 @@ class TestOdbcAdapterBasics:
         assert adapter.is_connected() is False
 
 
+class TestOdbcAdapterQueryLimit:
+    @pytest.mark.parametrize(
+        ("sql", "expected_prefix"),
+        [
+            ("select id from t", "SELECT TOP 5"),
+            ("select distinct id from t", "SELECT DISTINCT TOP 5"),
+            ("SELECT DISTINCTROW id FROM t", None),
+            ("UPDATE t SET id = 1", None),
+        ],
+    )
+    def test_execute_query_limit_rewrites_select_and_slices_rows(self, sql, expected_prefix):
+        class FakeCursor:
+            description = [("id",)]
+
+            def __init__(self):
+                self.executed: list[tuple[str, object]] = []
+
+            def execute(self, query, params):
+                self.executed.append((query, params))
+
+            def fetchall(self):
+                return [(row_id,) for row_id in range(20)]
+
+            def close(self):
+                pass
+
+        class FakeConnection:
+            def __init__(self):
+                self.fake_cursor = FakeCursor()
+
+            def cursor(self):
+                return self.fake_cursor
+
+        adapter = OdbcAdapter("test.accdb")
+        adapter._connected = True
+        adapter._conn = FakeConnection()
+
+        result = adapter.execute_query(sql, limit=5)
+
+        assert result.success is True
+        assert len(result.rows) == 5
+        assert result.count == 5
+        executed_sql = adapter._conn.fake_cursor.executed[0][0]
+        if expected_prefix is None:
+            assert executed_sql == sql
+        else:
+            assert executed_sql.upper().startswith(expected_prefix)
+
+
 class TestOdbcAdapterDdlRaises:
     """DDL operations must raise BackendCapabilityMismatchError."""
 

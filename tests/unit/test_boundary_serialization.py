@@ -132,7 +132,7 @@ class FakeQueryAdapter:
     def __init__(self, result: dict) -> None:
         self._result = result
 
-    def execute_query(self, sql: str, params=None) -> dict:
+    def execute_query(self, sql: str, params=None, limit: int | None = None) -> dict:
         return self._result
 
 

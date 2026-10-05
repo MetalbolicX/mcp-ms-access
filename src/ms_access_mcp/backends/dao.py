@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from types import TracebackType
 from typing import Any
 
@@ -341,8 +342,8 @@ class DaoAdapter:
     # Row CRUD via DAO
     # -------------------------------------------------------------------------- #
 
-    def execute_query(self, sql: str, params: list | None = None) -> QueryResult:
-        """Execute a SQL SELECT via DAO OpenRecordset."""
+    def execute_query(self, sql: str, params: list | None = None, limit: int | None = None) -> QueryResult:
+        """Execute a SQL SELECT via DAO OpenRecordset with an optional row limit."""
         _ = params
         if not self._dispatcher.is_connected():
             return QueryResult(
@@ -353,11 +354,24 @@ class DaoAdapter:
                 error="Not connected",
             )
 
+        query_sql = sql
+        if limit is not None:
+            select_prefix = re.match(
+                r"^(\s*SELECT\s+(?:DISTINCT\s+)?)(?!DISTINCTROW\b|ALL\b)",
+                sql,
+                re.IGNORECASE,
+            )
+            if select_prefix is not None:
+                query_sql = (
+                    f"{select_prefix.group(1)}TOP {limit} "
+                    f"{sql[select_prefix.end():]}"
+                )
+
         def _do() -> QueryResult:
             rs = None
             try:
                 db = self._dispatcher.current_db
-                rs = db.OpenRecordset(sql)
+                rs = db.OpenRecordset(query_sql)
                 if rs.EOF:
                     return QueryResult(success=True, rows=[], count=0, columns=[])
 
@@ -376,6 +390,8 @@ class DaoAdapter:
                     results.append(row)
                     rs.MoveNext()
 
+                if limit is not None:
+                    results = results[:limit]
                 return QueryResult(
                     success=True,
                     rows=results,

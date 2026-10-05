@@ -7,9 +7,7 @@ All destructive ops gated via safety.require_acknowledgment.
 from __future__ import annotations
 
 import dataclasses
-import inspect
 import os
-from functools import cache
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -57,12 +55,6 @@ def _write_failed(result: Any) -> str | None:
     if isinstance(result, dict) and result.get("success") is False:
         return str(result.get("error") or result.get("message") or "write failed")
     return None
-
-
-@cache
-def _method_signature(method: Any) -> inspect.Signature:
-    """Cached inspect.signature lookup for adapter query methods."""
-    return inspect.signature(method)
 
 
 # =============================================================================
@@ -552,13 +544,7 @@ class DatabaseUseCases:
             method = getattr(adapter, "query_data", None) or getattr(adapter, "execute_query", None)
             if method is None:
                 return _err(f"{type(adapter).__name__} does not support query_data")
-            sig = _method_signature(getattr(method, "__func__", method))
-            kwargs: dict[str, Any] = {}
-            if "params" in sig.parameters:
-                kwargs["params"] = params
-            if "limit" in sig.parameters:
-                kwargs["limit"] = limit
-            result = method(sql, **kwargs)
+            result = method(sql, params=params, limit=limit)
             if isinstance(result, QueryResult):
                 return _ok(data=result.rows, rowcount=result.count)
             if isinstance(result, dict):

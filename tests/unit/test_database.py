@@ -118,6 +118,31 @@ class TestDatabaseUseCasesConstruction:
         assert db._backend_name == "odbc"
 
 
+class TestQueryDataLimitForwarding:
+    def test_limit_is_forwarded_without_signature_introspection(self):
+        from ms_access_mcp.models import QueryResult
+
+        class RecordingAdapter:
+            def __init__(self):
+                self.call_args = None
+
+            def execute_query(self, sql, **kwargs):
+                self.call_args = (sql, kwargs)
+                return QueryResult(success=True, rows=[{"id": 1}], count=1, columns=["id"])
+
+        db = DatabaseUseCases()
+        adapter = RecordingAdapter()
+        db._connections["default"] = adapter
+
+        result = db.query_data("SELECT id FROM Users", limit=5)
+
+        assert isinstance(result, Ok)
+        assert adapter.call_args == (
+            "SELECT id FROM Users",
+            {"params": None, "limit": 5},
+        )
+
+
 class TestResultEnvelopes:
     """Test result envelope types."""
 

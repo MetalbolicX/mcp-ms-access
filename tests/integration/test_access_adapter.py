@@ -18,6 +18,37 @@ pytestmark = [
 ]
 
 
+class TestDaoTopLimitProbe:
+    def test_query_data_limit_returns_five_rows_from_twenty(self, temp_db_copy):
+        import uuid
+
+        from ms_access_mcp.application.database import DatabaseUseCases, Ok
+        from ms_access_mcp.backends.dao import DaoAdapter
+
+        table_name = f"LimitProbe_{uuid.uuid4().hex[:8]}"
+        adapter = DaoAdapter(temp_db_copy)
+        adapter.connect()
+        try:
+            adapter.execute_raw_sql(f"CREATE TABLE [{table_name}] ([id] INTEGER)")
+            for row_id in range(20):
+                adapter.execute_raw_sql(
+                    f"INSERT INTO [{table_name}] ([id]) VALUES ({row_id})"
+                )
+
+            database = DatabaseUseCases()
+            database._connections["default"] = adapter
+            result = database.query_data(f"SELECT [id] FROM [{table_name}]", limit=5)
+
+            assert isinstance(result, Ok), result
+            assert len(result.data) == 5
+        finally:
+            try:
+                adapter.execute_raw_sql(f"DROP TABLE [{table_name}]")
+            except Exception:
+                pass
+            adapter.disconnect()
+
+
 class TestAccessAdapterHidden:
     """Test hidden Access.Application connect and teardown."""
 

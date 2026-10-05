@@ -101,7 +101,7 @@ class AdoAdapter:
             "errors": errors,
         }
 
-    def execute_query(self, sql: str, params: list | None = None) -> QueryResult:
+    def execute_query(self, sql: str, params: list | None = None, limit: int | None = None) -> QueryResult:
         """Execute a SELECT query and return results."""
         if not self._connected or self._conn is None:
             return QueryResult(success=False, rows=[], count=0, columns=[], error="Not connected")
@@ -120,6 +120,8 @@ class AdoAdapter:
                 rs.MoveNext()
 
             rs.Close()
+            if limit is not None:
+                rows = rows[:limit]
             return QueryResult(success=True, rows=rows, count=len(rows), columns=columns)
         except Exception as e:
             return QueryResult(success=False, rows=[], count=0, columns=[], error=_strip_password(str(e)))
