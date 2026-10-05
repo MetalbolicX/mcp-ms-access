@@ -661,7 +661,7 @@ credential detector.
 | 085  | [Versioning production wiring](085-versioning-production-wiring.md) | 29 | P1 | M | MED | Conformance-first strict TDD | 082 | DONE (6c3bf1e) — operator round-trip gate PENDING |
 | 086  | [Analysis envelope correctness](086-analysis-envelope-correctness.md) | 29 | P1 | S | LOW | Strict TDD | 082 | DONE (ee0169f) |
 | 087  | [g13 chaos gate repair + stale README claims](087-g13-harness-repair.md) | 30 | P2 | M | LOW | Direct edit + registry-conformance test | 078 (recommended) | DONE (0d45a18) — operator chaos re-run PENDING |
-| 088  | [limit honored end-to-end + bounded exports](088-limit-and-bounded-data.md) | 30 | P2 | M | MED | Strict TDD, probe-gated live TOP | 080, 084 | DONE (ef2bcb4) — TOP live verification PENDING (probe passed locally w/ RPC teardown diagnostics; operator re-check) |
+| 088  | [limit honored end-to-end + bounded exports](088-limit-and-bounded-data.md) | 30 | P2 | M | MED | Strict TDD, probe-gated live TOP | 080, 084 | DONE (ef2bcb4) — TOP live verification PASSED 2026-10-05: `test_query_data_limit_returns_five_rows_from_twenty` green ×3 consecutive live runs (20-row temp table through real DAO adapter → exactly 5 rows) |
 | 089  | [Credential staging + scrub hardening](089-credential-scrub-hardening.md) | 31 | P1 | S | MED | Strict TDD | 077 | DONE (a40e8bc) — real-DACL operator check pending |
 | 090  | [SQL literals + identifier escaping](090-sql-literals-and-escaping.md) | 31 | P2 | S | MED | Strict TDD (goldens) | — | DONE (3e354da) |
 | 091  | [Dialog-killer PID scope + doctor ACE classification](091-dialog-killer-doctor-ace.md) | 32 | P2 | S | LOW | Strict TDD + pin refresh | — | DONE (12bb7ee) — live desktop-ownership + no-ACE machine checks PENDING |
@@ -760,14 +760,18 @@ credential detector.
     longer leak their STA dispatcher threads (owned-only teardown);
     ComDispatcher.shutdown() now logs the join-timeout and PID-force-kill
     branches (previously silent — implicated in the diagnostics).
-  - **E2 PENDING (operator-authorized live run)**: re-run
-    `tests/integration/test_access_adapter.py` on the Access-equipped
-    machine with stderr + Application event log captured; 3 consecutive
-    clean runs (no fatal-exception lines, baseline orphans only) is the
-    gate. E3 (code fix) only if E2 names a remaining cause; post-Quit
-    proxy release is unavoidable by construction — if noise persists
-    under graceful quits, document as an inherent pywin32 teardown
-    artifact per the 0.2.0 precedent instead of suppressing.
+  - **E2 DONE (2026-10-05, operator live run)**: 3 consecutive
+    `test_access_adapter.py` runs — 5 passed each, exit 0; orphan test
+    baseline-relative green ×3; Application event log clean (no
+    MSACCESS fault events). Stderr showed the SAME deterministic
+    signature every run — exactly 6 lines: 3× `0x80010108`
+    (RPC_E_DISCONNECTED) + 3× `0x800706be` (RPC_S_CALL_FAILED), all on
+    the dispatcher thread inside graceful `disconnect → shutdown`, no
+    other stderr classes, no shutdown join-timeout/PID-kill warnings.
+    Per this gate's own alternative clause + the 0.2.0 precedent
+    (docs/release/0.2.0-report.md:31), classified as an inherent
+    pywin32 post-Quit proxy-release artifact under graceful quits and
+    documented — NOT suppressed. **No E3 cause named.**
 
 ## Plans 094–097: deferred-findings cycle (2026-10-04)
 
