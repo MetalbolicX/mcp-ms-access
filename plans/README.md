@@ -769,3 +769,29 @@ credential detector.
     under graceful quits, document as an inherent pywin32 teardown
     artifact per the 0.2.0 precedent instead of suppressing.
 
+## Plans 094–097: deferred-findings cycle (2026-10-04)
+
+Second improve cycle: the deferred items from the 077–093 audit,
+re-verified at `3058688` by a read-only scout (all confirmed; line
+numbers reconciled post-083/084). **User decision recorded this cycle:**
+`get_tables` (and sibling schema outputs) DROP `record_count` — Jet/DAO
+has no cheap row count; row counts stay reachable via an explicit
+`query_data("SELECT COUNT(*) …")` (plan 096 executes the contract change).
+
+| Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
+|------|-------|-------|----------|--------|------|------|------------|--------|
+| 094  | [Migration transfer honesty (zero-table, tables_failed split)](094-migration-transfer-honesty.md) | 34 | P1 | S | MED | Strict TDD | 077–093 | TODO |
+| 095  | [Stream migration transfers (bounded memory)](095-transfer-streaming.md) | 34 | P2 | M | MED | Strict TDD | 094 | TODO |
+| 096  | [Schema inspection performance (counts out, batch, direct lookup, salvage)](096-schema-perf.md) | 35 | P2 | M | MED | Contract change + strict TDD | 094–095 | TODO |
+| 097  | [FK orientation — one contract, proven live](097-fk-orientation.md) | 36 | P1 | M | MED | Matrix + live probe + fix | 096 | TODO |
+
+Notes: 095's design changed from the audit's "keyset paging" sketch —
+DAO already streams row-by-row, so an `iter_query` iterator bounds memory
+without SQL paging (Jet has no OFFSET; DAO params are ignored today).
+097 contains this cycle's LIVE COM probe (fixture-scoped, user-authorized:
+scratch accdb + known-direction relationship as ground truth). Four FK
+readers exist (schema_inspector get_relationships, get_table_schema_plan,
+its own generate_sql pass, odbc_schema_reader) plus consumers in
+migration/sql_generator/db_analysis — Step 1 builds the orientation
+matrix before any fix.
+
