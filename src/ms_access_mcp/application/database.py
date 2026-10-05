@@ -17,7 +17,7 @@ from ..backends import DATA_READ_CAPS, BackendSelector
 from ..backends.format_detector import AccessFormat, detect_access_format
 from ..credentials import contains_credential, resolve_profile
 from ..errors import Err, Ok, Result, err, ok, strip_password  # noqa: F401 — re-exported for backward compatibility
-from ..models import QueryResult, WriteResult
+from ..models import QueryResult, RelationshipResult, WriteResult
 from ..safety import WritePolicy, is_path_allowed
 from . import session_backup as _session_backup
 from .db_admin import create_access_database as _create_db
@@ -49,11 +49,13 @@ def _get_lock_file(db_path: str) -> str | None:
 
 
 def _write_failed(result: Any) -> str | None:
-    """Return error message string if a write result reports failure, else None."""
-    if isinstance(result, WriteResult):
+    """Return an adapter error message when any supported result reports failure."""
+    if isinstance(result, (WriteResult, RelationshipResult)):
         if result.success is False:
-            return str(result.error or "write failed")
+            return str(result.error or getattr(result, "message", None) or "write failed")
         return None
+    if isinstance(result, dict) and result.get("success") is False:
+        return str(result.get("error") or result.get("message") or "write failed")
     return None
 
 
@@ -684,7 +686,7 @@ class DatabaseUseCases:
     def create_table(
         self,
         table_name: str,
-        columns: dict[str, str],
+        columns: dict[str, str] | list[dict[str, Any]],
         connection_name: str = "default",
         confirm: bool = False,
     ) -> Result:
@@ -707,7 +709,20 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.create_table(table_name, columns)
+            if isinstance(columns, dict):
+                adapter_columns = [
+                    {"name": name, "type": sql_type} for name, sql_type in columns.items()
+                ]
+            else:
+                adapter_columns = []
+                for column in columns:
+                    adapter_column = dict(column)
+                    if "type" not in adapter_column and "sql_type" in adapter_column:
+                        adapter_column["type"] = adapter_column.pop("sql_type")
+                    else:
+                        adapter_column.pop("sql_type", None)
+                    adapter_columns.append(adapter_column)
+            result = adapter.create_table(table_name, adapter_columns)
             if failed := _write_failed(result):
                 return _err(failed)
             return _ok(rowcount=1)
@@ -744,7 +759,14 @@ class DatabaseUseCases:
         if adapter is None:
             return _err("Not connected")
         try:
-            result = adapter.alter_table(table_name, action, column_name=column_name, sql_type=sql_type)
+            operation: dict[str, Any] = {"action": {"add": "add_column", "drop": "drop_column"}.get(action, action)}
+            params: dict[str, Any] = {}
+            if column_name is not None:
+                params["name"] = column_name
+            if action == "add" and sql_type is not None:
+                params["type"] = sql_type
+            operation["params"] = params
+            result = adapter.alter_table(table_name, [operation])
             if failed := _write_failed(result):
                 return _err(failed)
             return _ok(rowcount=1)
