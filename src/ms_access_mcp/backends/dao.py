@@ -902,10 +902,7 @@ class DaoAdapter:
 
         """
 
-        # Default binds the enclosing engine at closure-creation time so both
-        # dispatcher flavors work: the real ComDispatcher forwards call kwargs
-        # (engine=...), while test-fake dispatchers invoke _do() bare.
-        def _do(engine: Any = engine) -> list[dict[str, Any]]:
+        def _do(engine: Any) -> list[dict[str, Any]]:
             import win32com.client  # type: ignore[import-not-found]
 
             if engine is None:
