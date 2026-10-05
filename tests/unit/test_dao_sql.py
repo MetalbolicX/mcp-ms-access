@@ -6,6 +6,7 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
+from conftest import FakeDispatcher as SharedFakeDispatcher
 
 from ms_access_mcp.backends.dao_sql import (
     _access_sql_type,
@@ -263,8 +264,8 @@ class TestDaoAdapterLinkedTableReadStrip:
         fake_dao_db.TableDefs.return_value = fake_tdef
         fake_dao_db.TableDefs.__getitem__.return_value = fake_tdef
 
-        # Use a real-ish FakeDispatcher to avoid MagicMock attribute quirks
-        class FakeDispatcher:
+        # Use the shared kwargs-forwarding fake to avoid MagicMock quirks.
+        class FakeDispatcher(SharedFakeDispatcher):
             def __init__(self, db):
                 self._db = db
 
@@ -274,9 +275,6 @@ class TestDaoAdapterLinkedTableReadStrip:
             @property
             def current_db(self):
                 return self._db
-
-            def call(self, fn):
-                return fn()
 
         dispatcher = FakeDispatcher(fake_dao_db)
 

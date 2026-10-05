@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import cast
 
+from conftest import FakeDispatcher
+
 from ms_access_mcp.backends.dao import DaoAdapter
 from ms_access_mcp.backends.dispatcher import ComDispatcher
 
@@ -40,16 +42,12 @@ class _Recordset:
             raise RuntimeError("already closed")
 
 
-class _Dispatcher:
+class _Dispatcher(FakeDispatcher):
     def __init__(self, db) -> None:
         self.current_db = db
 
     def is_connected(self) -> bool:
         return True
-
-    def call(self, fn, engine=None):
-        _ = engine
-        return fn()
 
 
 def test_execute_query_closes_recordset_when_iteration_fails() -> None:

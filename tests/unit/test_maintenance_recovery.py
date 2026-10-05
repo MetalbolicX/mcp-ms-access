@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from conftest import FakeDispatcher
+
 from ms_access_mcp.application.database import DatabaseUseCases, _get_lock_file
 from ms_access_mcp.application.maintenance import MaintenanceUseCases
 from ms_access_mcp.errors import Err, Ok
@@ -290,12 +292,9 @@ class TestSalvageDatabase:
         class _FakeApp:
             DBEngine = _FakeDBEngine()
 
-        class _FakeDispatcher:
+        class _FakeDispatcher(FakeDispatcher):
             def start(self):
                 pass
-
-            def call(self, fn, engine=None):
-                return fn(engine)
 
             def shutdown(self):
                 pass
