@@ -869,5 +869,6 @@ fast-forwarded into `main` (no merge commits; ancestry verified across
 all 23 plan branches): **77 commits** `e4a4ce0..3e4431e`, 132 files,
 +9218/−1953. Post-merge gates on `main`: 1610 passed / 3 skipped, ruff
 clean, pyright 0, budget PASS. No remote configured — push/PR remains
-an operator decision. Plan branches retained (cleanup optional).
+an operator decision. Tagged `audit-077-098`; the 23 `plan/*` branches
+were verified fully contained in `main` and deleted (safe `-d`).
 
