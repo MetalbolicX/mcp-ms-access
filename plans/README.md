@@ -937,4 +937,9 @@ all 23 plan branches): **77 commits** `e4a4ce0..3e4431e`, 132 files,
 clean, pyright 0, budget PASS. No remote configured — push/PR remains
 an operator decision. Tagged `audit-077-098`; the 23 `plan/*` branches
 were verified fully contained in `main` and deleted (safe `-d`).
+**Follow-up delivery (2026-10-10)**: parked-work cycle (E3–E7) merged
+ff-only into `main` — **8 commits** `587e456..4cee9aa` on branch
+`plan/e3-e4-followups`, branch verified contained and deleted (safe
+`-d`); no linked worktrees exist. Post-merge gates on `main`: 1622
+passed / 3 skipped, ruff clean, pyright 0, budget PASS.
 
