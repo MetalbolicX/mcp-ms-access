@@ -744,6 +744,33 @@ class TestVBAOperationsHappyPath:
         ]
         assert code_module.text == "Sub Original()\nEnd Sub"
 
+    def test_set_vba_code_rejects_embedded_nul(self):
+        # Defect #8: COM silently truncates code at embedded NUL bytes;
+        # the adapter must fail closed instead of corrupting the module.
+        comp = MagicMock(Name="Module1")
+        project = MagicMock(VBComponents=[comp])
+        adapter = self._make_connected_adapter_with_vb_project(project)
+
+        assert adapter.set_vba_code("Module1", "Sub A()\n    x\x00\nEnd Sub") is False
+        comp.CodeModule.AddFromString.assert_not_called()
+        comp.CodeModule.DeleteLines.assert_not_called()
+
+    def test_add_vba_procedure_rejects_embedded_nul(self):
+        comp = MagicMock(Name="Module1")
+        project = MagicMock(VBComponents=[comp])
+        adapter = self._make_connected_adapter_with_vb_project(project)
+
+        assert adapter.add_vba_procedure("Module1", "A", "Sub A()\n    x\x00\nEnd Sub") is False
+        comp.CodeModule.AddFromString.assert_not_called()
+
+    def test_vba_replace_procedure_rejects_embedded_nul(self):
+        comp = MagicMock(Name="Module1")
+        project = MagicMock(VBComponents=[comp])
+        adapter = self._make_connected_adapter_with_vb_project(project)
+
+        assert adapter.vba_replace_procedure("Module1", "A", "Sub A()\n    x\x00\nEnd Sub") is False
+        comp.CodeModule.InsertLines.assert_not_called()
+
     def test_vba_replace_procedure_restores_snapshot_after_insert_failure(self):
         class _FakeCodeModule:
             def __init__(self):

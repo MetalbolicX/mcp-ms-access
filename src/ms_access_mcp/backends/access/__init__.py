@@ -889,6 +889,8 @@ class AccessAdapter:
         For non-existent modules: uses LoadFromText.
         For existing modules: uses DeleteLines + AddFromString.
         """
+        if _code_has_nul("set_vba_code", code):
+            return False
         if not self._dispatcher._started:
             return False
 
@@ -908,6 +910,8 @@ class AccessAdapter:
         For non-existent modules: uses LoadFromText.
         For existing modules: appends via AddFromString.
         """
+        if _code_has_nul("add_vba_procedure", code):
+            return False
         if not self._dispatcher._started:
             return False
 
@@ -1000,6 +1004,8 @@ class AccessAdapter:
 
     def vba_replace_procedure(self, module_name: str, procedure_name: str, new_code: str) -> bool:
         """Replace a procedure's body with new code (preserves signature)."""
+        if _code_has_nul("vba_replace_procedure", new_code):
+            return False
         if not self._dispatcher._started:
             return False
 
@@ -1012,6 +1018,22 @@ class AccessAdapter:
 # -------------------------------------------------------------------------- #
 # Module-level helpers
 # -------------------------------------------------------------------------- #
+
+def _code_has_nul(kind: str, code: str) -> bool:
+    """Flag VBA code carrying embedded NUL bytes (defect #8).
+
+    COM marshaling silently truncates BSTRs at the first NUL, so a
+    poisoned write would corrupt the module while reporting success.
+    The adapter fails closed instead: reject before any COM call.
+    """
+    if "\x00" in code:
+        logging.getLogger(__name__).warning(
+            "vba %s rejected: embedded NUL byte would be silently truncated by COM",
+            kind,
+        )
+        return True
+    return False
+
 
 def connect_hidden(db_path: str) -> AccessAdapter:
     """Create and connect an AccessAdapter in hidden mode.
