@@ -988,3 +988,24 @@ verified contained and deleted (safe `-d`). No MSACCESS orphans or scratch
 locks remain. No remote configured — push/PR remains an operator decision.
 Tagged `audit-099-104` at this commit.
 
+## Plans 105–108: operator-decisions cycle (2026-10-10)
+
+Fourth improve cycle. The four items the 099–104 cycle recorded as
+operator-blocked are hereby RESOLVED by operator decision: all four
+authorized for execution, and the plan-108 URL was chosen explicitly
+(`https://github.com/MetalbolicX/mcp-ms-access`, also configured as
+`origin`). Plan 106 records the policy decision itself: VBA/macro
+WRITE tools become opt-in (disabled by default behind
+`ACCESS_MCP_ENABLE_VBA_WRITES`); `run_macro` and form/report design
+writes are out of scope. Plan 105's CI job is dormant until a
+self-hosted `windows, access` runner is registered and the repo is
+pushed. Plan 107 executes the row-047 deferral: the per-round g13
+matrix recorded in `docs/specs/crash-recovery.md`.
+
+| Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
+|------|-------|-------|----------|--------|------|------|------------|--------|
+| 105  | [TEST-02 self-hosted Access CI job (dormant)](105-self-hosted-access-ci.md) | 39 | P2 | S | LOW | Direct edit + YAML check | — | TODO |
+| 106  | [VBA/macro write opt-in (env gate, default off)](106-vba-macro-write-optin.md) | 39 | P1 | M | MED | Strict TDD + live gate | — | TODO |
+| 107  | [g13 20-round outcome matrix (run + record)](107-g13-matrix-run.md) | 39 | P2 | M | LOW-MED | Harness run + docs record | 087 | TODO |
+| 108  | [[project.urls] + origin remote](108-project-urls-remote.md) | 39 | P3 | S | LOW | Direct edit | — | TODO |
+
