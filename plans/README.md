@@ -1022,6 +1022,17 @@ discards everything. Post-merge gates on `main`: ruff clean, pyright 0,
 Plan 109 branch verified contained and deleted (safe `-d`). Tagged
 `audit-109-vba-persistence` at this commit.
 
+**Delivery (2026-10-10, second): plan 110 merged ff-only into `main`** —
+`14357ba..`tip, 5 files, +74/−37. Two stacked root causes proven by
+parent probes: acMacro constant 8→4 (typelib ground truth; same
+class as E6) and the LoadFromText dialect (raw XML rejected; the real
+SaveAsText wrapper embeds UserInterfaceMacro AXL in a Comment value,
+is CRLF-sensitive, and name-independent). Post-merge: qualify all
+green (1661 passed / 3 skipped), live **4 passed / 0 xfailed** (macro
+create + cross-session persistence now proven), zero orphans. Plan 110
+branch verified contained and deleted (safe `-d`). Tagged
+`audit-110-macro-create` at this commit.
+
 **Delivery (2026-10-10)**: cycle merged ff-only into `main` — **10 commits**
 `5593a4b..dafdda2`, 16 files, +759/−36. Post-merge gates on `main`:
 ruff clean, pyright 0, **1657 passed / 3 skipped**, budget PASS; live
