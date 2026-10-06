@@ -659,6 +659,9 @@ class TestVBAOperationsHappyPath:
                 return self._all_modules
 
         class FakeAccessAppWithVBE:
+            def __init__(self):
+                self.DoCmd = MagicMock()
+
             @property
             def VBE(self):
                 return VBEWithVBProjects(vbe_proj)
@@ -743,6 +746,16 @@ class TestVBAOperationsHappyPath:
             "Sub Original()\nEnd Sub",
         ]
         assert code_module.text == "Sub Original()\nEnd Sub"
+
+    def test_set_vba_code_reports_save_failure(self):
+        comp = MagicMock(Name="Module1")
+        project = MagicMock(VBComponents=[comp])
+        adapter = self._make_connected_adapter_with_vb_project(project)
+        app = adapter._dispatcher.access_app
+        app.DoCmd.Save.side_effect = RuntimeError("save failed")
+
+        assert adapter.set_vba_code("Module1", "Sub A()\nEnd Sub") is False
+        app.DoCmd.Save.assert_called_once_with(5, "Module1")
 
     def test_set_vba_code_rejects_embedded_nul(self):
         # Defect #8: COM silently truncates code at embedded NUL bytes;

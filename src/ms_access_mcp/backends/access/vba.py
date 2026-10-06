@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 _COMPILE_CMD_IDS = [301, 206, 317, 232]
 
 
+def _save_vba_module(access_app: Any, module_name: str, operation: str) -> bool:
+    """Persist a successful VBE mutation before reporting success."""
+    try:
+        access_app.DoCmd.Save(5, module_name)  # 5 = acModule; saves the VBA project
+        return True
+    except Exception as exc:
+        logger.debug("%s save module %s failed: %s", operation, module_name, exc)
+        return False
+
+
 def _proc_type_from_signature(signature: str) -> str:
     """Derive a procedure type from its declaration line.
 
@@ -307,7 +317,9 @@ def set_vba_code(
             # New module: use LoadFromText
             text_data = f"Attribute VB_Name = \"{module_name}\"\r\n{code}"
             if load_object_from_text_fn:
-                return load_object_from_text_fn(5, module_name, text_data)
+                if not load_object_from_text_fn(5, module_name, text_data):
+                    return False
+                return _save_vba_module(access_app, module_name, "set_vba_code")
             return False
         else:
             # Existing module: snapshot, then clear and repopulate in-memory.
@@ -319,7 +331,7 @@ def set_vba_code(
                 original = code_module.Lines(1, line_count) if line_count else ""
                 code_module.DeleteLines(1, line_count)
                 code_module.AddFromString(code)
-                return True
+                return _save_vba_module(access_app, module_name, "set_vba_code")
             except Exception as exc:
                 logger.debug("set_vba_code %s repopulate failed: %s", module_name, exc)
                 try:
@@ -361,18 +373,25 @@ def add_vba_procedure(
             # New module: use LoadFromText
             text_data = f"Attribute VB_Name = \"{module_name}\"\r\n{code}"
             if load_object_from_text_fn:
-                return load_object_from_text_fn(5, module_name, text_data)
+                if not load_object_from_text_fn(5, module_name, text_data):
+                    return False
+                return _save_vba_module(access_app, module_name, "add_vba_procedure")
             return False
         else:
             target_module.CodeModule.AddFromString(code)
-            return True
+            return _save_vba_module(access_app, module_name, "add_vba_procedure")
     except Exception as exc:
         logger.debug("add_vba_procedure %s.%s failed: %s", module_name, procedure_name, exc)
         return False
 
 
 def delete_module(access_app: Any, module_name: str) -> bool:
-    """Delete a VBA module from the database."""
+    """Delete a VBA module and persist removal when a module can be saved.
+
+    Access cannot save an empty VBA project with DoCmd.Save(5, module), so a
+    last-module removal is reported as unsuccessful and may be discarded when
+    the database closes.
+    """
     vb_project = get_vb_project(access_app)
     if vb_project is None:
         return False
@@ -380,7 +399,16 @@ def delete_module(access_app: Any, module_name: str) -> bool:
         for comp in vb_project.VBComponents:
             if comp.Name == module_name:
                 vb_project.VBComponents.Remove(comp)
-                return True
+                for remaining in vb_project.VBComponents:
+                    if _save_vba_module(access_app, remaining.Name, "delete_module"):
+                        return True
+                    return False
+                logger.debug(
+                    "delete_module %s removed the last component; no module remains "
+                    "to persist the removal",
+                    module_name,
+                )
+                return False
         return False
     except Exception as exc:
         logger.debug("delete_module %s failed: %s", module_name, exc)
@@ -402,7 +430,7 @@ def create_module(access_app: Any, module_name: str, module_type: int = 1) -> bo
     try:
         comp = vb_project.VBComponents.Add(module_type)
         comp.Name = module_name
-        return True
+        return _save_vba_module(access_app, module_name, "create_module")
     except Exception as exc:
         logger.debug("create_module %s failed: %s", module_name, exc)
         return False
@@ -417,7 +445,7 @@ def rename_module(access_app: Any, old_name: str, new_name: str) -> bool:
         for comp in vb_project.VBComponents:
             if comp.Name == old_name:
                 comp.Name = new_name
-                return True
+                return _save_vba_module(access_app, new_name, "rename_module")
         return False
     except Exception as exc:
         logger.debug("rename_module %s->%s failed: %s", old_name, new_name, exc)
@@ -532,7 +560,7 @@ def vba_replace_procedure(access_app: Any, module_name: str, procedure_name: str
         try:
             target_module.DeleteLines(start_line, line_count)
             target_module.InsertLines(start_line, new_code)
-            return True
+            return _save_vba_module(access_app, module_name, "vba_replace_procedure")
         except Exception as exc:
             logger.debug("vba_replace_procedure %s.%s failed: %s", module_name, procedure_name, exc)
             try:

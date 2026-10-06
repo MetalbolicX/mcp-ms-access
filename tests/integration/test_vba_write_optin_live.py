@@ -32,8 +32,7 @@ def test_create_module_requires_opt_in_and_allows_envelope_when_enabled(
 ):
     """The opt-in blocks writes by default and lets an enabled create report success.
 
-    Envelope-level only: cross-session persistence of the created module is
-    pinned separately (currently a known defect, see plan 109).
+    Envelope-level only: cross-session persistence is pinned separately.
     """
     pytest.importorskip("win32com")
 
@@ -57,11 +56,6 @@ def test_create_module_requires_opt_in_and_allows_envelope_when_enabled(
 
 
 @pytest.mark.com_integration
-@pytest.mark.xfail(
-    reason="create_module does not persist the VBE component across sessions "
-    "(plan 109); the module vanishes when the Access instance closes",
-    strict=False,
-)
 def test_created_module_persists_across_sessions(temp_db_copy: str, monkeypatch, capsys):
     """A created module must still be listed by a fresh session (persistence)."""
     pytest.importorskip("win32com")
@@ -80,3 +74,47 @@ def test_created_module_persists_across_sessions(temp_db_copy: str, monkeypatch,
     assert list_exit == 0, listed
     names = [entry.get("name") for entry in listed.get("data", [])]
     assert module_name in names
+
+
+@pytest.mark.com_integration
+def test_set_vba_code_persists_across_sessions(temp_db_copy: str, monkeypatch, capsys):
+    """Code set in one session must be readable from a fresh session."""
+    pytest.importorskip("win32com")
+
+    db_path = Path(temp_db_copy)
+    monkeypatch.setenv("ACCESS_MCP_ALLOWED_DIRS", str(db_path.parent))
+    monkeypatch.setenv("ACCESS_MCP_ENABLE_VBA_WRITES", "1")
+    module_name = f"McpCode{uuid.uuid4().hex[:8]}"
+    marker = f"PersistMarker{uuid.uuid4().hex}"
+    code = f"Public Sub {marker}()\nEnd Sub"
+
+    # Seed an already-persisted component so this pin exercises rewriting an
+    # existing CodeModule rather than LoadFromText creating a new component.
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.Dispatch("Access.Application")
+        app.OpenCurrentDatabase(str(db_path))
+        component = app.VBE.VBProjects(1).VBComponents.Add(1)
+        component.Name = module_name
+        app.DoCmd.Save(5, module_name)
+        app.Quit(2)
+    finally:
+        pythoncom.CoUninitialize()
+
+    set_exit = cli.main([
+        "automation", "vba", "set-code", "--module", module_name,
+        "--code", code, "--db", str(db_path), "--allow-write", "--yes", "--json",
+    ])
+    result = json.loads(capsys.readouterr().out)
+    assert set_exit == 0, result
+
+    get_exit = cli.main([
+        "automation", "vba", "get-code", "--module", module_name,
+        "--db", str(db_path), "--json",
+    ])
+    fetched = json.loads(capsys.readouterr().out)
+    assert get_exit == 0, fetched
+    assert marker in str(fetched.get("data", fetched))

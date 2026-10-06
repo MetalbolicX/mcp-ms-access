@@ -1298,6 +1298,15 @@ class TestVBA:
         result = uc.delete_module("Module1", confirm=False)
         assert isinstance(result, Err)
 
+    def test_delete_nonexistent_module_reports_not_found(self):
+        """A missing module has a domain-specific error, not a boolean failure."""
+        from ms_access_mcp.application.automation import AutomationUseCases
+
+        uc = AutomationUseCases(adapter=FakeAccessAdapter(), readonly=False)
+        result = uc.delete_module("MissingModule", confirm=True)
+        assert isinstance(result, Err)
+        assert result.message == "module not found"
+
     def test_delete_module_with_confirm_ok(self):
         """delete_module with confirm=True returns Ok."""
         from ms_access_mcp.application.automation import AutomationUseCases

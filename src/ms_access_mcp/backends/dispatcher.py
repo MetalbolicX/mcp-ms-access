@@ -240,7 +240,7 @@ class ComDispatcher:
                     except Exception:
                         pass
                     try:
-                        application.Quit()
+                        application.Quit(2)  # acQuitSaveNone: avoid the invisible acQuitPrompt modal.
                     except Exception:
                         pass
 
@@ -404,7 +404,11 @@ class ComDispatcher:
 
             app = self._access_app
             try:
-                app.Quit()  # direct STA-thread call — legal; no cross-apartment proxy
+                # Every write path persists what it reports: forms/reports use
+                # DoCmd.Close(..., acSaveYes), and VBE writes use DoCmd.Save(5).
+                # Save-none is therefore honest and avoids the invisible
+                # acQuitPrompt modal that hangs shutdown and triggers the PID kill.
+                app.Quit(2)  # acQuitSaveNone; direct STA-thread COM call.
             except Exception as e:
                 errors.append(f"Access.Quit(): {e}")
 

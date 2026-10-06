@@ -797,6 +797,11 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
             return err
         if err := self._dangerous("delete_module", confirm):
             return err
+        exists = self._call_adapter("module_exists", module_name)
+        if isinstance(exists, Err):
+            return exists
+        if not exists.data:
+            return _err("module not found")
         return self._call_adapter_bool("delete_module", module_name)
 
     def create_module(
