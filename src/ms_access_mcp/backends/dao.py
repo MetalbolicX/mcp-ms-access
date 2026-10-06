@@ -375,10 +375,15 @@ class DaoAdapter:
             try:
                 db = self._dispatcher.current_db
                 rs = db.OpenRecordset(query_sql)
-                if rs.EOF:
-                    return QueryResult(success=True, rows=[], count=0, columns=[])
+                try:
+                    columns = [rs.Fields(i).Name for i in range(rs.Fields.Count)]
+                except Exception:
+                    if not rs.EOF:
+                        raise
+                    columns = []
 
-                columns = [rs.Fields(i).Name for i in range(rs.Fields.Count)]
+                if rs.EOF:
+                    return QueryResult(success=True, rows=[], count=0, columns=columns)
 
                 results: list[dict] = []
                 while not rs.EOF:

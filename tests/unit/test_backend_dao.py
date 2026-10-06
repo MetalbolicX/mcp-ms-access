@@ -45,6 +45,8 @@ class FakeFieldCollection:
 
     @property
     def Count(self) -> int:
+        if self._rs.fail_fields_at_eof and self._rs.EOF:
+            raise FakeComError("Fields unavailable at EOF")
         return len(self._rs._keys)
 
     def __call__(self, index: int) -> FakeField:
@@ -56,10 +58,16 @@ class FakeFieldCollection:
 class FakeRecordset:
     """Recordset over a list of row dicts."""
 
-    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        rows: list[dict[str, Any]] | None = None,
+        field_names: list[str] | None = None,
+        fail_fields_at_eof: bool = False,
+    ) -> None:
         self._rows = rows or []
-        self._keys = list(self._rows[0].keys()) if self._rows else []
+        self._keys = field_names if field_names is not None else (list(self._rows[0].keys()) if self._rows else [])
         self._pos = 0
+        self.fail_fields_at_eof = fail_fields_at_eof
         self.closed = False
         self._fields = FakeFieldCollection(self)
 
@@ -193,6 +201,9 @@ class FakeDb:
         self.executed: list[str] = []
         self.records_affected = 1
         self.recordset_rows: list[dict[str, Any]] | None = None
+        self.recordset_field_names: list[str] | None = None
+        self.fail_fields_at_eof = False
+        self.last_recordset: FakeRecordset | None = None
         self.fail_pred: Any = None  # callable(sql) -> bool, True means raise
         self.fail_open_recordset = False
         self.relations = FakeRelations()
@@ -212,7 +223,12 @@ class FakeDb:
     def OpenRecordset(self, sql: str) -> FakeRecordset:
         if self.fail_open_recordset:
             raise FakeComError(f"OpenRecordset failed: {sql}")
-        return FakeRecordset(self.recordset_rows)
+        self.last_recordset = FakeRecordset(
+            self.recordset_rows,
+            self.recordset_field_names,
+            fail_fields_at_eof=self.fail_fields_at_eof,
+        )
+        return self.last_recordset
 
     def CreateQueryDef(self, name: str, sql: str) -> FakeQueryDef:
         return FakeQueryDef(name, sql)
@@ -521,6 +537,32 @@ class TestRowCrud:
         assert result.rows == []
         assert result.count == 0
         assert result.columns == []
+
+    def test_execute_query_empty_recordset_preserves_fields(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
+        dispatcher.db.recordset_field_names = ["F1", "F2"]
+
+        result = adapter.execute_query("SELECT F1, F2 FROM t WHERE 1=0")
+
+        assert result.success is True
+        assert result.columns == ["F1", "F2"]
+        assert result.rows == []
+        assert result.count == 0
+        assert dispatcher.db.last_recordset is not None
+        assert dispatcher.db.last_recordset.closed is True
+
+    def test_execute_query_empty_recordset_falls_back_when_fields_throw(
+        self, adapter: DaoAdapter, dispatcher: FakeDispatcher
+    ):
+        dispatcher.db.fail_fields_at_eof = True
+
+        result = adapter.execute_query("SELECT COUNT(*)")
+
+        assert result.success is True
+        assert result.columns == []
+        assert result.rows == []
+        assert result.count == 0
+        assert dispatcher.db.last_recordset is not None
+        assert dispatcher.db.last_recordset.closed is True
 
     def test_execute_query_com_failure(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         dispatcher.db.fail_open_recordset = True
