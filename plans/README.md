@@ -941,5 +941,6 @@ were verified fully contained in `main` and deleted (safe `-d`).
 ff-only into `main` — **8 commits** `587e456..4cee9aa` on branch
 `plan/e3-e4-followups`, branch verified contained and deleted (safe
 `-d`); no linked worktrees exist. Post-merge gates on `main`: 1622
-passed / 3 skipped, ruff clean, pyright 0, budget PASS.
+passed / 3 skipped, ruff clean, pyright 0, budget PASS. Tagged
+`audit-e3-e7`.
 
