@@ -974,5 +974,5 @@ VBA/macro write tools opt-in default, 20-round g13 crash matrix,
 | 101  | [Linked-tables envelope truth (rowcount, nesting)](101-linked-tables-envelope-truth.md) | 38 | P2 | S | LOW-MED | Characterization → refresh | 080/081 | DONE (9191bb3) |
 | 102  | [Empty-result column preservation on DAO](102-empty-result-columns.md) | 38 | P3 | S | LOW | Strict TDD + integration pin | 037/071/088 | DONE (b245065) |
 | 103  | [Rename shadowing schema_json fields (wire alias)](103-schema-json-shadow-rename.md) | 38 | P3 | S | LOW | Strict TDD (warning-as-error RED) | 075 | DONE (8d99b6d) |
-| 104  | [Ledger hygiene sweep (row 047, checkboxes, nul)](104-ledger-hygiene-sweep.md) | 38 | P3 | S | LOW | Direct docs edit | 099–103 (sequence last) | DONE (see hash; 140 boxes ticked with row evidence, 0 NOTE lines needed, row 047 annotated, root `nul` deleted by parent — worker safety policy bars filesystem deletes, plain `rm` succeeded) |
+| 104  | [Ledger hygiene sweep (row 047, checkboxes, nul)](104-ledger-hygiene-sweep.md) | 38 | P3 | S | LOW | Direct docs edit | 099–103 (sequence last) | DONE (1ae6e54; 140 boxes ticked with row evidence, 0 NOTE lines needed, row 047 annotated, root `nul` deleted by parent — worker safety policy bars filesystem deletes, plain `rm` succeeded) |
 
