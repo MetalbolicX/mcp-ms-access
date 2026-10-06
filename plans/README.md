@@ -972,7 +972,7 @@ VBA/macro write tools opt-in default, 20-round g13 crash matrix,
 | 099  | [Transactional batch property setters (snapshot-restore)](099-transactional-batch-properties.md) | 38 | P1 | M | MED | Strict TDD on fakes + live gate | 077–098 | DONE (cc5c774) |
 | 100  | [ODBC read-path envelope parity (stats asdict)](100-odbc-stats-envelope-parity.md) | 38 | P2 | S-M | MED | Characterization-first + strict TDD | 071/080/081 | DONE (96e5560, scope amended: +tables, +schema-by-consequence) |
 | 101  | [Linked-tables envelope truth (rowcount, nesting)](101-linked-tables-envelope-truth.md) | 38 | P2 | S | LOW-MED | Characterization → refresh | 080/081 | DONE (9191bb3) |
-| 102  | [Empty-result column preservation on DAO](102-empty-result-columns.md) | 38 | P3 | S | LOW | Strict TDD + integration pin | 037/071/088 | TODO |
+| 102  | [Empty-result column preservation on DAO](102-empty-result-columns.md) | 38 | P3 | S | LOW | Strict TDD + integration pin | 037/071/088 | DONE (b245065) |
 | 103  | [Rename shadowing schema_json fields (wire alias)](103-schema-json-shadow-rename.md) | 38 | P3 | S | LOW | Strict TDD (warning-as-error RED) | 075 | TODO |
 | 104  | [Ledger hygiene sweep (row 047, checkboxes, nul)](104-ledger-hygiene-sweep.md) | 38 | P3 | S | LOW | Direct docs edit | 099–103 (sequence last) | TODO |
 
