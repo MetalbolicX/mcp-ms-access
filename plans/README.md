@@ -1005,7 +1005,7 @@ matrix recorded in `docs/specs/crash-recovery.md`.
 | Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
 |------|-------|-------|----------|--------|------|------|------------|--------|
 | 105  | [TEST-02 self-hosted Access CI job (dormant)](105-self-hosted-access-ci.md) | 39 | P2 | S | LOW | Direct edit + YAML check | — | TODO |
-| 106  | [VBA/macro write opt-in (env gate, default off)](106-vba-macro-write-optin.md) | 39 | P1 | M | MED | Strict TDD + live gate | — | TODO |
+| 106  | [VBA/macro write opt-in (env gate, default off)](106-vba-macro-write-optin.md) | 39 | P1 | M | MED | Strict TDD + live gate | — | DONE (30c6459; discovered plan-109 defect, pinned xfail) |
 | 107  | [g13 20-round outcome matrix (run + record)](107-g13-matrix-run.md) | 39 | P2 | M | LOW-MED | Harness run + docs record | 087 | TODO |
 | 108  | [[project.urls] + origin remote](108-project-urls-remote.md) | 39 | P3 | S | LOW | Direct edit | — | TODO |
 | 109  | [VBA write persistence honesty (NEW DEFECT, discovered executing 106)](109-vba-persistence-honesty.md) | 40 | P1 | M | MED | Live-probe mechanism first, then strict TDD | 092/106 | TODO |
