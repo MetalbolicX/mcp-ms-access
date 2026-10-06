@@ -8,15 +8,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# XML template for creating empty macros
-_MACRO_TEMPLATE = (
-    '<?xml version="1.0" encoding="UTF-16" standalone="no"?>\n'
-    "<Macros>\n"
-    '  <Macro Name="TemplateMacro">\n'
-    "    <Statements/>\n"
-    "  </Macro>\n"
-    "</Macros>\n"
-)
+# SaveAsText AXL dialect captured live 2026-10-10 via RunCommand(138
+# acCmdNewObjectMacro) + SaveAsText(4); LoadFromText(4) round-trip proven,
+# including importing this content under a different name. The object name is
+# supplied by LoadFromText's ObjectName argument, so this template is name-independent.
+_MACRO_TEMPLATE = r'''Version =196611
+PublishOption =1
+ColumnsShown =0
+Begin
+    Comment ="_AXL:<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\015\012<UserI"
+        "nterfaceMacro MinimumClientDesignVersion=\"14.0.0000.0000\" xmlns=\"http://schem"
+        "as.microsoft.com/office/accessservices/2009/11/application\"><Statements/></User"
+        "InterfaceMacro>"
+End
+'''.replace("\n", "\r\n")  # ground truth 2026-10-10: LoadFromText(4, acMacro) is
+# line-ending sensitive - LF-only files fail with "errors while importing";
+# SaveAsText emits CRLF and only CRLF files import.
 
 
 def get_macros(dispatcher):
@@ -96,9 +103,8 @@ def create_macro(dispatcher, macro_name: str, load_object_from_text: Any = None)
 
     def _do() -> bool:
         try:
-            xml = _MACRO_TEMPLATE.replace("TemplateMacro", macro_name)
             if load_object_from_text:
-                return load_object_from_text(8, macro_name, xml)
+                return load_object_from_text(4, macro_name, _MACRO_TEMPLATE)
             return False
         except Exception:
             return False
@@ -107,13 +113,13 @@ def create_macro(dispatcher, macro_name: str, load_object_from_text: Any = None)
 
 
 def rename_macro(dispatcher, old_name: str, new_name: str) -> bool:
-    """Rename a macro via DoCmd.Rename with acMacro=8."""
+    """Rename a macro via DoCmd.Rename with acMacro=4."""
     if not dispatcher._started:
         return False
 
     def _do() -> bool:
         try:
-            dispatcher.access_app.DoCmd.Rename(new_name, 8, old_name)
+            dispatcher.access_app.DoCmd.Rename(new_name, 4, old_name)
             return True
         except Exception as exc:
             logger.debug("rename_macro %s->%s failed: %s", old_name, new_name, exc)
@@ -123,13 +129,13 @@ def rename_macro(dispatcher, old_name: str, new_name: str) -> bool:
 
 
 def delete_macro(dispatcher, macro_name: str) -> bool:
-    """Delete a macro via DoCmd.DeleteObject with acMacro=8."""
+    """Delete a macro via DoCmd.DeleteObject with acMacro=4."""
     if not dispatcher._started:
         return False
 
     def _do() -> bool:
         try:
-            dispatcher.access_app.DoCmd.DeleteObject(8, macro_name)
+            dispatcher.access_app.DoCmd.DeleteObject(4, macro_name)
             return True
         except Exception as exc:
             logger.debug("delete_macro %s failed: %s", macro_name, exc)

@@ -12,11 +12,6 @@ from ms_access_mcp import cli
 
 
 @pytest.mark.com_integration
-@pytest.mark.xfail(
-    reason="create_macro returns False live (plan 110); the pin flips to "
-    "XPASS once macro creation is fixed",
-    strict=False,
-)
 def test_created_macro_persists_across_sessions(temp_db_copy: str, monkeypatch, capsys):
     """A macro created through SaveAsText/LoadFromText survives a fresh session."""
     pytest.importorskip("win32com")

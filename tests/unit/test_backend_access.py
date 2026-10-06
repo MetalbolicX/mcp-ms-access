@@ -325,10 +325,25 @@ class TestModuleConstants:
         from ms_access_mcp.backends.access import _COMPILE_CMD_IDS
         assert _COMPILE_CMD_IDS == [301, 206, 317, 232]
 
-    def test_macro_template_defined(self):
+    def test_macro_template_is_captured_save_as_text_dialect(self):
         from ms_access_mcp.backends.access import _MACRO_TEMPLATE
-        assert "TemplateMacro" in _MACRO_TEMPLATE
-        assert "<?xml" in _MACRO_TEMPLATE
+
+        # Byte-identical to a real SaveAsText(4) export (ground truth
+        # 2026-10-10): CRLF line endings (LoadFromText is line-ending
+        # sensitive) and the escaped quote before <Statements/> inside the
+        # Comment value.
+        assert _MACRO_TEMPLATE == (
+            "Version =196611\r\n"
+            "PublishOption =1\r\n"
+            "ColumnsShown =0\r\n"
+            "Begin\r\n"
+            '    Comment ="_AXL:<?xml version=\\"1.0\\" encoding=\\"UTF-16\\" standalone=\\"no\\"?>\\015\\012<UserI"\r\n'
+            '        "nterfaceMacro MinimumClientDesignVersion=\\"14.0.0000.0000\\" xmlns=\\"http://schem"\r\n'
+            '        "as.microsoft.com/office/accessservices/2009/11/application\\"><Statements/></User"\r\n'
+            '        "InterfaceMacro>"\r\n'
+            "End\r\n"
+        )
+        assert "TemplateMacro" not in _MACRO_TEMPLATE
 
 
 # -------------------------------------------------------------------------- #
@@ -584,6 +599,8 @@ class TestMacroOperationsHappyPath:
         fake_proj = FakeCurrentProject(all_macros_collection)
 
         class FakeAccessApp:
+            DoCmd = MagicMock()
+
             @property
             def CurrentProject(self):
                 return fake_proj
@@ -616,6 +633,32 @@ class TestMacroOperationsHappyPath:
         adapter = self._make_connected_adapter(coll)
 
         assert adapter.macro_exists("OtherMacro") is False
+
+    def test_create_macro_loads_with_ac_macro_four_and_name_argument(self):
+        coll = _make_all_macros_collection()
+        adapter = self._make_connected_adapter(coll)
+        loader = MagicMock(return_value=True)
+        adapter._load_object_from_text = loader
+
+        assert adapter.create_macro("CreatedName") is True
+        object_type, object_name, text = loader.call_args.args
+        assert object_type == 4
+        assert object_name == "CreatedName"
+        from ms_access_mcp.backends.access import _MACRO_TEMPLATE
+        assert text == _MACRO_TEMPLATE
+
+    def test_rename_and_delete_macro_use_ac_macro_four(self):
+        coll = _make_all_macros_collection()
+        adapter = self._make_connected_adapter(coll)
+
+        assert adapter.rename_macro("OldName", "NewName") is True
+        assert adapter.delete_macro("NewName") is True
+        adapter._dispatcher.access_app.DoCmd.Rename.assert_called_once_with(
+            "NewName", 4, "OldName"
+        )
+        adapter._dispatcher.access_app.DoCmd.DeleteObject.assert_called_once_with(
+            4, "NewName"
+        )
 
 
 class TestVBAOperationsHappyPath:

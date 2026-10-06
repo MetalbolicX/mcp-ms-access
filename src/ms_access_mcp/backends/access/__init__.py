@@ -31,15 +31,8 @@ logger = logging.getLogger(__name__)
 # Compile command IDs by Access version (most likely first)
 _COMPILE_CMD_IDS = [301, 206, 317, 232]
 
-# XML template for creating empty macros (kept here for backward compatibility)
-_MACRO_TEMPLATE = (
-    '<?xml version="1.0" encoding="UTF-16" standalone="no"?>\n'
-    "<Macros>\n"
-    '  <Macro Name="TemplateMacro">\n'
-    "    <Statements/>\n"
-    "  </Macro>\n"
-    "</Macros>\n"
-)
+# Backward-compatible alias to the captured SaveAsText macro dialect.
+_MACRO_TEMPLATE = macros._MACRO_TEMPLATE
 
 _T = TypeVar("_T")
 
@@ -230,7 +223,7 @@ class AccessAdapter:
         """Export an Access object to text using SaveAsText.
 
         Returns the text content or empty string on failure.
-        object_type: acForm=2, acReport=4, acModule=5, acMacro=8
+        object_type: acForm=2, acReport=4, acModule=5, acMacro=4
         """
         return vba.save_object_to_text(
             self._dispatcher.access_app, object_type, object_name
@@ -239,7 +232,7 @@ class AccessAdapter:
     def _load_object_from_text(self, object_type: int, object_name: str, text_data: str) -> bool:
         """Import an Access object from text data using LoadFromText.
 
-        object_type: acForm=2, acReport=4, acModule=5, acMacro=8
+        object_type: acForm=2, acReport=4, acModule=5, acMacro=4
 
         Encoding: VBA modules (acModule=5) expect the system ANSI codepage
         without BOM. Forms, reports, queries, and macros expect UTF-16-LE
@@ -838,11 +831,11 @@ class AccessAdapter:
         return macros.create_macro(self._dispatcher, macro_name, load_object_from_text=self._load_object_from_text)
 
     def rename_macro(self, old_name: str, new_name: str) -> bool:
-        """Rename a macro via DoCmd.Rename with acMacro=8."""
+        """Rename a macro via DoCmd.Rename with acMacro=4."""
         return macros.rename_macro(self._dispatcher, old_name, new_name)
 
     def delete_macro(self, macro_name: str) -> bool:
-        """Delete a macro via DoCmd.DeleteObject with acMacro=8."""
+        """Delete a macro via DoCmd.DeleteObject with acMacro=4."""
         return macros.delete_macro(self._dispatcher, macro_name)
 
     def run_macro(self, macro_name: str) -> bool:
