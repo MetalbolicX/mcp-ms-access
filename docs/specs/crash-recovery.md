@@ -99,6 +99,39 @@ Promote the harness to a `slow`-marked pytest in `tests/integration/`,
 gated like the existing COM integration tests (Windows + pywin32 + fixture
 DB), so the corruption matrix stays green as recovery code evolves.
 
+### 2.4 Recorded 20-round outcome matrix (2026-10-10)
+
+Evidence from **one machine**: Windows 10.0.19044.7725; Microsoft Access
+16.0. Fixed RNG seed: `20261010`. The harness's per-round `Exit` is the
+killed server process exit code; the final harness exit code is `0`. The
+harness does not report a separate recovery-path or backup-state field, so
+neither is inferred here.
+
+| Round | Kill phase | Outcome | Exit | Duration |
+| ---: | --- | --- | ---: | ---: |
+| 1 | mid_batch | LOCK_STALE | 1 | 6.3s |
+| 2 | post_commit | LOCK_STALE | 1 | 5.5s |
+| 3 | mid_read | LOCK_STALE | 1 | 6.1s |
+| 4 | mid_batch | LOCK_STALE | 1 | 5.6s |
+| 5 | post_commit | LOCK_STALE | 1 | 4.6s |
+| 6 | mid_read | LOCK_STALE | 1 | 10.4s |
+| 7 | mid_batch | LOCK_STALE | 1 | 11.0s |
+| 8 | post_commit | LOCK_STALE | 1 | 4.7s |
+| 9 | mid_read | LOCK_STALE | 1 | 4.7s |
+| 10 | mid_batch | LOCK_STALE | 1 | 5.7s |
+| 11 | post_commit | LOCK_STALE | 1 | 4.8s |
+| 12 | mid_read | LOCK_STALE | 1 | 4.9s |
+| 13 | mid_batch | LOCK_STALE | 1 | 4.8s |
+| 14 | post_commit | LOCK_STALE | 1 | 5.3s |
+| 15 | mid_read | LOCK_STALE | 1 | 5.6s |
+| 16 | mid_batch | LOCK_STALE | 1 | 4.7s |
+| 17 | post_commit | LOCK_STALE | 1 | 5.3s |
+| 18 | mid_read | LOCK_STALE | 1 | 5.4s |
+| 19 | mid_batch | LOCK_STALE | 1 | 4.8s |
+| 20 | post_commit | LOCK_STALE | 1 | 5.2s |
+
+Outcome distribution: **20 LOCK_STALE (retryable), 0 CLEAN, 0 REPAIRABLE, 0 FATAL, 0 FAIL**. Final harness exit code: **0**.
+
 ## 3. Constraints
 
 - **Windows-only execution**: COM/ACE paths require Windows + pywin32; the
