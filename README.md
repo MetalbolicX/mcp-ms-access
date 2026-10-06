@@ -124,6 +124,12 @@ Profiles are stored in the same global credentials file as database passwords (`
 
 The `core` profile MCP tools expose **typed parameters** instead of an opaque `params` dict. Client code that calls core tools should pass individual named arguments (e.g. `sql="SELECT 1"`, `table="MyTable"`) rather than a `params={"sql": "..."}` dictionary. Write tools (`insert_data`, `update_data`, `delete_data`, `execute_raw_sql`, `create_query`, `set_query_sql`, `delete_query`, `save_query`) require `confirm=True` to execute — pass `confirm=False` explicitly for read-only operations. The wire request schema has changed; response payloads are byte-compatible with the previous implementation.
 
+## VBA and macro write opt-in
+
+VBA and macro code-object writes are disabled by default. Set `ACCESS_MCP_ENABLE_VBA_WRITES=1` in the server or CLI process environment to enable them; `1`, `true`, and `yes` are accepted case-insensitively. This additional opt-in reduces accidental code rewrites and is separate from the existing `confirm=True` and write-policy checks.
+
+The opt-in gates only `set_vba_code`, `add_vba_procedure`, `vba_replace_procedure`, `create_module`, `rename_module`, `delete_module`, `create_macro`, `rename_macro`, `delete_macro`, and `set_control_event_procedure`. It does not gate `run_macro` or form/report design writes.
+
 ## Crash resilience
 
 MS Access (ACE) uses write-behind caching with no write-ahead log. If the server process dies mid-write, committed pages may never be flushed, leaving stale `.ldb` lock files or a torn `.accdb`. The server installs multiple recovery rungs to bound data loss.

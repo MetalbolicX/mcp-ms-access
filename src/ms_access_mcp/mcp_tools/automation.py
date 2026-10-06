@@ -331,7 +331,7 @@ def set_control_event_procedure(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Set an event procedure on a form control."""
+    """Set a form control event procedure (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     p = params or {}
     name = p.get("name", "")
     control_name = p.get("control_name", "")
@@ -754,7 +754,7 @@ def create_macro(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Create a new macro."""
+    """Create a macro (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     name = (params or {}).get("name", "")
     uc = _new_automation(readonly=False)
     result = uc.create_macro(name, confirm=confirm)
@@ -766,7 +766,7 @@ def rename_macro(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Rename a macro."""
+    """Rename a macro (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     p = params or {}
     old = p.get("old_name", "")
     new = p.get("new_name", "")
@@ -780,7 +780,7 @@ def delete_macro(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Delete a macro."""
+    """Delete a macro (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     name = (params or {}).get("name", "")
     uc = _new_automation(readonly=False)
     result = uc.delete_macro(name, confirm=confirm)
@@ -848,7 +848,7 @@ def set_vba_code(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Set VBA code in a module."""
+    """Set module code (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     if not confirm:
         return to_mcp_result({
             "success": False,
@@ -867,7 +867,7 @@ def add_vba_procedure(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Add a VBA procedure to a module."""
+    """Add a procedure (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     p = params or {}
     module_name = p.get("module_name", "")
     procedure_name = p.get("procedure_name", "")
@@ -904,7 +904,7 @@ def delete_module(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Delete a VBA module."""
+    """Delete a module (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     module_name = (params or {}).get("module_name", "")
     uc = _new_automation(readonly=False)
     result = uc.delete_module(module_name, confirm=confirm)
@@ -942,7 +942,7 @@ def vba_replace_procedure(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Replace a VBA procedure in a module."""
+    """Replace a procedure (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     p = params or {}
     module_name = p.get("module_name", "")
     procedure_name = p.get("procedure_name", "")
@@ -957,7 +957,7 @@ def create_module(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Create a new VBA module."""
+    """Create a module (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     p = params or {}
     module_name = p.get("module_name", "")
     module_type = p.get("module_type", "standard")
@@ -976,7 +976,7 @@ def rename_module(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Rename a VBA module."""
+    """Rename a module (requires ACCESS_MCP_ENABLE_VBA_WRITES=1)."""
     p = params or {}
     old = p.get("old_name", "")
     new = p.get("new_name", "")
@@ -1020,7 +1020,7 @@ _TOOLS: ToolRegistry = {
     "add_control": (add_control, "Add a control to a form."),
     "remove_control": (remove_control, "Remove a control from a form."),
     "get_control_event_procedures": (get_control_event_procedures, "Get event procedures for a form control."),
-    "set_control_event_procedure": (set_control_event_procedure, "Set an event procedure on a form control."),
+    "set_control_event_procedure": (set_control_event_procedure, "Set a form control event procedure; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
     "get_form_sections": (get_form_sections, "Get all sections of a form."),
     "get_form_section_properties": (get_form_section_properties, "Get properties of a form section."),
     "set_form_section_property": (set_form_section_property, "Set a property on a form section."),
@@ -1052,24 +1052,24 @@ _TOOLS: ToolRegistry = {
     "macro_exists": (macro_exists, "Check if a macro exists."),
     "get_macros": (get_macros, "Get all macros in the database."),
     "get_macro_properties": (get_macro_properties, "Get properties of a macro."),
-    "create_macro": (create_macro, "Create a new macro."),
-    "rename_macro": (rename_macro, "Rename a macro."),
-    "delete_macro": (delete_macro, "Delete a macro."),
+    "create_macro": (create_macro, "Create a macro; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
+    "rename_macro": (rename_macro, "Rename a macro; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
+    "delete_macro": (delete_macro, "Delete a macro; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
     "run_macro": (run_macro, "Run a macro."),
     # VBA
     "get_vba_projects": (get_vba_projects, "Get all VBA projects in the database."),
     "get_modules": (get_modules, "Get all VBA modules in the database."),
     "get_vba_code": (get_vba_code, "Get VBA code from a module."),
-    "set_vba_code": (set_vba_code, "Set VBA code in a module."),
-    "add_vba_procedure": (add_vba_procedure, "Add a VBA procedure to a module."),
+    "set_vba_code": (set_vba_code, "Set module code; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
+    "add_vba_procedure": (add_vba_procedure, "Add a procedure; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
     "compile_vba": (compile_vba, "Compile all VBA code in the database."),
     "save_database": (save_database, "Save the database."),
-    "delete_module": (delete_module, "Delete a VBA module."),
+    "delete_module": (delete_module, "Delete a module; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
     "vba_list_procedures": (vba_list_procedures, "List all procedures in a VBA module."),
     "vba_get_procedure": (vba_get_procedure, "Get a specific VBA procedure from a module."),
-    "vba_replace_procedure": (vba_replace_procedure, "Replace a VBA procedure in a module."),
-    "create_module": (create_module, "Create a new VBA module."),
-    "rename_module": (rename_module, "Rename a VBA module."),
+    "vba_replace_procedure": (vba_replace_procedure, "Replace a procedure; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
+    "create_module": (create_module, "Create a module; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
+    "rename_module": (rename_module, "Rename a module; requires ACCESS_MCP_ENABLE_VBA_WRITES=1 (default off)."),
     "module_exists": (module_exists, "Check if a VBA module exists."),
 }
 

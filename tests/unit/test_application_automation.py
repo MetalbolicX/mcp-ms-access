@@ -3,7 +3,15 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
+import pytest
+
 from ms_access_mcp.application.database import Err, Ok
+
+
+@pytest.fixture(autouse=True)
+def _enable_vba_macro_writes_for_legacy_behavior_tests(monkeypatch):
+    """Keep pre-opt-in success pins testing the existing write behavior."""
+    monkeypatch.setenv("ACCESS_MCP_ENABLE_VBA_WRITES", "1")
 
 # =============================================================================
 # Fake adapter info classes (mirroring what AccessAdapter returns)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 
+import pytest
 from mcp.types import TextContent
 
 from ms_access_mcp.mcp_tools.automation import (
@@ -16,6 +17,12 @@ from ms_access_mcp.mcp_tools.automation import (
 )
 from ms_access_mcp.mcp_tools.core import _TOOLS as CORE_TOOLS
 from ms_access_mcp.profiles import load_profile
+
+
+@pytest.fixture(autouse=True)
+def _enable_vba_macro_writes_for_legacy_behavior_tests(monkeypatch):
+    """Keep existing MCP contract pins on the pre-opt-in behavior path."""
+    monkeypatch.setenv("ACCESS_MCP_ENABLE_VBA_WRITES", "1")
 
 
 def _text(result) -> str:

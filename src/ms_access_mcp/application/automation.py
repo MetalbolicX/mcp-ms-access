@@ -6,6 +6,7 @@ All destructive ops gated via safety.require_acknowledgment + write policy.
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -62,6 +63,16 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
         """Run write gate. Returns Err if blocked, None if allowed."""
         if not self._policy.allow_write():
             return _err("Write operations are disabled (readonly mode)")
+        return None
+
+    def _vba_write_gate(self) -> Err | None:
+        """Require explicit opt-in before modifying VBA or macro code objects."""
+        enabled = os.environ.get("ACCESS_MCP_ENABLE_VBA_WRITES", "").casefold()
+        if enabled not in {"1", "true", "yes"}:
+            return _err(
+                "VBA and macro writes are disabled by default; set "
+                "ACCESS_MCP_ENABLE_VBA_WRITES=1 to enable them"
+            )
         return None
 
     def _dangerous(
@@ -516,13 +527,15 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
         code: str,
         confirm: bool = False,
     ) -> Result:
-        """Set an event procedure on a control.
+        """Set an event procedure on a control; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
         if object_kind == "report":
             return _err("control event procedures not supported for reports")
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous(f"set_{object_kind}_control_event", confirm):
             return err
         method_name = self._dispatch(object_kind, "set_event_procedure")
@@ -654,11 +667,13 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
         return self._call_adapter("macro_exists", name)
 
     def create_macro(self, name: str, confirm: bool = False) -> Result:
-        """Create a macro.
+        """Create a macro; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous("create_macro", confirm):
             return err
         return self._call_adapter_bool("create_macro", name)
@@ -666,21 +681,25 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
     def rename_macro(
         self, old_name: str, new_name: str, confirm: bool = False
     ) -> Result:
-        """Rename a macro.
+        """Rename a macro; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous("rename_macro", confirm):
             return err
         return self._call_adapter_bool("rename_macro", old_name, new_name)
 
     def delete_macro(self, name: str, confirm: bool = False) -> Result:
-        """Delete a macro.
+        """Delete a macro; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous("delete_macro", confirm):
             return err
         return self._call_adapter_bool("delete_macro", name)
@@ -739,11 +758,13 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
     def set_vba_code(
         self, module_name: str, code: str, confirm: bool = False
     ) -> Result:
-        """Set VBA code in a module.
+        """Set VBA code in a module; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous("set_vba_code", confirm):
             return err
         return self._call_adapter_bool("set_vba_code", module_name, code)
@@ -755,21 +776,25 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
         code: str,
         confirm: bool = False,
     ) -> Result:
-        """Add a VBA procedure to a module.
+        """Add a VBA procedure to a module; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous("add_vba_procedure", confirm):
             return err
         return self._call_adapter_bool("add_vba_procedure", module_name, procedure_name, code)
 
     def delete_module(self, module_name: str, confirm: bool = False) -> Result:
-        """Delete a VBA module.
+        """Delete a VBA module; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous("delete_module", confirm):
             return err
         return self._call_adapter_bool("delete_module", module_name)
@@ -777,11 +802,13 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
     def create_module(
         self, module_name: str, module_type: int = 1, confirm: bool = False
     ) -> Result:
-        """Create a VBA module.
+        """Create a VBA module; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous("create_module", confirm):
             return err
         return self._call_adapter_bool("create_module", module_name, module_type)
@@ -789,11 +816,13 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
     def rename_module(
         self, old_name: str, new_name: str, confirm: bool = False
     ) -> Result:
-        """Rename a VBA module.
+        """Rename a VBA module; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous("rename_module", confirm):
             return err
         return self._call_adapter_bool("rename_module", old_name, new_name)
@@ -867,11 +896,13 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
         code: str,
         confirm: bool = False,
     ) -> Result:
-        """Replace a VBA procedure.
+        """Replace a VBA procedure; requires VBA-write opt-in.
 
         Returns:
             Ok on success, or Err.
         """
+        if err := self._vba_write_gate():
+            return err
         if err := self._dangerous("vba_replace_procedure", confirm):
             return err
         return self._call_adapter_bool("vba_replace_procedure", module_name, procedure_name, code)
