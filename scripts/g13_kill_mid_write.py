@@ -198,6 +198,7 @@ TOOL_CALLS = {
     "open": ("connect_access", ("path",)),
     "insert": ("insert_data", ("path", "table", "data", "confirm")),
     "list": ("get_tables", ("path",)),
+    "create_table": ("create_table", ("path", "params", "confirm")),
 }
 
 
@@ -370,6 +371,29 @@ def _insert_data(
     return _check_tool_response(resp, TOOL_CALLS["insert"][0])
 
 
+def _create_tasks_table(stdin, reader, watchdog: _Watchdog, db_path: Path) -> dict:
+    """Create the workload table and raise if the tool reports failure.
+
+    The fixture (Northwind) ships without a `tasks` table; without this
+    bootstrap every round died at the first insert with "Could not find
+    output table 'tasks'" and the harness reported FAIL for all rounds
+    (plan-085/087 operator-gate finding, 2026-10-05).
+    """
+    _send(stdin, {
+        "jsonrpc": "2.0", "id": 21, "method": "tools/call",
+        "params": {
+            "name": TOOL_CALLS["create_table"][0],
+            "arguments": {
+                "path": str(db_path),
+                "params": {"table": "tasks", "columns": {"title": "Text"}},
+                "confirm": True,
+            },
+        },
+    })
+    resp = _recv(reader, 20.0, watchdog)
+    return _check_tool_response(resp, TOOL_CALLS["create_table"][0])
+
+
 # ---------------------------------------------------------------------------
 # Kill round
 # ---------------------------------------------------------------------------
@@ -408,7 +432,7 @@ def _run_kill_round(
         # Spawn venv python directly (never uv run — muddies kill semantics)
         venv_python = sys.executable
         proc = subprocess.Popen(
-            [venv_python, "-u", "-m", "ms_access_mcp.server"],
+            [venv_python, "-u", "-m", "ms_access_mcp.server", "--profile", "full"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -421,6 +445,8 @@ def _run_kill_round(
 
         # Open the database
         _open_database(stdin, reader, watchdog, tmpdir, tmp_db)
+        # Bootstrap the workload table (fixture has none); failure = FAIL.
+        _create_tasks_table(stdin, reader, watchdog, tmp_db)
         successful_writes = 0
 
         # Determine kill timing based on phase

@@ -19,7 +19,10 @@ def test_g13_calls_conform_to_core_registry():
     from ms_access_mcp.server import build_server
 
     g13 = g13_module()
-    server = build_server("core")
+    # The harness spawns the server with --profile full (it needs core
+    # connect/insert plus DDL create_table for the workload bootstrap);
+    # conformance must check the profile the harness actually spawns.
+    server = build_server("full")
     tools = server._tool_manager._tools
 
     violations = []
