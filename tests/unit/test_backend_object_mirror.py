@@ -224,7 +224,7 @@ class _FakeAccessApp:
 
 KIND_TOKENS = {
     "form": {"open": "OpenForm", "live": "Forms", "ac": 2},
-    "report": {"open": "OpenReport", "live": "Reports", "ac": 4},
+    "report": {"open": "OpenReport", "live": "Reports", "ac": 3},
 }
 
 _SINGLE_PROP = {"form": "set_form_property", "report": "set_report_property"}

@@ -15,7 +15,7 @@ _T = TypeVar("_T")
 # Maps kind key to COM collection names and Access object-type constants.
 OBJECT_KINDS = {
     "form": {"collection": "AllForms", "ac_type": 2, "open_verb": "OpenForm", "live_collection": "Forms", "close_ac": 2},
-    "report": {"collection": "AllReports", "ac_type": 4, "open_verb": "OpenReport", "live_collection": "Reports", "close_ac": 4},
+    "report": {"collection": "AllReports", "ac_type": 3, "open_verb": "OpenReport", "live_collection": "Reports", "close_ac": 3},
 }
 
 
@@ -145,8 +145,11 @@ def _create_object(
         if kind == "form":
             obj = app.CreateForm()
         else:
-            # The live form recipe also fails to persist reports; this branch
-            # mirrors that recipe for now and is pinned only by unit tests.
+            # Verified live 2026-10-05: reports persist with the same recipe
+            # as forms (CreateReport -> Close(acReport, name, acSaveYes) ->
+            # Rename), provided ac_type is the real acReport=3. With the
+            # historical wrong value 4 (acMacro) Close opens a hidden modal
+            # and the COM call hangs.
             obj = app.CreateReport()
         created_name = obj.Name
         default_name = created_name

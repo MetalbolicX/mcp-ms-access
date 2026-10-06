@@ -1074,7 +1074,7 @@ class TestGetCurrentDbName:
 class TestCreateObjectApplicationSurface:
     @pytest.mark.parametrize(
         "kind,create_method,ac_type,default_name",
-        [("form", "CreateForm", 2, "Form1"), ("report", "CreateReport", 4, "Report1")],
+        [("form", "CreateForm", 2, "Form1"), ("report", "CreateReport", 3, "Report1")],
     )
     def test_creation_uses_three_fresh_dispatcher_calls(
         self, kind, create_method, ac_type, default_name
