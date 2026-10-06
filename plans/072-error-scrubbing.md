@@ -146,10 +146,10 @@ agrees; it banned win32com + private imports in application/**, and
 
 ## Done criteria
 
-- [ ] `strip_password` public in `errors.py`; `dao_sql._strip_password` delegates
-- [ ] Leak census command returns no raw `str(e)` result sites in the five files
-- [ ] All leak tests pass; suites green
-- [ ] All gates green; `plans/README.md` row updated
+- [x] `strip_password` public in `errors.py`; `dao_sql._strip_password` delegates
+- [x] Leak census command returns no raw `str(e)` result sites in the five files
+- [x] All leak tests pass; suites green
+- [x] All gates green; `plans/README.md` row updated
 
 ## STOP conditions
 

@@ -161,11 +161,11 @@ the job reports the table failed).
 
 ## Done criteria
 
-- [ ] Full-mode mismatch → `success=False` with named counts (test)
-- [ ] Full-mode count error → `success=False` (test)
-- [ ] count-only records both counts (test)
-- [ ] COUNT SQL is dialect-quoted for all four connectors (tests)
-- [ ] Unit suite + qualify green; `plans/README.md` row updated
+- [x] Full-mode mismatch → `success=False` with named counts (test)
+- [x] Full-mode count error → `success=False` (test)
+- [x] count-only records both counts (test)
+- [x] COUNT SQL is dialect-quoted for all four connectors (tests)
+- [x] Unit suite + qualify green; `plans/README.md` row updated
 
 ## STOP conditions
 

@@ -174,12 +174,12 @@ write method through it. Keep messages: prefer the adapter's
 
 ## Done criteria
 
-- [ ] Failing dict / `RelationshipResult` / `WriteResult` all produce `Err` through the facade (tests exist and pass)
-- [ ] `alter_table` reaches adapters with correct `operations` (characterization test)
-- [ ] `create_table` sends adapter-native column dicts (test asserts captured args)
-- [ ] All migrated dispatcher fakes forward `**kwargs` (conformance test passes)
-- [ ] `uv run pytest tests/unit/ -q` all pass; qualify exit 0
-- [ ] `plans/README.md` row updated
+- [x] Failing dict / `RelationshipResult` / `WriteResult` all produce `Err` through the facade (tests exist and pass)
+- [x] `alter_table` reaches adapters with correct `operations` (characterization test)
+- [x] `create_table` sends adapter-native column dicts (test asserts captured args)
+- [x] All migrated dispatcher fakes forward `**kwargs` (conformance test passes)
+- [x] `uv run pytest tests/unit/ -q` all pass; qualify exit 0
+- [x] `plans/README.md` row updated
 
 ## STOP conditions
 

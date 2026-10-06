@@ -154,11 +154,11 @@ limit plumbing; if not, do not invent one here.
 
 ## Done criteria
 
-- [ ] `query_data(limit=N)` reaches adapters (test) and DAO/ODBC honor it (tests)
-- [ ] Non-SELECT queries never exceed the limit (slice test)
-- [ ] CSV export streams (no full row-list intermediate; byte-parity test)
-- [ ] Probe-gated live TOP test present (pass or documented operator-pending skip)
-- [ ] Unit suite + qualify green; `plans/README.md` row updated
+- [x] `query_data(limit=N)` reaches adapters (test) and DAO/ODBC honor it (tests)
+- [x] Non-SELECT queries never exceed the limit (slice test)
+- [x] CSV export streams (no full row-list intermediate; byte-parity test)
+- [x] Probe-gated live TOP test present (pass or documented operator-pending skip)
+- [x] Unit suite + qualify green; `plans/README.md` row updated
 
 ## STOP conditions
 

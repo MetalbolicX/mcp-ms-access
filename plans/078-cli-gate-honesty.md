@@ -174,13 +174,13 @@ check applying to `core` only (that is the documented budget).
 
 ## Done criteria
 
-- [ ] `format_result(Err(...), json_output=True) == 1` (test exists and passes)
-- [ ] `python -m ms_access_mcp.cli mcp --help` exits 0
-- [ ] `scripts/tool_budget.py` exits non-zero on build failure / zero-tool profile; lists 8 profiles
-- [ ] `grep -n "sql_builder.py" pyproject.toml` returns no per-file-ignore hit
-- [ ] `.gitignore` contains `.ruff_cache/`
-- [ ] `uv run python scripts/qualify.py` exit 0
-- [ ] `plans/README.md` row updated
+- [x] `format_result(Err(...), json_output=True) == 1` (test exists and passes)
+- [x] `python -m ms_access_mcp.cli mcp --help` exits 0
+- [x] `scripts/tool_budget.py` exits non-zero on build failure / zero-tool profile; lists 8 profiles
+- [x] `grep -n "sql_builder.py" pyproject.toml` returns no per-file-ignore hit
+- [x] `.gitignore` contains `.ruff_cache/`
+- [x] `uv run python scripts/qualify.py` exit 0
+- [x] `plans/README.md` row updated
 
 ## STOP conditions
 

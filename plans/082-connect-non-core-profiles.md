@@ -173,11 +173,11 @@ For each module, construct the use case with the tool's `path`:
 
 ## Done criteria
 
-- [ ] Every adapter-dependent tool in the five modules reaches its use case with a connected adapter (tests assert success paths)
-- [ ] `versioning` tools all declare `path` and pass `db_path`
-- [ ] No test asserts "Not connected" as the expected contract for a connected call
-- [ ] `uv run python scripts/tool_budget.py` exit 0, counts unchanged
-- [ ] Unit suite + qualify green; `plans/README.md` row updated
+- [x] Every adapter-dependent tool in the five modules reaches its use case with a connected adapter (tests assert success paths)
+- [x] `versioning` tools all declare `path` and pass `db_path`
+- [x] No test asserts "Not connected" as the expected contract for a connected call
+- [x] `uv run python scripts/tool_budget.py` exit 0, counts unchanged
+- [x] Unit suite + qualify green; `plans/README.md` row updated
 
 ## STOP conditions
 

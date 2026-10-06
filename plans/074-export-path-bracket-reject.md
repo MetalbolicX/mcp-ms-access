@@ -122,9 +122,9 @@ Update the docstring's validation note to match.
 
 ## Done criteria
 
-- [ ] `]` rejected in output_path; `;`/`"` behavior unchanged
-- [ ] Legit paths (spaces, apostrophes) still accepted
-- [ ] All gates green; `plans/README.md` row updated
+- [x] `]` rejected in output_path; `;`/`"` behavior unchanged
+- [x] Legit paths (spaces, apostrophes) still accepted
+- [x] All gates green; `plans/README.md` row updated
 
 ## STOP conditions
 

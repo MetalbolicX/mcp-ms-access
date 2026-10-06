@@ -191,12 +191,12 @@ E5 note pointing at the fix commit.
 
 ## Done criteria
 
-- [ ] Matrix recorded; winner implemented (no speculative paths)
-- [ ] `create_form`/`create_report` create the REQUESTED name, live
-- [ ] Every failure path closes dirty objects with acSaveNo (unit-pinned)
-- [ ] Listing failures are loud; first non-empty live `get_forms` observed
-- [ ] `test_form_lifecycle.py` proves 092(a)/(c) live (or skips cleanly)
-- [ ] Full gates green; ledger rows updated; no orphans, no prompts
+- [x] Matrix recorded; winner implemented (no speculative paths)
+- [x] `create_form`/`create_report` create the REQUESTED name, live
+- [x] Every failure path closes dirty objects with acSaveNo (unit-pinned)
+- [x] Listing failures are loud; first non-empty live `get_forms` observed
+- [x] `test_form_lifecycle.py` proves 092(a)/(c) live (or skips cleanly)
+- [x] Full gates green; ledger rows updated; no orphans, no prompts
 
 ## STOP conditions
 

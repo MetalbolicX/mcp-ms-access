@@ -146,10 +146,10 @@ pass the adapter's captured `_access_pid`. If the PID is unavailable
 
 ## Done criteria
 
-- [ ] Dialog killer never acts on windows outside the Access PID (unit-pinned; fail-closed default)
-- [ ] Doctor ACE check fails on provider-missing hresult and passes with a note on other open failures (tests)
-- [ ] Dead `any()` expressions removed (or wired — commit states which)
-- [ ] Unit suite + qualify green; `plans/README.md` row updated (including the operator desktop-verification status)
+- [x] Dialog killer never acts on windows outside the Access PID (unit-pinned; fail-closed default)
+- [x] Doctor ACE check fails on provider-missing hresult and passes with a note on other open failures (tests)
+- [x] Dead `any()` expressions removed (or wired — commit states which)
+- [x] Unit suite + qualify green; `plans/README.md` row updated (including the operator desktop-verification status)
 
 ## STOP conditions
 

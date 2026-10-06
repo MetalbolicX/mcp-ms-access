@@ -157,11 +157,11 @@ facade returns `Err("backend does not support raw action SQL")`.
 
 ## Done criteria
 
-- [ ] `execute_raw_sql` MCP tool calls the action contract (test asserts)
-- [ ] Adapters without action support get an explicit `Err` (test asserts)
-- [ ] `set_database_property` never returns `Ok` when the backend returns falsy (test asserts)
-- [ ] `grep -n "query_data" src/ms_access_mcp/mcp_tools/core.py` shows no hit inside the `execute_raw_sql` handler
-- [ ] Unit suite + qualify green; `plans/README.md` row updated
+- [x] `execute_raw_sql` MCP tool calls the action contract (test asserts)
+- [x] Adapters without action support get an explicit `Err` (test asserts)
+- [x] `set_database_property` never returns `Ok` when the backend returns falsy (test asserts)
+- [x] `grep -n "query_data" src/ms_access_mcp/mcp_tools/core.py` shows no hit inside the `execute_raw_sql` handler
+- [x] Unit suite + qualify green; `plans/README.md` row updated
 
 ## STOP conditions
 

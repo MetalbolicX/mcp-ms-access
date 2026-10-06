@@ -163,11 +163,11 @@ the registry and its argument keys ⊆ the registered schema properties
 
 ## Done criteria
 
-- [ ] Conformance test passes against the live registry and runs in CI's unit scope
-- [ ] g13 calls `connect_access`/`get_tables`/`insert_data(path, table, data, confirm)` with response checks
-- [ ] FAIL rounds cannot exit 0 (unit-pinned)
-- [ ] README CI claim corrected; stray fence gone; plans/README row 047 annotated
-- [ ] Unit suite + qualify green; plan row updated with operator-gate status
+- [x] Conformance test passes against the live registry and runs in CI's unit scope
+- [x] g13 calls `connect_access`/`get_tables`/`insert_data(path, table, data, confirm)` with response checks
+- [x] FAIL rounds cannot exit 0 (unit-pinned)
+- [x] README CI claim corrected; stray fence gone; plans/README row 047 annotated
+- [x] Unit suite + qualify green; plan row updated with operator-gate status
 
 ## STOP conditions
 

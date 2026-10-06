@@ -183,11 +183,11 @@ THAT fake (test-side) rather than keeping the shim.
 
 ## Done criteria
 
-- [ ] `test -f src/ms_access_mcp/capabilities.py` → file gone; guard green
-- [ ] `grep -rn "AdoAdapter" src/ tests/ scripts/` → no hits
-- [ ] Trusted-locations wrapper is an honest documented no-op (or module deleted with callers cleaned)
-- [ ] `grep -n "engine: .* = engine" src/ms_access_mcp/backends/dao.py` → no shim default remains (or the remaining fake fix is documented)
-- [ ] Unit suite + qualify + budget green; `plans/README.md` row updated
+- [x] `test -f src/ms_access_mcp/capabilities.py` → file gone; guard green
+- [x] `grep -rn "AdoAdapter" src/ tests/ scripts/` → no hits
+- [x] Trusted-locations wrapper is an honest documented no-op (or module deleted with callers cleaned)
+- [x] `grep -n "engine: .* = engine" src/ms_access_mcp/backends/dao.py` → no shim default remains (or the remaining fake fix is documented)
+- [x] Unit suite + qualify + budget green; `plans/README.md` row updated
 
 ## STOP conditions
 

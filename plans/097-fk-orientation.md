@@ -150,10 +150,10 @@ Unit suite + ruff + pyright + budget; existing integration files
 
 ## Done criteria
 
-- [ ] Orientation matrix documented in the first commit message
-- [ ] Live probe proves ground truth and asserts every reader against it
-- [ ] All four readers emit one contract (probe + unit tests green)
-- [ ] Full gates green; `plans/README.md` row updated (live gate status)
+- [x] Orientation matrix documented in the first commit message
+- [x] Live probe proves ground truth and asserts every reader against it
+- [x] All four readers emit one contract (probe + unit tests green)
+- [x] Full gates green; `plans/README.md` row updated (live gate status)
 
 ## STOP conditions
 

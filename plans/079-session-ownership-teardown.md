@@ -180,12 +180,12 @@ mask the audit found).
 
 ## Done criteria
 
-- [ ] `track(); del; gc.collect(); close_all_sessions()` closes an open session (test passes)
-- [ ] `grep -n "WeakSet" src/ms_access_mcp/mcp_tools/_session_registry.py` shows the weak path only for already-closed sessions (or is gone)
-- [ ] `DaoAdapter.disconnect()` calls `dispatcher.shutdown()` (test asserts via fake dispatcher)
-- [ ] dispatcher restart test proves ≤1 live worker thread
-- [ ] `uv run pytest tests/unit/ -q` all pass; qualify exit 0; core budget 21
-- [ ] `plans/README.md` row updated
+- [x] `track(); del; gc.collect(); close_all_sessions()` closes an open session (test passes)
+- [x] `grep -n "WeakSet" src/ms_access_mcp/mcp_tools/_session_registry.py` shows the weak path only for already-closed sessions (or is gone)
+- [x] `DaoAdapter.disconnect()` calls `dispatcher.shutdown()` (test asserts via fake dispatcher)
+- [x] dispatcher restart test proves ≤1 live worker thread
+- [x] `uv run pytest tests/unit/ -q` all pass; qualify exit 0; core budget 21
+- [x] `plans/README.md` row updated
 
 ## STOP conditions
 

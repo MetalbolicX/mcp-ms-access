@@ -181,11 +181,11 @@ paths); `uv run pyright` ≤ baseline.
 
 ## Done criteria
 
-- [ ] odbc.py/ado.py CRUD return `QueryResult`/`WriteResult`
-- [ ] `rg -n "asdict\(result\)" src/ms_access_mcp/application/database.py` → 0 matches
-- [ ] `_write_failed` has no dict branch
-- [ ] ADO `Execute(sql, vals)` call sites UNCHANGED (DEBT-06 preserved for its own plan)
-- [ ] All gates green; `plans/README.md` row updated
+- [x] odbc.py/ado.py CRUD return `QueryResult`/`WriteResult`
+- [x] `rg -n "asdict\(result\)" src/ms_access_mcp/application/database.py` → 0 matches
+- [x] `_write_failed` has no dict branch
+- [x] ADO `Execute(sql, vals)` call sites UNCHANGED (DEBT-06 preserved for its own plan)
+- [x] All gates green; `plans/README.md` row updated
 
 ## STOP conditions
 

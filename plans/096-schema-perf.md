@@ -156,11 +156,11 @@ Unit suite + ruff + pyright + budget; integration re-run.
 
 ## Done criteria
 
-- [ ] `schema_inspector` issues zero `COUNT(*)` (grep + tests)
-- [ ] `analyze_query` over K tables = 1 inspector pass (test)
-- [ ] Single-name sites use direct lookup (test counts scans)
-- [ ] Salvage reads each table once (test) — or STOP reported
-- [ ] Full gates green; `plans/README.md` row updated
+- [x] `schema_inspector` issues zero `COUNT(*)` (grep + tests)
+- [x] `analyze_query` over K tables = 1 inspector pass (test)
+- [x] Single-name sites use direct lookup (test counts scans)
+- [x] Salvage reads each table once (test) — or STOP reported
+- [x] Full gates green; `plans/README.md` row updated
 
 ## STOP conditions
 

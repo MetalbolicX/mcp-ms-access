@@ -164,10 +164,10 @@ pre-replace failure window.
 
 ## Done criteria
 
-- [ ] Harden-before-replace ordering unit-pinned; harden failure leaves the original store intact (test)
-- [ ] Whitespace-tolerant scrub cases pass; plan-072 census fully green
-- [ ] `open_database` failure: no raw `traceback.print_exc` (`grep -n "print_exc" src/ms_access_mcp/application/database.py` empty), repr-proof scrub test passes
-- [ ] Unit suite + qualify green; `plans/README.md` row updated
+- [x] Harden-before-replace ordering unit-pinned; harden failure leaves the original store intact (test)
+- [x] Whitespace-tolerant scrub cases pass; plan-072 census fully green
+- [x] `open_database` failure: no raw `traceback.print_exc` (`grep -n "print_exc" src/ms_access_mcp/application/database.py` empty), repr-proof scrub test passes
+- [x] Unit suite + qualify green; `plans/README.md` row updated
 
 ## STOP conditions
 

@@ -130,9 +130,9 @@ In `application/analysis.py`:
 
 ## Done criteria
 
-- [ ] `grep -n "is_ok\|unwrap\|\[\"data\"\]" src/ms_access_mcp/application/analysis.py` returns no hits
-- [ ] Non-empty schema + timing + sample_size + connection_name all tested and passing
-- [ ] Unit suite + qualify green; `plans/README.md` row updated
+- [x] `grep -n "is_ok\|unwrap\|\[\"data\"\]" src/ms_access_mcp/application/analysis.py` returns no hits
+- [x] Non-empty schema + timing + sample_size + connection_name all tested and passing
+- [x] Unit suite + qualify green; `plans/README.md` row updated
 
 ## STOP conditions
 

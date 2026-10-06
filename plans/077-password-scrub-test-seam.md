@@ -149,11 +149,11 @@ marker-gated skips remain). Then `uv run ruff check .` → exit 0,
 
 Machine-checkable. ALL must hold:
 
-- [ ] `uv run pytest tests/unit/ -q` exits 0 (baseline green)
-- [ ] The patched target is `ms_access_mcp.application.database.resolve_profile`
-- [ ] `"hunter2"` cannot appear in the asserted message (invariant assertion present)
-- [ ] `git status` shows changes only in `tests/unit/test_database.py`
-- [ ] `plans/README.md` status row for 077 updated
+- [x] `uv run pytest tests/unit/ -q` exits 0 (baseline green)
+- [x] The patched target is `ms_access_mcp.application.database.resolve_profile`
+- [x] `"hunter2"` cannot appear in the asserted message (invariant assertion present)
+- [x] `git status` shows changes only in `tests/unit/test_database.py`
+- [x] `plans/README.md` status row for 077 updated
 
 ## STOP conditions
 

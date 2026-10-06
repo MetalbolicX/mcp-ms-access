@@ -138,10 +138,10 @@ Unit suite + ruff + pyright + budget; integration row-loss case green.
 
 ## Done criteria
 
-- [ ] `iter_query` yields incremental batches (test drives insert before later chunks exist)
-- [ ] `_transfer_table` never holds more than chunk+batch rows (test observes per-yield inserts)
-- [ ] Fallback path pinned; verification/source_rows semantics unchanged
-- [ ] Full gates green; `plans/README.md` row updated (note ODBC-iterator as future extension)
+- [x] `iter_query` yields incremental batches (test drives insert before later chunks exist)
+- [x] `_transfer_table` never holds more than chunk+batch rows (test observes per-yield inserts)
+- [x] Fallback path pinned; verification/source_rows semantics unchanged
+- [x] Full gates green; `plans/README.md` row updated (note ODBC-iterator as future extension)
 
 ## STOP conditions
 

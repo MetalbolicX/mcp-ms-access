@@ -188,11 +188,11 @@ Four audit-confirmed safety gaps in the Access COM surface:
 
 ## Done criteria
 
-- [ ] Remove path closes with `save_flag=1`; refreshed pin passes
-- [ ] Rollback restores prior module text on injected failure (fakes; operator-confirmed if available)
-- [ ] Event procedures create-on-miss; property set ordered after success (fakes)
-- [ ] Compile docstrings/gate assert the real contract
-- [ ] Unit suite + qualify green; `plans/README.md` row updated with operator-gate statuses
+- [x] Remove path closes with `save_flag=1`; refreshed pin passes
+- [x] Rollback restores prior module text on injected failure (fakes; operator-confirmed if available)
+- [x] Event procedures create-on-miss; property set ordered after success (fakes)
+- [x] Compile docstrings/gate assert the real contract
+- [x] Unit suite + qualify green; `plans/README.md` row updated with operator-gate statuses
 
 ## STOP conditions
 

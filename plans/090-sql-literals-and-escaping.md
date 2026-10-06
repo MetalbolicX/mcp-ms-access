@@ -151,10 +151,10 @@ accurately.
 
 ## Done criteria
 
-- [ ] Literal containing `--` survives parsing (golden test)
-- [ ] Trailing statement after a comment survives (golden test)
-- [ ] `grep -n "\[{table" src/ms_access_mcp/application/sql_builder.py src/ms_access_mcp/backends/crud_sql.py` returns no unescaped interpolations
-- [ ] Unit suite + qualify green; `plans/README.md` row updated
+- [x] Literal containing `--` survives parsing (golden test)
+- [x] Trailing statement after a comment survives (golden test)
+- [x] `grep -n "\[{table" src/ms_access_mcp/application/sql_builder.py src/ms_access_mcp/backends/crud_sql.py` returns no unescaped interpolations
+- [x] Unit suite + qualify green; `plans/README.md` row updated
 
 ## STOP conditions
 

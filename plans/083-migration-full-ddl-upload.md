@@ -155,11 +155,11 @@ existing file's connector guard).
 
 ## Done criteria
 
-- [ ] `upload_schema` executes every rendered statement per table (unit test)
-- [ ] SQLite CREATEs carry inline FKs; no sqlite `ALTER … ADD CONSTRAINT` is emitted (goldens)
-- [ ] Integration test proves FK + index in the sqlite catalog after upload
-- [ ] `uv run pytest tests/unit/ -q` all pass; qualify exit 0
-- [ ] `plans/README.md` row updated
+- [x] `upload_schema` executes every rendered statement per table (unit test)
+- [x] SQLite CREATEs carry inline FKs; no sqlite `ALTER … ADD CONSTRAINT` is emitted (goldens)
+- [x] Integration test proves FK + index in the sqlite catalog after upload
+- [x] `uv run pytest tests/unit/ -q` all pass; qualify exit 0
+- [x] `plans/README.md` row updated
 
 ## STOP conditions
 

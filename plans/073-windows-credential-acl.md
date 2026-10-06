@@ -209,11 +209,11 @@ advice per plan 072's note stays operational guidance).
 
 ## Done criteria
 
-- [ ] Single `_atomic_write_store` helper (four duplicates gone)
-- [ ] Windows: owner/SYSTEM/Administrators-only protected DACL after every write
-- [ ] POSIX chmod branch unchanged; false 0o600 comment corrected
-- [ ] `rg -n "os.chmod" src/ms_access_mcp/credentials.py` → only inside the helper
-- [ ] All gates green; `plans/README.md` row updated (deferral closed)
+- [x] Single `_atomic_write_store` helper (four duplicates gone)
+- [x] Windows: owner/SYSTEM/Administrators-only protected DACL after every write
+- [x] POSIX chmod branch unchanged; false 0o600 comment corrected
+- [x] `rg -n "os.chmod" src/ms_access_mcp/credentials.py` → only inside the helper
+- [x] All gates green; `plans/README.md` row updated (deferral closed)
 
 ## STOP conditions
 

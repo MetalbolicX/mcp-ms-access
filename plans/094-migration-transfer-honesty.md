@@ -136,11 +136,11 @@ table).
 
 ## Done criteria
 
-- [ ] Zero tables → `Err`, job never registered (test)
-- [ ] Pre-existing table lands in `tables_existing`, not `tables_failed` (test)
-- [ ] Genuine creation failure → `Err` naming the tables (test + refreshed pins)
-- [ ] `grep -n "all(r.success for r in results)" src/ms_access_mcp/application/migration.py` still exists but is unreachable with zero tables (entry guard precedes registration)
-- [ ] Full gates green; `plans/README.md` row updated
+- [x] Zero tables → `Err`, job never registered (test)
+- [x] Pre-existing table lands in `tables_existing`, not `tables_failed` (test)
+- [x] Genuine creation failure → `Err` naming the tables (test + refreshed pins)
+- [x] `grep -n "all(r.success for r in results)" src/ms_access_mcp/application/migration.py` still exists but is unreachable with zero tables (entry guard precedes registration)
+- [x] Full gates green; `plans/README.md` row updated
 
 ## STOP conditions
 

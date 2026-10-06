@@ -206,11 +206,11 @@ plan-035 lesson, separate commit with rationale).
 
 ## Done criteria
 
-- [ ] Param models exist for upload/transfer + 4 linked-table handlers
-- [ ] No `p.get("connection_string"|"connect_string", ...)` raw pulls remain
+- [x] Param models exist for upload/transfer + 4 linked-table handlers
+- [x] No `p.get("connection_string"|"connect_string", ...)` raw pulls remain
       in those handlers (`rg -n 'p.get\("connect' src/ms_access_mcp/mcp_tools/` → 0)
-- [ ] Typed validation errors use the `{"success": False, "error": ...}` envelope
-- [ ] All gates green; `plans/README.md` row updated
+- [x] Typed validation errors use the `{"success": False, "error": ...}` envelope
+- [x] All gates green; `plans/README.md` row updated
 
 ## STOP conditions
 

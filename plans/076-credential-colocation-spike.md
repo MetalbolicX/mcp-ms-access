@@ -145,11 +145,11 @@ credentials section.
 
 ## Done criteria
 
-- [ ] Inventory table with file:line evidence appended to this plan
-- [ ] `## Outcome` section names the chosen option + rationale
-- [ ] If A: warning implemented with tests; if B: follow-up stub recorded in
+- [x] Inventory table with file:line evidence appended to this plan
+- [x] `## Outcome` section names the chosen option + rationale
+- [x] If A: warning implemented with tests; if B: follow-up stub recorded in
       plans/README; if C: README paragraph drafted
-- [ ] `plans/README.md` row updated (status DONE with the decision one-liner)
+- [x] `plans/README.md` row updated (status DONE with the decision one-liner)
 
 ## STOP conditions
 

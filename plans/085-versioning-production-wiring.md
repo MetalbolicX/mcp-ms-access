@@ -168,10 +168,10 @@ already does internally — do not move work off the STA thread.
 
 ## Done criteria
 
-- [ ] Protocol conformance test passes against the production `AccessAdapter`
-- [ ] `export_object` writes a real file inside allowed dirs (test)
-- [ ] `import_all`/`compare` include `.bas` modules (test)
-- [ ] Unit suite + qualify + budget green; `plans/README.md` row updated
+- [x] Protocol conformance test passes against the production `AccessAdapter`
+- [x] `export_object` writes a real file inside allowed dirs (test)
+- [x] `import_all`/`compare` include `.bas` modules (test)
+- [x] Unit suite + qualify + budget green; `plans/README.md` row updated
   (including the operator round-trip gate result or its pending status)
 
 ## STOP conditions

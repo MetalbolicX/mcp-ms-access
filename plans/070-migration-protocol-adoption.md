@@ -244,12 +244,12 @@ baseline was only that item).
 
 ## Done criteria
 
-- [ ] QueryResult-returning adapters transfer successfully (Step-1 test)
-- [ ] `connector._conn` reach-in gone; `count_rows` public + cursor closed + failures logged
-- [ ] MigrationAdapterProtocol + MigrationConnectorProtocol in protocols.py
-- [ ] `type: ignore` count in migration.py = 0 (or ≤2 documented)
-- [ ] `uv run pyright` — the historical migration.py error is retired
-- [ ] All gates green; `plans/README.md` row updated (note the plan-050 scope
+- [x] QueryResult-returning adapters transfer successfully (Step-1 test)
+- [x] `connector._conn` reach-in gone; `count_rows` public + cursor closed + failures logged
+- [x] MigrationAdapterProtocol + MigrationConnectorProtocol in protocols.py
+- [x] `type: ignore` count in migration.py = 0 (or ≤2 documented)
+- [x] `uv run pyright` — the historical migration.py error is retired
+- [x] All gates green; `plans/README.md` row updated (note the plan-050 scope
       split: 050 now owns only strays)
 
 ## STOP conditions
