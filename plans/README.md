@@ -856,6 +856,23 @@ credential detector.
     PASS live (marker-gated tests/integration/test_form_lifecycle.py).
     Machine hygiene: the pywin32 gen_py cache built for enum ground
     truth was purged — typed wrappers mis-type Controls(i) as _Line.
+  - **E6 (report `ac_type` wrong: live defect #7, found+fixed
+    2026-10-05 during the parked-work cycle)**: `OBJECT_KINDS["report"]`
+    carried `ac_type=4` — that is `acMacro`, not `acReport` (3).
+    Live-verified both ways on %TEMP% scratch: `Close(3, name,
+    acSaveYes)` persists; `Close(4, ...)` opens a hidden modal dialog
+    and the COM call hangs (required PID-scoped kill). Every product
+    report path (create Close/Rename, rename, delete, property-mirror
+    SelectObject) was live-broken by the constant.
+    **This also refutes plan 098's recorded claim that "reports do not
+    persist live"** — the recipe was correct, the constant was not.
+    Fixed in `9dfd3b9`: constant corrected 4→3, stale comment replaced
+    with verified ground truth, unit pins refreshed (RED observed
+    first), and new marker-gated
+    `tests/integration/test_report_lifecycle.py` PASSED live
+    (create → exists/DAO container/get_reports → disconnect orphan-clean
+    → reopen → PERSISTS → rename persists → delete removes; 1 passed in
+    22.87s).
 
 ## Plans 094–097: deferred-findings cycle (2026-10-04)
 
