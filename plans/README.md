@@ -1011,6 +1011,17 @@ matrix recorded in `docs/specs/crash-recovery.md`.
 | 109  | [VBA write persistence honesty (NEW DEFECT, discovered executing 106)](109-vba-persistence-honesty.md) | 40 | P1 | M | MED | Live-probe mechanism first, then strict TDD | 092/106 | DONE (fcf089c; mechanism DoCmd.Save(5) proven live) |
 | 110  | [Macro create returns False live (NEW DEFECT, discovered executing 109)](110-macro-create-broken.md) | 40 | P2 | S-M | LOW-MED | Diagnose-first, strict TDD | 109 | TODO |
 
+**Delivery (2026-10-10)**: plan 109 merged ff-only into `main` — **12 commits**
+`e2f2854..ca826a6`, 9 files, +216/−19. Mechanism proven live by parent
+probes BEFORE implementation (STOP-gate discipline): `DoCmd.Save(5, ...)`
+persists the whole VBA project; the no-arg `Quit()` teardown raises an
+invisible `acQuitPrompt` modal that hangs shutdown until the E1 PID-kill
+discards everything. Post-merge gates on `main`: ruff clean, pyright 0,
+**1659 passed / 3 skipped**, budget PASS; live **3 passed / 1 xfailed**
+(the xfail is plan 110's macro-create defect pin), zero MSACCESS orphans.
+Plan 109 branch verified contained and deleted (safe `-d`). Tagged
+`audit-109-vba-persistence` at this commit.
+
 **Delivery (2026-10-10)**: cycle merged ff-only into `main` — **10 commits**
 `5593a4b..dafdda2`, 16 files, +759/−36. Post-merge gates on `main`:
 ruff clean, pyright 0, **1657 passed / 3 skipped**, budget PASS; live
