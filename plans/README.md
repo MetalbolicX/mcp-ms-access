@@ -1010,3 +1010,11 @@ matrix recorded in `docs/specs/crash-recovery.md`.
 | 108  | [[project.urls] + origin remote](108-project-urls-remote.md) | 39 | P3 | S | LOW | Direct edit | — | DONE (see hash; URL operator-chosen) |
 | 109  | [VBA write persistence honesty (NEW DEFECT, discovered executing 106)](109-vba-persistence-honesty.md) | 40 | P1 | M | MED | Live-probe mechanism first, then strict TDD | 092/106 | TODO |
 
+**Delivery (2026-10-10)**: cycle merged ff-only into `main` — **10 commits**
+`5593a4b..dafdda2`, 16 files, +759/−36. Post-merge gates on `main`:
+ruff clean, pyright 0, **1657 passed / 3 skipped**, budget PASS; live
+spot-check `1 passed, 1 xfailed` with zero MSACCESS orphans. All four
+`plan/*` branches verified contained and deleted (safe `-d`). Plan 108's
+`origin` remote is inert until the GitHub repo is created and pushed
+(operator). Tagged `audit-105-108` at this commit.
+
