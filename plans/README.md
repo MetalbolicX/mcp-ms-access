@@ -804,6 +804,22 @@ credential detector.
     drive is fixed NTFS. Mechanism unexplained — gates therefore run
     on %TEMP% scratch copies (same convention as the integration
     fixtures' `tempfile.mkdtemp`). Diagnosis deferred.
+    **RESOLVED-EXPLAINED 2026-10-05 (no code change; behavior correct)**:
+    not an environment defect. The recorded signature (`Updatable=False`,
+    CreateQueryDef → jeterr 5003027 "Cannot update. Database or object
+    is read-only") is exactly what the product's own readonly-by-default
+    DAO connection produces — `backends/dao.py` opens
+    `OpenDatabase(path, False, self.read_only, ...)` with
+    `read_only = not allow_write` — and the repo-path probes ran WITHOUT
+    `--allow-write` while the %TEMP% gates ran write-enabled; the path
+    split was a confound, not a cause (E3's `-Embedding` orphans added
+    same-day lock noise; re-verified after the E3 fix on a clean
+    process state). Repo-path writability verified at EVERY layer:
+    raw OS `r+b` handle OK; DAO in-process `Updatable=True`; Access COM
+    `Updatable=True` (original fixture too — no R attribute, no MOTW
+    stream); product `insert --allow-write --yes` → Success on a
+    repo-path copy. The %TEMP% convention for gates stays (harmless,
+    good isolation), but no repo-path restriction exists.
   - **E5 (form tooling live-broken, found 2026-10-05 while running the
     092 gates; corrected same day after code re-read)**:
     (a) CONFIRMED DEFECT — `object_kinds._create_object` calls
