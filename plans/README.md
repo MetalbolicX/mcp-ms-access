@@ -1007,6 +1007,6 @@ matrix recorded in `docs/specs/crash-recovery.md`.
 | 105  | [TEST-02 self-hosted Access CI job (dormant)](105-self-hosted-access-ci.md) | 39 | P2 | S | LOW | Direct edit + YAML check | — | DONE (9655125) |
 | 106  | [VBA/macro write opt-in (env gate, default off)](106-vba-macro-write-optin.md) | 39 | P1 | M | MED | Strict TDD + live gate | — | DONE (30c6459; discovered plan-109 defect, pinned xfail) |
 | 107  | [g13 20-round outcome matrix (run + record)](107-g13-matrix-run.md) | 39 | P2 | M | LOW-MED | Harness run + docs record | 087 | DONE (118f16a; 20/20 LOCK_STALE, seed 20261010) |
-| 108  | [[project.urls] + origin remote](108-project-urls-remote.md) | 39 | P3 | S | LOW | Direct edit | — | TODO |
+| 108  | [[project.urls] + origin remote](108-project-urls-remote.md) | 39 | P3 | S | LOW | Direct edit | — | DONE (see hash; URL operator-chosen) |
 | 109  | [VBA write persistence honesty (NEW DEFECT, discovered executing 106)](109-vba-persistence-honesty.md) | 40 | P1 | M | MED | Live-probe mechanism first, then strict TDD | 092/106 | TODO |
 
