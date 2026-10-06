@@ -665,7 +665,7 @@ credential detector.
 | 089  | [Credential staging + scrub hardening](089-credential-scrub-hardening.md) | 31 | P1 | S | MED | Strict TDD | 077 | DONE (a40e8bc) — real-DACL check PASSED 2026-10-05: controlled `write_entry(local=True)` on a scratch db, cross-checked with `icacls` (independent tool): exactly owner(F)+SYSTEM(F)+Administrators(F), no other ACEs, `SE_DACL_PROTECTED` confirmed (inheritance off); no pre-existing global store on this machine to inspect |
 | 090  | [SQL literals + identifier escaping](090-sql-literals-and-escaping.md) | 31 | P2 | S | MED | Strict TDD (goldens) | — | DONE (3e354da) |
 | 091  | [Dialog-killer PID scope + doctor ACE classification](091-dialog-killer-doctor-ace.md) | 32 | P2 | S | LOW | Strict TDD + pin refresh | — | DONE (12bb7ee) — live checks PASSED 2026-10-05: doctor on this machine reports `[PASS] ace_provider` (Open failed with 'Not a valid file name' → correctly classified provider-present); desktop ownership confirmed — all VBE/compile/code windows enumerated under the captured Access PID (6360), zero foreign-PID windows |
-| 092  | [VBA/design-view write safety](092-vba-design-view-safety.md) | 32 | P2 | M | MED | Characterization refresh + strict TDD on fakes; operator gates | 091 (sequencing) | DONE (78027f6) — gates 2026-10-05: compile PASSED (broken VBA accepted, `compile_vba` returns success=true = honest command-accepted contract, no dialog, no foreign PID); removal round-trip BLOCKED + first-time event procedure BLOCKED (form tooling live-broken, see ad-hoc E5); VBA restore-on-injection BLOCKED-live (no natural fault seam; fakes cover rollback) |
+| 092  | [VBA/design-view write safety](092-vba-design-view-safety.md) | 32 | P2 | M | MED | Characterization refresh + strict TDD on fakes; operator gates | 091 (sequencing) | DONE (78027f6) — gates 2026-10-05: compile PASSED (broken VBA accepted, `compile_vba` returns success=true = honest command-accepted contract, no dialog, no foreign PID); removal round-trip PASSED + first-time event procedure PASSED (plan 098, `4b2bc8b`, live via tests/integration/test_form_lifecycle.py after E5 repair); VBA restore-on-injection BLOCKED-live (no natural fault seam; fakes cover rollback) |
 | 093  | [Dead-surface retirement (capabilities, ADO, dead opt-in)](093-dead-surface-retirement.md) | 33 | P3 | M | MED | Direct edit + test retirement | 080, 081 | DONE (d03cbb2) — Step 0 external-compat gate run by parent: CLEAN (no consumers; ado never a valid backend value) |
 
 ### Dependency notes
@@ -812,6 +812,20 @@ credential detector.
     form listing (no gate DB contained a saved form).
     Consequence: gates 092(a) and 092(c) remain BLOCKED until form
     creation is repaired against live Access.
+    **RESOLVED 2026-10-05 (plan 098, `4b2bc8b`)**: E5(a) fixed via the
+    live naming matrix (CreateForm() → close-save → rename, per-step
+    dispatcher calls), plus FIVE more live defects found and fixed
+    during execution: DoCmd.CreateControl nonexistent (Application
+    API), the AcControlType table shifted ("CommandButton" created
+    LINES — root cause of the OnClick failures), removal used
+    SetFocus/RunCommand(365=HidePane) instead of SelectObject/
+    InSelection/RunCommand(337=acCmdDelete), On<Event> set via
+    Properties collection instead of the control attribute, and a
+    phantom CodeModule.ProcKind call that silently emptied every
+    vba_get_procedure/list_procedures result. Gates 092(a)/(c) now
+    PASS live (marker-gated tests/integration/test_form_lifecycle.py).
+    Machine hygiene: the pywin32 gen_py cache built for enum ground
+    truth was purged — typed wrappers mis-type Controls(i) as _Line.
 
 ## Plans 094–097: deferred-findings cycle (2026-10-04)
 
@@ -848,5 +862,5 @@ unblock gates 092(a)/(c) with a permanent marker-gated lifecycle test.
 
 | Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
 |------|-------|-------|----------|--------|------|------|------------|--------|
-| 098  | [Form/report creation repaired against live Access](098-form-creation-live.md) | 37 | P1 | M | MED | Live naming matrix + strict TDD + live acceptance | 092, E5 | TODO |
+| 098  | [Form/report creation repaired against live Access](098-form-creation-live.md) | 37 | P1 | M | MED | Live naming matrix + strict TDD + live acceptance | 092, E5 | DONE (4b2bc8b) — matrix: name-at-creation/Rename-before-save/Save-as all fail live; winner = CreateForm() → Close(acSaveYes) → Rename, per-step dispatcher calls; SIX live defects fixed (creation API, CreateControl, shifted AcControlType table creating LINES as "CommandButton", SetFocus/365 removal recipe, Properties On<Event>, phantom CodeModule.ProcKind); 092(a)/(c) PASSED live via tests/integration/test_form_lifecycle.py |
 
