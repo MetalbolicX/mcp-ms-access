@@ -791,18 +791,27 @@ credential detector.
     on %TEMP% scratch copies (same convention as the integration
     fixtures' `tempfile.mkdtemp`). Diagnosis deferred.
   - **E5 (form tooling live-broken, found 2026-10-05 while running the
-    092 gates)**: three live-only defects, all green on unit fakes —
-    (a) `object_kinds._create_object` calls `DoCmd.CreateForm`, which
-    does not exist (`AttributeError: <unknown>.CreateForm`), and never
-    applies the requested name even on the working
-    `Application.CreateForm()` path (creates `Form1`); (b)
-    `DoCmd.Rename` fails with a Python-level int-coercion against the
-    real typeinfo (argument-order mismatch); (c)
-    `trusted_locations.list_objects` swallows `<unknown>
-    .AllAccessObjects` (member-not-found) and returns `[]`, so
-    `get_forms`/`get_reports` have been silently empty live.
-    Consequence: gates 092(a) and 092(c) are BLOCKED until form
-    creation/listing is repaired against live Access.
+    092 gates; corrected same day after code re-read)**:
+    (a) CONFIRMED DEFECT — `object_kinds._create_object` calls
+    `DoCmd.CreateForm`/`CreateReport`, which do not exist on DoCmd
+    (`AttributeError: <unknown>.CreateForm` live): the correct COM API
+    is `Application.CreateForm()/CreateReport()`; additionally the
+    requested `object_name` is never applied, so the flow would create
+    the default `Form1` and close it unnamed.
+    (b) RETRACTED — the recorded `DoCmd.Rename` int-coercion was the
+    DIAGNOSTIC PROBE's own wrong argument order; the product's
+    `_rename_object` matches the documented signature
+    `(NewName, ObjectType, OldName)` (unverified live, but correct by
+    inspection).
+    (c) DOWNGRADED — the "get_forms silently []" claim conflated the
+    probe's own `AllAccessObjects` member (not dispatchable, and NOT
+    what the product uses — it lists via `CurrentProject.AllForms`/
+    `AllReports`). Remaining real concern: `list_objects` swallows
+    collection-access exceptions into a silent empty/partial listing
+    (debug-log only), and no live run has ever observed a non-empty
+    form listing (no gate DB contained a saved form).
+    Consequence: gates 092(a) and 092(c) remain BLOCKED until form
+    creation is repaired against live Access.
 
 ## Plans 094–097: deferred-findings cycle (2026-10-04)
 
