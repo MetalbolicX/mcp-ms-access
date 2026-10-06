@@ -1008,7 +1008,7 @@ matrix recorded in `docs/specs/crash-recovery.md`.
 | 106  | [VBA/macro write opt-in (env gate, default off)](106-vba-macro-write-optin.md) | 39 | P1 | M | MED | Strict TDD + live gate | — | DONE (30c6459; discovered plan-109 defect, pinned xfail) |
 | 107  | [g13 20-round outcome matrix (run + record)](107-g13-matrix-run.md) | 39 | P2 | M | LOW-MED | Harness run + docs record | 087 | DONE (118f16a; 20/20 LOCK_STALE, seed 20261010) |
 | 108  | [[project.urls] + origin remote](108-project-urls-remote.md) | 39 | P3 | S | LOW | Direct edit | — | DONE (see hash; URL operator-chosen) |
-| 109  | [VBA write persistence honesty (NEW DEFECT, discovered executing 106)](109-vba-persistence-honesty.md) | 40 | P1 | M | MED | Live-probe mechanism first, then strict TDD | 092/106 | DONE (see hash; mechanism DoCmd.Save(5) proven live) |
+| 109  | [VBA write persistence honesty (NEW DEFECT, discovered executing 106)](109-vba-persistence-honesty.md) | 40 | P1 | M | MED | Live-probe mechanism first, then strict TDD | 092/106 | DONE (fcf089c; mechanism DoCmd.Save(5) proven live) |
 | 110  | [Macro create returns False live (NEW DEFECT, discovered executing 109)](110-macro-create-broken.md) | 40 | P2 | S-M | LOW-MED | Diagnose-first, strict TDD | 109 | TODO |
 
 **Delivery (2026-10-10)**: cycle merged ff-only into `main` — **10 commits**
