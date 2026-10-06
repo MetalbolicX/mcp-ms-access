@@ -779,8 +779,22 @@ credential detector.
     PID alive >2 min after exit, blocking subsequent opens with
     "You already have the database open"; operator PID-scoped kill
     required between gate steps). Evidence: PID + command line via
-    Win32_Process during the run. Fix candidate: CLI finally-disconnect
-    on the versioning use cases — separate authorization needed.
+    Win32_Process during the run.
+    **RESOLVED 2026-10-05 (`587e456`)**: root cause was not versioning-
+    specific — ALL FOUR CLI wrapper families (`_with_db`,
+    `_with_automation`, `_with_versioning`, `_with_maintenance`) built
+    use cases and exited without teardown. Fix: `AdapterLifecycle.close()`
+    (idempotent adapter release) + `_close_cli_use_case()` best-effort
+    teardown in try/finally in every wrapper (`close_database` for
+    DatabaseUseCases — which also cleans session backups — else
+    `close()`); teardown failures debug-logged, never masking the
+    handler result. TDD: 9 RED then GREEN; full suite 1619/3, ruff
+    clean, pyright 0, budget PASS. Live gate (user-authorized, %TEMP%
+    scratch): 4x `versioning export-all` — `-Embedding` MSACCESS
+    observed DURING each run (PID via Win32_Process), **0 processes 3s
+    after exit**, exit 0 each time. Note: the fixture accdb is
+    tables-only, so export-all's empty buckets are correct behavior,
+    not a regression.
   - **E4 (repo-path read-only mystery, found 2026-10-05)**: on this
     machine every accdb under the repo path opens READ-ONLY through
     Access (`Updatable=False`, `CreateQueryDef` → jeterr 5003027,
