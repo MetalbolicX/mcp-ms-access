@@ -9,6 +9,8 @@ import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+from ...errors import AccessBackendError
+
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
@@ -50,7 +52,15 @@ def list_objects(
         skipped_objs = 0
         collection_name = object_kinds[kind]["collection"]
         try:
-            all_objects = getattr(dispatcher.access_app.CurrentProject, collection_name)
+            try:
+                all_objects = getattr(
+                    dispatcher.access_app.CurrentProject, collection_name
+                )
+            except Exception as exc:
+                operation = f"list_{kind}"
+                raise AccessBackendError(
+                    operation, kind, str(exc), cause=exc
+                ) from exc
             for i in range(all_objects.Count):
                 obj = all_objects(i)
                 try:
@@ -63,6 +73,8 @@ def list_objects(
                     objects.append(model(name=obj.Name, record_source=record_source))
                 except Exception:
                     skipped_objs += 1
+        except AccessBackendError:
+            raise
         except Exception:
             logger.debug("list_objects %s collection access failed", kind)
             pass
@@ -72,6 +84,8 @@ def list_objects(
 
     try:
         return dispatcher.call(_do)
+    except AccessBackendError:
+        raise
     except Exception as exc:
         logger.debug("list_objects %s dispatcher failed: %s", kind, exc)
         return []

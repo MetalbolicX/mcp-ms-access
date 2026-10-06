@@ -263,13 +263,15 @@ class TestAccessAdapterConnectFailure:
 class TestControlTypeMapping:
     """Tests for _control_type_name and _control_type_id helpers."""
 
-    def test_control_type_name_textbox(self):
+    def test_control_type_name_label(self):
         adapter = AccessAdapter("test.accdb")
-        assert adapter._control_type_name(100) == "TextBox"
+        # Plan-098 typelib ground truth: 100=acLabel, 102=acLine,
+        # 104=acCommandButton, 109=acTextBox.
+        assert adapter._control_type_name(100) == "Label"
 
     def test_control_type_name_command_button(self):
         adapter = AccessAdapter("test.accdb")
-        assert adapter._control_type_name(102) == "CommandButton"
+        assert adapter._control_type_name(104) == "CommandButton"
 
     def test_control_type_name_unknown(self):
         adapter = AccessAdapter("test.accdb")
@@ -277,7 +279,7 @@ class TestControlTypeMapping:
 
     def test_control_type_id_textbox(self):
         adapter = AccessAdapter("test.accdb")
-        assert adapter._control_type_id("TextBox") == 100
+        assert adapter._control_type_id("TextBox") == 109
 
     def test_control_type_id_unknown(self):
         adapter = AccessAdapter("test.accdb")
@@ -817,6 +819,14 @@ class TestVBAOperationsHappyPath:
         class FakeControl:
             Name = "Button"
 
+            def __setattr__(self, attr, value):
+                # Real Access controls expose event bindings as direct
+                # attributes (plan-098); record them like the old
+                # Properties-collection path did.
+                if attr.startswith("On"):
+                    events.append(("property", attr, value))
+                object.__setattr__(self, attr, value)
+
             def Properties(self, name):
                 class EventProperty:
                     @property
@@ -890,6 +900,61 @@ class TestVBAOperationsHappyPath:
 # -------------------------------------------------------------------------- #
 # Exception-path tests — fake dispatcher raises → method returns safe default
 # -------------------------------------------------------------------------- #
+
+class TestListObjectsCollectionFailure:
+    def test_property_read_failure_is_still_skipped(self):
+        class FakeObject:
+            Name = "FormWithUnreadableProperty"
+
+            @property
+            def Properties(self):
+                raise RuntimeError("property unavailable")
+
+        class FakeCollection:
+            Count = 1
+
+            def __call__(self, _index):
+                return FakeObject()
+
+        class FakeCurrentProject:
+            AllForms = FakeCollection()
+
+        class FakeApp:
+            CurrentProject = FakeCurrentProject()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = FakeApp()
+        adapter._dispatcher = fake_disp
+
+        result = adapter.get_forms()
+
+        assert [form.name for form in result] == ["FormWithUnreadableProperty"]
+        assert result[0].record_source == ""
+
+    def test_collection_access_failure_raises_backend_error(self):
+        from ms_access_mcp.errors import AccessBackendError
+
+        class FakeCurrentProject:
+            @property
+            def AllForms(self):
+                raise RuntimeError("collection unavailable")
+
+        class FakeApp:
+            CurrentProject = FakeCurrentProject()
+
+        adapter = AccessAdapter("test.accdb")
+        adapter._connected = True
+        fake_disp = FakeDispatcher()
+        fake_disp._started = True
+        fake_disp._access_app = FakeApp()
+        adapter._dispatcher = fake_disp
+
+        with pytest.raises(AccessBackendError, match="form.*collection unavailable"):
+            adapter.get_forms()
+
 
 class TestExceptionSafety:
     """Tests that methods return safe defaults when dispatcher raises."""
@@ -1006,6 +1071,157 @@ class TestGetCurrentDbName:
         assert call_count["n"] == 1  # must have gone through dispatcher.call
 
 
+class TestCreateObjectApplicationSurface:
+    @pytest.mark.parametrize(
+        "kind,create_method,ac_type,default_name",
+        [("form", "CreateForm", 2, "Form1"), ("report", "CreateReport", 4, "Report1")],
+    )
+    def test_creation_uses_three_fresh_dispatcher_calls(
+        self, kind, create_method, ac_type, default_name
+    ):
+        from ms_access_mcp.backends.access.object_kinds import _create_object
+
+        events = []
+        created = []
+
+        class FakeProperty:
+            def __init__(self, name):
+                self.name = name
+
+            @property
+            def Value(self):
+                return None
+
+            @Value.setter
+            def Value(self, value):
+                events.append(("Property", self.name, value))
+
+        class FakeObject:
+            @property
+            def RecordSource(self):
+                return ""
+
+            @RecordSource.setter
+            def RecordSource(self, value):
+                events.append(("RecordSource", value))
+
+            def Properties(self, name):
+                return FakeProperty(name)
+
+        obj = FakeObject()
+        obj.Name = default_name
+
+        class FakeDoCmd:
+            def Close(self, close_type, name, save_flag):
+                events.append(("Close", close_type, name, save_flag))
+
+            def Rename(self, new_name, rename_type, old_name):
+                events.append(("Rename", new_name, rename_type, old_name))
+                obj.Name = new_name
+
+        class FakeApp:
+            DoCmd = FakeDoCmd()
+
+            def CreateForm(self):
+                events.append(("CreateForm",))
+                created.append(obj)
+                return obj
+
+            def CreateReport(self):
+                events.append(("CreateReport",))
+                created.append(obj)
+                return obj
+
+        class FakeDispatcher:
+            _started = True
+
+            def __init__(self):
+                self.calls = 0
+                self.app_reads = 0
+                self.app = FakeApp()
+
+            @property
+            def access_app(self):
+                self.app_reads += 1
+                return self.app
+
+            def call(self, fn):
+                self.calls += 1
+                return fn()
+
+        dispatcher = FakeDispatcher()
+        result = _create_object(
+            dispatcher,
+            kind,
+            "RequestedName",
+            record_source="SELECT 1",
+            properties={"Caption": "Wanted"},
+        )
+
+        assert result is True
+        assert dispatcher.calls == dispatcher.app_reads == 3
+        assert created == [obj]
+        assert obj.Name == "RequestedName"
+        assert events == [
+            (create_method,),
+            ("RecordSource", "SELECT 1"),
+            ("Property", "Caption", "Wanted"),
+            ("Close", ac_type, default_name, 1),
+            ("Rename", "RequestedName", ac_type, default_name),
+        ]
+
+    def test_rename_failure_closes_unsaved_design_object_without_saving(self):
+        from ms_access_mcp.backends.access.object_kinds import _create_object
+
+        events = []
+
+        class FakeObject:
+            Name = "Form1"
+
+        class FakeDoCmd:
+            def Close(self, close_type, name, save_flag):
+                events.append(("Close", close_type, name, save_flag))
+
+            def Rename(self, *_args):
+                events.append(("Rename",))
+                raise RuntimeError("rename rejected")
+
+        class FakeApp:
+            DoCmd = FakeDoCmd()
+
+            def CreateForm(self):
+                events.append(("CreateForm",))
+                return FakeObject()
+
+        class FakeDispatcher:
+            _started = True
+
+            def __init__(self):
+                self.calls = 0
+
+            @property
+            def access_app(self):
+                return app
+
+            def call(self, fn):
+                self.calls += 1
+                return fn()
+
+        app = FakeApp()
+        dispatcher = FakeDispatcher()
+
+        result = _create_object(dispatcher, "form", "WantedForm")
+
+        assert result is False
+        assert dispatcher.calls == 4
+        assert events == [
+            ("CreateForm",),
+            ("Close", 2, "Form1", 1),
+            ("Rename",),
+            ("Close", 2, "Form1", 2),
+        ]
+
+
 class TestCreateFormRecordSourceRejectionLogging:
     """create_form preserves best-effort RecordSource behavior with DEBUG logging."""
 
@@ -1024,14 +1240,17 @@ class TestCreateFormRecordSourceRejectionLogging:
         form = _FakeForm()
 
         class _FakeDoCmd:
-            def CreateForm(self):
-                return form
-
             def Close(self, ac_type, name, save):
                 pass
 
+            def Rename(self, new_name, ac_type, old_name):
+                form.Name = new_name
+
         class _FakeAccessApp:
             DoCmd = _FakeDoCmd()
+
+            def CreateForm(self):
+                return form
 
         adapter = AccessAdapter("test.accdb")
         adapter._connected = True
@@ -1259,14 +1478,17 @@ class TestCreateFormPropertyRejectionLogging:
         form_obj = _FakeForm("TestForm", prop_to_raise_on)
 
         class FakeDoCmd:
-            def CreateForm(self):
-                return form_obj
-
             def Close(self, ac_type, name, save):
                 pass
 
+            def Rename(self, new_name, ac_type, old_name):
+                form_obj.Name = new_name
+
         class FakeAccessApp:
             DoCmd = FakeDoCmd()
+
+            def CreateForm(self):
+                return form_obj
 
             class CurrentProject:
                 AllForms = MagicMock()
@@ -1304,8 +1526,8 @@ class TestCreateFormErrorClassification:
 
         class FakeAccessApp:
             class FakeDoCmd:
-                def CreateForm(self):
-                    raise exc
+                def Close(self, ac_type, name, save):
+                    pass
 
             DoCmd = FakeDoCmd()
 
@@ -1313,6 +1535,9 @@ class TestCreateFormErrorClassification:
                 AllForms = MagicMock()
 
             CurrentProject = FakeCurrentProject()
+
+            def CreateForm(self):
+                raise exc
 
         fake_disp._access_app = FakeAccessApp()
 

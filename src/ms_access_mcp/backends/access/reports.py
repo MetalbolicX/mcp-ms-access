@@ -352,7 +352,7 @@ def _add_object_control(
         if type_int == 0:
             return False
 
-        ctrl = dispatcher.access_app.DoCmd.CreateControl(object_name, type_int, section)
+        ctrl = dispatcher.access_app.CreateControl(object_name, type_int, section)
         ctrl.Name = control_name
 
         if properties:
@@ -404,8 +404,13 @@ def _remove_object_control(
             try:
                 ctrl = obj.Controls(i)
                 if ctrl.Name == control_name:
-                    ctrl.SetFocus()
-                    dispatcher.access_app.DoCmd.RunCommand(365)  # acCmdDelete
+                    # Same live recipe as forms (plan-098): select window,
+                    # select control, acCmdDelete=337. SetFocus does not
+                    # exist on design-view controls.
+                    ac_type = object_kinds.OBJECT_KINDS[kind]["ac_type"]
+                    dispatcher.access_app.DoCmd.SelectObject(ac_type, object_name)
+                    ctrl.InSelection = True
+                    dispatcher.access_app.DoCmd.RunCommand(337)  # acCmdDelete
                     return True
             except Exception as exc:
                 logger.debug("remove_object_control %s/%s[%s] failed: %s", kind, object_name, control_name, exc)

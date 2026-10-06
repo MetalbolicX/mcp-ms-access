@@ -35,8 +35,12 @@ class TestAccessPackageSubmodules:
             section_name,
         )
 
-        assert control_type_name(100) == "TextBox"
-        assert control_type_name(102) == "CommandButton"
+        # Plan-098: values verified against the Access 16.0 typelib — the
+        # previous table was shifted (100 is acLabel, not TextBox).
+        assert control_type_name(100) == "Label"
+        assert control_type_name(102) == "Line"
+        assert control_type_name(104) == "CommandButton"
+        assert control_type_name(109) == "TextBox"
         assert section_name(0) == "detail"
         assert section_name(1) == "header"
 

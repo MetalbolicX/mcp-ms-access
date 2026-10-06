@@ -577,7 +577,14 @@ class AccessAdapter:
                 return False
 
             event_prop_name = f"On{event_name}"
-            target_ctrl.Properties(event_prop_name).Value = "[Event Procedure]"
+            # Live behavior (plan-098): event properties are exposed as
+            # direct control attributes; the Properties-collection lookup
+            # raises "invalid reference to the property On<Event>". Try the
+            # attribute first, keep the collection as fallback.
+            try:
+                setattr(target_ctrl, event_prop_name, "[Event Procedure]")
+            except Exception:
+                target_ctrl.Properties(event_prop_name).Value = "[Event Procedure]"
             return True
 
         return self._with_design_view(

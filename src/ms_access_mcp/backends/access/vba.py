@@ -18,6 +18,24 @@ logger = logging.getLogger(__name__)
 _COMPILE_CMD_IDS = [301, 206, 317, 232]
 
 
+def _proc_type_from_signature(signature: str) -> str:
+    """Derive a procedure type from its declaration line.
+
+    VBE CodeModule has no ProcKind method (plan-098 live finding: the
+    call raises and silently empties the result); the declaration line
+    carries the same information.
+    """
+    head = signature.strip().lower()
+    for prefix in ("public ", "private ", "static "):
+        while head.startswith(prefix):
+            head = head[len(prefix):]
+    if head.startswith("function"):
+        return "Function"
+    if head.startswith("property"):
+        return "Property"
+    return "Sub"
+
+
 def get_vb_project(access_app: Any) -> Any | None:
     """Get the first VBA project via VBProjects enumeration.
 
@@ -131,13 +149,12 @@ def list_procedures(access_app: Any, vb_project: Any, module_name: str) -> list[
                 proc_name = target_module.ProcOfLine(line, 0)
                 if proc_name and proc_name not in seen_procs:
                     seen_procs.add(proc_name)
-                    proc_kind = target_module.ProcKind(line, 0)
-                    proc_type = {0: "Sub", 1: "Function", 2: "Property"}.get(proc_kind, "Sub")
                     start_line = target_module.ProcStartLine(proc_name, 0)
                     line_count = target_module.ProcCountLines(proc_name, 0)
+                    signature = target_module.Lines(start_line, 1)
                     procedures.append({
                         "name": proc_name,
-                        "type": proc_type,
+                        "type": _proc_type_from_signature(signature),
                         "start_line": start_line,
                         "line_count": line_count,
                     })
@@ -478,8 +495,7 @@ def vba_get_procedure(access_app: Any, module_name: str, procedure_name: str) ->
         lines = code.split("\n")
         signature = lines[0] if lines else ""
 
-        proc_kind = target_module.ProcKind(start_line, 0)
-        proc_type = {0: "Sub", 1: "Function", 2: "Property"}.get(proc_kind, "Sub")
+        proc_type = _proc_type_from_signature(signature)
 
         return {
             "name": procedure_name,

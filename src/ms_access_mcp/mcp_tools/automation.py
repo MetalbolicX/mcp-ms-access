@@ -201,7 +201,10 @@ def create_form(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Create a new form."""
+    """Create a new form.
+
+    ``template_name`` is accepted for compatibility but currently has no effect.
+    """
     p = params or {}
     name = p.get("name", "")
     record_source = p.get("record_source", "")
@@ -455,7 +458,10 @@ def create_report(
     params: dict[str, Any] | None = None,
     confirm: bool = False,
 ) -> CallToolResult:
-    """Create a new report."""
+    """Create a new report.
+
+    ``template_name`` is accepted for compatibility but currently has no effect.
+    """
     p = params or {}
     name = p.get("name", "")
     record_source = p.get("record_source", "")

@@ -123,37 +123,88 @@ def _create_object(
     properties: dict[str, Any] | None = None,
     log_object_failure: Callable[[str, str, str, BaseException], None] | None = None,
 ) -> bool:
-    """Create a form or report via DoCmd.CreateForm/CreateReport."""
+    """Create and name a form or report through the Application COM API.
+
+    ``template_name`` remains accepted for API compatibility but is not
+    applied; Access cannot create from a template through the verified flow.
+    """
     import logging
+
     logger = logging.getLogger(__name__)
 
     if not dispatcher._started:
         return False
 
-    def _do() -> bool:
-        try:
-            ac_type = OBJECT_KINDS[kind]["ac_type"]
-            create_method = "CreateForm" if kind == "form" else "CreateReport"
-            obj = getattr(dispatcher.access_app.DoCmd, create_method)()
-            if record_source:
-                try:
-                    obj.RecordSource = record_source
-                except Exception as exc:
-                    logger.debug("create_%s: RecordSource %r rejected: %s", kind, record_source, exc)
-            if properties:
-                for prop_name, value in properties.items():
-                    try:
-                        obj.Properties(prop_name).Value = value
-                    except Exception as exc:
-                        logger.warning("create_%s: property %s rejected: %s", kind, prop_name, exc)
-            dispatcher.access_app.DoCmd.Close(ac_type, obj.Name, 1)  # acSaveYes=1
-            return True
-        except Exception as exc:
-            if log_object_failure:
-                log_object_failure(kind, "create", object_name, exc)
-            return False
+    # Access cannot apply template_name through the verified creation API.
+    ac_type: int | None = None
+    default_name: str | None = None
 
-    return dispatcher.call(_do)
+    def _create() -> str:
+        nonlocal default_name
+        app = dispatcher.access_app
+        if kind == "form":
+            obj = app.CreateForm()
+        else:
+            # The live form recipe also fails to persist reports; this branch
+            # mirrors that recipe for now and is pinned only by unit tests.
+            obj = app.CreateReport()
+        created_name = obj.Name
+        default_name = created_name
+        if record_source:
+            try:
+                obj.RecordSource = record_source
+            except Exception as exc:
+                logger.debug(
+                    "create_%s: RecordSource %r rejected: %s",
+                    kind,
+                    record_source,
+                    exc,
+                )
+        if properties:
+            for prop_name, value in properties.items():
+                try:
+                    obj.Properties(prop_name).Value = value
+                except Exception as exc:
+                    logger.warning(
+                        "create_%s: property %s rejected: %s",
+                        kind,
+                        prop_name,
+                        exc,
+                    )
+        return created_name
+
+    try:
+        ac_type = OBJECT_KINDS[kind]["ac_type"]
+        default_name = dispatcher.call(_create)
+        dispatcher.call(
+            lambda: dispatcher.access_app.DoCmd.Close(ac_type, default_name, 1)
+        )  # acSaveYes=1
+        dispatcher.call(
+            lambda: dispatcher.access_app.DoCmd.Rename(
+                object_name, ac_type, default_name
+            )
+        )
+        return True
+    except Exception as exc:
+        if default_name is not None and ac_type is not None:
+            try:
+                # A separate dispatch call is required: Close invalidates the
+                # current DoCmd proxy, and acSaveNo prevents prompt leakage.
+                dispatcher.call(
+                    lambda: dispatcher.access_app.DoCmd.Close(
+                        ac_type, default_name, 2
+                    )
+                )
+            except Exception as cleanup_exc:
+                logger.debug(
+                    "create_%s: acSaveNo cleanup for %s failed: %s",
+                    kind,
+                    default_name,
+                    cleanup_exc,
+                )
+        if log_object_failure:
+            log_object_failure(kind, "create", object_name, exc)
+        return False
 
 
 def _classify_object_failure(kind: str, operation: str, object_name: str, exc: BaseException) -> AccessObjectNotFoundError | AccessBackendError:

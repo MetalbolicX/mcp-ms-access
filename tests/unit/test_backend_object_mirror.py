@@ -92,13 +92,14 @@ class _FakePropertiesColl:
 
 
 class _FakeControl:
-    """Fake Access control with Name, Properties and SetFocus."""
+    """Fake Access control with Name, Properties and design-view selection."""
 
     def __init__(self, name: str, initial: dict | None = None):
         self.Name = name
         self.values: dict = dict(initial or {})
         self.writes: list = []
         self.focused = False
+        self.InSelection = False
 
     @property
     def Properties(self):
@@ -175,14 +176,11 @@ class _FakeDoCmd:
     def Close(self, ac_type, name, save):
         self.calls.append(("Close", ac_type, name, save))
 
-    def CreateControl(self, name, type_int, section):
-        self.calls.append(("CreateControl", name, type_int, section))
-        ctrl = _FakeControl("")
-        self.created.append(ctrl)
-        return ctrl
-
     def RunCommand(self, cmd):
         self.calls.append(("RunCommand", cmd))
+
+    def SelectObject(self, ac_type, name):
+        self.calls.append(("SelectObject", ac_type, name))
 
 
 class _FakeAccessApp:
@@ -213,6 +211,15 @@ class _FakeAccessApp:
     def Reports(self, name):
         self._live_calls.append(("Reports", name))
         return self._live
+
+    def CreateControl(self, name, type_int, section):
+        # Real COM surface: CreateControl lives on Application, not DoCmd
+        # (plan-098 live finding). Recorded into DoCmd.calls so sequence
+        # pins keep their original interleaved order.
+        self.DoCmd.calls.append(("CreateControl", name, type_int, section))
+        ctrl = _FakeControl("")
+        self.DoCmd.created.append(ctrl)
+        return ctrl
 
 
 KIND_TOKENS = {
@@ -369,12 +376,13 @@ class TestAddRemoveControlMirror:
         # Plan 035: helper closes exactly once with acSaveYes (was: double-close).
         assert adapter._dispatcher.access_app.DoCmd.calls == [
             (tok["open"], "Obj1", 1),
-            ("CreateControl", "Obj1", 100, 0),
+            ("CreateControl", "Obj1", 109, 0),
             ("Close", tok["ac"], "Obj1", 1),
         ]
         # Plan 035: helper performs one _live_object lookup per design-view
-        # invocation regardless of whether work() consumes it; CreateControl
-        # still runs directly. The single live-call here is harmless.
+        # invocation regardless of whether work() consumes it; the
+        # Application-level CreateControl still runs directly. The single
+        # live-call here is harmless.
         assert live_calls == [(tok["live"], "Obj1")]
 
     @pytest.mark.parametrize("kind", ["form", "report"])
@@ -387,11 +395,14 @@ class TestAddRemoveControlMirror:
         result = method("Obj1", "btn1")
 
         assert result is True
-        assert live._controls[0].focused is True
-        # Removal must persist the deleted control.
+        assert live._controls[0].InSelection is True
+        # Removal must persist the deleted control (plan-098 live recipe:
+        # select window, select control, acCmdDelete=337 — the old pin
+        # recorded SetFocus + RunCommand(365), which is HidePane live).
         assert adapter._dispatcher.access_app.DoCmd.calls == [
             (tok["open"], "Obj1", 1),
-            ("RunCommand", 365),
+            ("SelectObject", tok["ac"], "Obj1"),
+            ("RunCommand", 337),
             ("Close", tok["ac"], "Obj1", 1),
         ]
         assert live_calls == [(tok["live"], "Obj1")]

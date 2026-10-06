@@ -2,67 +2,51 @@
 
 Extracted from AccessAdapter (plan 060). These are pure lookup tables
 with no AccessAdapter state dependency.
+
+AcControlType values verified against the Access 16.0 type library on
+2026-10-05 (plan 098): the previous table was shifted and created wrong
+control types live (e.g. "CommandButton" -> 102 = acLine).
 """
+
+
+# Verified Access AcControlType constants (typelib ground truth).
+_TYPE_MAP: dict[int, str] = {
+    100: "Label",
+    101: "Rectangle",
+    102: "Line",
+    103: "Image",
+    104: "CommandButton",
+    105: "OptionButton",
+    106: "CheckBox",
+    107: "OptionGroup",
+    108: "BoundObjectFrame",
+    109: "TextBox",
+    110: "ListBox",
+    111: "ComboBox",
+    112: "SubForm",
+    114: "ObjectFrame",
+    118: "PageBreak",
+    119: "CustomControl",
+    122: "ToggleButton",
+    123: "TabControl",
+    124: "Page",
+    126: "Attachment",
+    127: "EmptyCell",
+    128: "WebBrowserControl",
+    129: "NavigationControl",
+    130: "NavigationButton",
+}
 
 
 def control_type_name(ctrl_type: int) -> str:
     """Map Access AcControlType integer to readable name."""
-    type_map = {
-        100: "TextBox",
-        101: "Label",
-        102: "CommandButton",
-        103: "OptionButton",
-        104: "ComboBox",
-        105: "ListBox",
-        106: "SubForm",
-        107: "ToggleButton",
-        108: "CheckBox",
-        109: "OptionGroup",
-        110: "TabControl",
-        111: "Page",
-        112: "Image",
-        114: "BoundObjectFrame",
-        115: "ObjectFrame",
-        118: "Line",
-        119: "Rectangle",
-        120: "PageBreak",
-        122: "Attachment",
-        123: "NavigationButton",
-        124: "NavigationControl",
-        126: "WebBrowserControl",
-        128: "EmptyCell",
-    }
-    return type_map.get(ctrl_type, f"Control({ctrl_type})")
+    return _TYPE_MAP.get(ctrl_type, f"Control({ctrl_type})")
 
 
 def control_type_id(name: str) -> int:
     """Map readable control type name to Access AcControlType integer."""
-    type_map = {
-        "TextBox": 100,
-        "Label": 101,
-        "CommandButton": 102,
-        "OptionButton": 103,
-        "ComboBox": 104,
-        "ListBox": 105,
-        "SubForm": 106,
-        "ToggleButton": 107,
-        "CheckBox": 108,
-        "OptionGroup": 109,
-        "TabControl": 110,
-        "Page": 111,
-        "Image": 112,
-        "BoundObjectFrame": 114,
-        "ObjectFrame": 115,
-        "Line": 118,
-        "Rectangle": 119,
-        "PageBreak": 120,
-        "Attachment": 122,
-        "NavigationButton": 123,
-        "NavigationControl": 124,
-        "WebBrowserControl": 126,
-        "EmptyCell": 128,
-    }
-    return type_map.get(name, 0)
+    by_name = {v: k for k, v in _TYPE_MAP.items()}
+    return by_name.get(name, 0)
 
 
 def section_name(section_id: int) -> str:
