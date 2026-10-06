@@ -976,3 +976,15 @@ VBA/macro write tools opt-in default, 20-round g13 crash matrix,
 | 103  | [Rename shadowing schema_json fields (wire alias)](103-schema-json-shadow-rename.md) | 38 | P3 | S | LOW | Strict TDD (warning-as-error RED) | 075 | DONE (8d99b6d) |
 | 104  | [Ledger hygiene sweep (row 047, checkboxes, nul)](104-ledger-hygiene-sweep.md) | 38 | P3 | S | LOW | Direct docs edit | 099–103 (sequence last) | DONE (1ae6e54; 140 boxes ticked with row evidence, 0 NOTE lines needed, row 047 annotated, root `nul` deleted by parent — worker safety policy bars filesystem deletes, plain `rm` succeeded) |
 
+**Delivery (2026-10-10)**: cycle merged ff-only into `main` — **13 commits**
+`03fff20..`tip, 47 files, +1016/−300 (12 cycle commits + this record).
+Mid-flight decisions: plan 100 scope amended at the worker's STOP gate
+(characterization widened the class to stats+tables+schema-by-consequence,
+amendment recorded in the plan doc); plan 101/104 edit-surface expansions
+approved by the parent. Post-merge gates on `main`: ruff clean, pyright 0,
+**1639 passed / 3 skipped / 0 warnings**, budget PASS — the suite's two
+long-standing pydantic shadow warnings are gone. All six `plan/*` branches
+verified contained and deleted (safe `-d`). No MSACCESS orphans or scratch
+locks remain. No remote configured — push/PR remains an operator decision.
+Tagged `audit-099-104` at this commit.
+
