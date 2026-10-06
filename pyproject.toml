@@ -115,3 +115,7 @@ ignore = [
 # Freeze the G2 CI gate's meaning; src-only scope (tests/scripts are not the gate's subject).
 include = ["src"]
 typeCheckingMode = "basic"
+
+[project.urls]
+Homepage = "https://github.com/MetalbolicX/mcp-ms-access"
+Repository = "https://github.com/MetalbolicX/mcp-ms-access"
