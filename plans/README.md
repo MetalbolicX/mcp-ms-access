@@ -660,12 +660,12 @@ credential detector.
 | 084  | [Migration verification gates success](084-migration-verification-gating.md) | 28 | P1 | S | MED | Characterization → strict TDD | 083 | DONE (17af0fe) |
 | 085  | [Versioning production wiring](085-versioning-production-wiring.md) | 29 | P1 | M | MED | Conformance-first strict TDD | 082 | DONE (6c3bf1e) — round-trip gate PASSED 2026-10-05 (live export→delete→import byte-faithful + compare zero diffs on a %TEMP% scratch accdb; 3 gate-found defects fixed: typed-envelope consumption `95955dd`, export-all lister wiring + module-encoding/temp-leak `25974de`; see ad-hoc E3/E4) |
 | 086  | [Analysis envelope correctness](086-analysis-envelope-correctness.md) | 29 | P1 | S | LOW | Strict TDD | 082 | DONE (ee0169f) |
-| 087  | [g13 chaos gate repair + stale README claims](087-g13-harness-repair.md) | 30 | P2 | M | LOW | Direct edit + registry-conformance test | 078 (recommended) | DONE (0d45a18) — operator chaos re-run PENDING |
+| 087  | [g13 chaos gate repair + stale README claims](087-g13-harness-repair.md) | 30 | P2 | M | LOW | Direct edit + registry-conformance test | 078 (recommended) | DONE (0d45a18) — chaos re-run PASSED 2026-10-05: 20/20 LOCK_STALE (retryable), exit 0, no orphan leaks; re-run exposed that the workload's `tasks` table never existed in the fixture (bootstrap + `--profile full` spawn added, `3d78aa6`) — repaired-harness evidence replaces the superseded 3/3 CLEAN |
 | 088  | [limit honored end-to-end + bounded exports](088-limit-and-bounded-data.md) | 30 | P2 | M | MED | Strict TDD, probe-gated live TOP | 080, 084 | DONE (ef2bcb4) — TOP live verification PASSED 2026-10-05: `test_query_data_limit_returns_five_rows_from_twenty` green ×3 consecutive live runs (20-row temp table through real DAO adapter → exactly 5 rows) |
 | 089  | [Credential staging + scrub hardening](089-credential-scrub-hardening.md) | 31 | P1 | S | MED | Strict TDD | 077 | DONE (a40e8bc) — real-DACL check PASSED 2026-10-05: controlled `write_entry(local=True)` on a scratch db, cross-checked with `icacls` (independent tool): exactly owner(F)+SYSTEM(F)+Administrators(F), no other ACEs, `SE_DACL_PROTECTED` confirmed (inheritance off); no pre-existing global store on this machine to inspect |
 | 090  | [SQL literals + identifier escaping](090-sql-literals-and-escaping.md) | 31 | P2 | S | MED | Strict TDD (goldens) | — | DONE (3e354da) |
-| 091  | [Dialog-killer PID scope + doctor ACE classification](091-dialog-killer-doctor-ace.md) | 32 | P2 | S | LOW | Strict TDD + pin refresh | — | DONE (12bb7ee) — live desktop-ownership + no-ACE machine checks PENDING |
-| 092  | [VBA/design-view write safety](092-vba-design-view-safety.md) | 32 | P2 | M | MED | Characterization refresh + strict TDD on fakes; operator gates | 091 (sequencing) | DONE (78027f6) — 4 live-Access gates PENDING (removal round-trip, injected rollback failure, first-time event procedure, RunCommand compile-error behavior) |
+| 091  | [Dialog-killer PID scope + doctor ACE classification](091-dialog-killer-doctor-ace.md) | 32 | P2 | S | LOW | Strict TDD + pin refresh | — | DONE (12bb7ee) — live checks PASSED 2026-10-05: doctor on this machine reports `[PASS] ace_provider` (Open failed with 'Not a valid file name' → correctly classified provider-present); desktop ownership confirmed — all VBE/compile/code windows enumerated under the captured Access PID (6360), zero foreign-PID windows |
+| 092  | [VBA/design-view write safety](092-vba-design-view-safety.md) | 32 | P2 | M | MED | Characterization refresh + strict TDD on fakes; operator gates | 091 (sequencing) | DONE (78027f6) — gates 2026-10-05: compile PASSED (broken VBA accepted, `compile_vba` returns success=true = honest command-accepted contract, no dialog, no foreign PID); removal round-trip BLOCKED + first-time event procedure BLOCKED (form tooling live-broken, see ad-hoc E5); VBA restore-on-injection BLOCKED-live (no natural fault seam; fakes cover rollback) |
 | 093  | [Dead-surface retirement (capabilities, ADO, dead opt-in)](093-dead-surface-retirement.md) | 33 | P3 | M | MED | Direct edit + test retirement | 080, 081 | DONE (d03cbb2) — Step 0 external-compat gate run by parent: CLEAN (no consumers; ado never a valid backend value) |
 
 ### Dependency notes
@@ -790,6 +790,19 @@ credential detector.
     drive is fixed NTFS. Mechanism unexplained — gates therefore run
     on %TEMP% scratch copies (same convention as the integration
     fixtures' `tempfile.mkdtemp`). Diagnosis deferred.
+  - **E5 (form tooling live-broken, found 2026-10-05 while running the
+    092 gates)**: three live-only defects, all green on unit fakes —
+    (a) `object_kinds._create_object` calls `DoCmd.CreateForm`, which
+    does not exist (`AttributeError: <unknown>.CreateForm`), and never
+    applies the requested name even on the working
+    `Application.CreateForm()` path (creates `Form1`); (b)
+    `DoCmd.Rename` fails with a Python-level int-coercion against the
+    real typeinfo (argument-order mismatch); (c)
+    `trusted_locations.list_objects` swallows `<unknown>
+    .AllAccessObjects` (member-not-found) and returns `[]`, so
+    `get_forms`/`get_reports` have been silently empty live.
+    Consequence: gates 092(a) and 092(c) are BLOCKED until form
+    creation/listing is repaired against live Access.
 
 ## Plans 094–097: deferred-findings cycle (2026-10-04)
 
