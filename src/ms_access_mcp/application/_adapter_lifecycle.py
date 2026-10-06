@@ -33,6 +33,13 @@ class AdapterLifecycle(Generic[_AdapterT]):
     _adapter: _AdapterT | None
     _db_path: str | None
 
+    def close(self) -> None:
+        """Release the active adapter, if one was created. Idempotent."""
+        adapter, self._adapter = self._adapter, None
+        disconnect = getattr(adapter, "disconnect", None)
+        if callable(disconnect):
+            disconnect()
+
     def _ensure_adapter(self) -> Err | None:
         """Ensure the adapter is connected, creating it lazily if needed.
 

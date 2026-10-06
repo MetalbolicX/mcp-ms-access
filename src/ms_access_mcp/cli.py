@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import logging
 import os
 import shutil
 import subprocess
@@ -1864,6 +1865,20 @@ def build_parser() -> argparse.ArgumentParser:
 # =============================================================================
 
 
+def _close_cli_use_case(uc: object) -> None:
+    """Best-effort teardown of a CLI-built use case (E3: never leak Access COM)."""
+    try:
+        close_database = getattr(uc, "close_database", None)
+        if callable(close_database):
+            close_database()
+            return
+        close = getattr(uc, "close", None)
+        if callable(close):
+            close()
+    except Exception:
+        logging.getLogger(__name__).debug("CLI use-case teardown failed", exc_info=True)
+
+
 def _with_db(handler):
     """Build DatabaseUseCases + auto-open --db, then run handler(opts, db).
 
@@ -1877,11 +1892,14 @@ def _with_db(handler):
             readonly=readonly,
             allowed_dirs=cli_allowed_dirs(),
         )
-        if getattr(opts, "db", None):
-            result = db.open_database(opts.db)
-            if isinstance(result, Err):
-                return format_result(result, getattr(opts, "json", False))
-        return handler(opts, db)
+        try:
+            if getattr(opts, "db", None):
+                result = db.open_database(opts.db)
+                if isinstance(result, Err):
+                    return format_result(result, getattr(opts, "json", False))
+            return handler(opts, db)
+        finally:
+            _close_cli_use_case(db)
     return _run
 
 
@@ -1889,7 +1907,10 @@ def _with_automation(handler):
     """Build AutomationUseCases and run handler(opts, uc)."""
     def _run(opts: argparse.Namespace) -> int:
         uc = _automation_use_cases(opts)
-        return handler(opts, uc)
+        try:
+            return handler(opts, uc)
+        finally:
+            _close_cli_use_case(uc)
     return _run
 
 
@@ -1897,7 +1918,10 @@ def _with_versioning(handler):
     """Build VersioningUseCases and run handler(opts, uc)."""
     def _run(opts: argparse.Namespace) -> int:
         uc = _versioning_use_cases(opts)
-        return handler(opts, uc)
+        try:
+            return handler(opts, uc)
+        finally:
+            _close_cli_use_case(uc)
     return _run
 
 
@@ -1905,7 +1929,10 @@ def _with_maintenance(handler):
     """Build MaintenanceUseCases and run handler(opts, uc)."""
     def _run(opts: argparse.Namespace) -> int:
         uc = _maintenance_use_cases(opts)
-        return handler(opts, uc)
+        try:
+            return handler(opts, uc)
+        finally:
+            _close_cli_use_case(uc)
     return _run
 
 

@@ -8,6 +8,7 @@ Strategy: monkeypatch sys.argv then call cli.main() — same pattern as test_cli
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -848,3 +849,69 @@ class TestMcp:
         with patch("ms_access_mcp.server.main", return_value=0):
             result = _run_cli(["mcp"])
         assert result == 0
+
+
+class _CloseSpy:
+    def __init__(self, events: list[str], raises: bool = False):
+        self.events = events
+        self.raises = raises
+
+    def close_database(self):
+        self.events.append("close_database")
+        if self.raises:
+            raise RuntimeError("close failed")
+
+    def close(self):
+        self.events.append("close")
+        if self.raises:
+            raise RuntimeError("close failed")
+
+
+def test_close_cli_use_case_prefers_database_close():
+    events: list[str] = []
+    cli._close_cli_use_case(_CloseSpy(events))
+    assert events == ["close_database"]
+
+
+def test_close_cli_use_case_falls_back_to_close_and_swallows_exceptions():
+    events: list[str] = []
+
+    class CloseOnly:
+        def close(self):
+            events.append("close")
+            raise RuntimeError("close failed")
+
+    cli._close_cli_use_case(CloseOnly())
+    assert events == ["close"]
+
+
+def test_close_cli_use_case_swallows_database_close_exception():
+    cli._close_cli_use_case(_CloseSpy([], raises=True))
+
+
+def test_versioning_wrapper_closes_after_handler_even_when_it_raises(monkeypatch):
+    events: list[str] = []
+    fake = _CloseSpy(events)
+    monkeypatch.setattr(cli, "_versioning_use_cases", lambda opts: fake)
+
+    def handler(opts, uc):
+        events.append("handler")
+        raise ValueError("handler failed")
+
+    with pytest.raises(ValueError, match="handler failed"):
+        cli._with_versioning(handler)(argparse.Namespace())
+
+    assert events == ["handler", "close_database"]
+
+
+def test_automation_wrapper_closes_after_handler_returns(monkeypatch):
+    events: list[str] = []
+    fake = _CloseSpy(events)
+    monkeypatch.setattr(cli, "_automation_use_cases", lambda opts: fake)
+
+    def handler(opts, uc):
+        events.append("handler")
+        return 7
+
+    assert cli._with_automation(handler)(argparse.Namespace()) == 7
+    assert events == ["handler", "close_database"]
