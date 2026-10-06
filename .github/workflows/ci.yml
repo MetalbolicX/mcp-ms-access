@@ -1,12 +1,14 @@
 # CI Workflow for mcp-ms-access
 #
-# NOTE: COM/ODBC gates (G1, G3-G7, G9-G11, G13) are LOCAL-ONLY.
-# GitHub runners do not have Microsoft Access installed and cannot execute
-# these gates. They are documented here for completeness and local reference
-# only. The full qualification matrix must be run on a local Windows machine
-# with Microsoft Access present.
+# COM/ODBC gates (G1, G3-G7, G9-G11, G13) are LOCAL-ONLY for hosted
+# runners: GitHub-hosted machines have no Microsoft Access. The
+# `com-integration` job below runs ONLY on a self-hosted runner labeled
+# `windows, access` and stays skipped everywhere else; register such a
+# runner (a Windows machine with Access + ACE installed) to activate it.
+# The full qualification matrix (including the g13 chaos harness)
+# remains an operator-triggered local run.
 #
-# This workflow covers:
+# The hosted job covers:
 #   G2  — Static analysis (ruff + pyright)
 #   G12 — Tool budget
 #   Unit tests (tests/unit/ only — no COM/ODBC integration markers)
@@ -52,3 +54,48 @@ jobs:
 
       - name: Tool budget (G12)
         run: uv run python scripts/tool_budget.py
+
+  com-integration:
+    name: COM integration (self-hosted Access)
+    runs-on: [self-hosted, windows, access]
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Probe Access availability
+        shell: pwsh
+        run: |
+          $msaccess = Get-ChildItem 'C:\Program Files\Microsoft Office\root\Office*\MSACCESS.EXE',
+            'C:\Program Files (x86)\Microsoft Office\root\Office*\MSACCESS.EXE' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $msaccess) { throw 'MSACCESS.EXE not found; this runner must have Access installed.' }
+          Write-Host "Access binary: $($msaccess.FullName)"
+
+      - name: Create isolated venv
+        shell: pwsh
+        run: |
+          python -m venv .venv-ci
+          .venv-ci\Scripts\python.exe -m pip install --upgrade pip
+          .venv-ci\Scripts\python.exe -m pip install -e .[dev]
+
+      - name: Unit sanity
+        shell: pwsh
+        run: .venv-ci\Scripts\python.exe -B -m pytest tests/unit -q -p no:cacheprovider
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+
+      - name: COM integration suite
+        shell: pwsh
+        run: .venv-ci\Scripts\python.exe -B -m pytest tests/integration -m com_integration -q -p no:cacheprovider
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+
+      - name: Shutdown resilience smoke (g10)
+        shell: pwsh
+        # g10 spawns `uv run python -m ms_access_mcp.server` internally for
+        # its stdin-close rounds, so the runner must have uv on PATH.
+        run: .venv-ci\Scripts\python.exe -B scripts/g10_repeated_shutdown.py
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
