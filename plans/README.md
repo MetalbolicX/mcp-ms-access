@@ -887,6 +887,11 @@ credential detector.
     `tests/integration/test_vba_write_safety_live.py` (NUL-poisoned
     writes rejected; module text intact; valid writes still succeed;
     orphan-clean; 1 passed in 11.72s).
+  - **Dependency scan (2026-10-05, parked since 0.2.0)**:
+    `uvx pip-audit --path .venv/Lib/site-packages --skip-editable`
+    (isolated env; project venv untouched) — **no known
+    vulnerabilities**; the editable `ms-access-mcp` distribution itself
+    is skipped by design.
 
 ## Plans 094–097: deferred-findings cycle (2026-10-04)
 
