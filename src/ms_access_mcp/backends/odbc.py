@@ -8,12 +8,20 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 import pyodbc
 
 from ..errors import BackendCapabilityMismatchError, strip_password
-from ..models import IndexInfo, QueryResult, WriteResult
+from ..models import (
+    DatabaseStatistics,
+    FieldInfo,
+    IndexInfo,
+    QueryResult,
+    TableInfo,
+    WriteResult,
+)
 from .crud_sql import build_delete, build_insert, build_update
 from .odbc_schema_reader import OdbcSchemaReader
 
@@ -178,11 +186,30 @@ class OdbcAdapter:
     # Schema introspection via SQLTables/SQLColumns
     # ------------------------------------------------------------------ #
 
-    def get_tables(self) -> list:
-        """Return user tables via SQLTables."""
+    def get_tables(self) -> list[TableInfo]:
+        """Return user tables and their columns via SQLTables and SQLColumns."""
         if not self._connected or self._conn is None:
             return []
-        return self._query_table_list("TABLE")
+
+        tables: list[TableInfo] = []
+        for name in self._query_table_list("TABLE"):
+            fields = [
+                FieldInfo(
+                    name=column["name"],
+                    type=column["type"],
+                    size=column["size"] or 0,
+                    required=column["nullable"] is False,
+                )
+                for column in self.get_columns(name)
+            ]
+            primary_key = [
+                column
+                for index in self.get_indexes(name)
+                if index.is_primary
+                for column in index.columns
+            ]
+            tables.append(TableInfo(name=name, fields=fields, primary_key=primary_key))
+        return tables
 
     def get_system_tables(self) -> list:
         """Return system tables via SQLTables."""
@@ -211,7 +238,7 @@ class OdbcAdapter:
                     "name": row.column_name,
                     "type": row.type_name,
                     "size": row.column_size,
-                    "nullable": row.nullable == 1,
+                    "nullable": row.nullable == 1 if row.nullable in (0, 1) else None,
                 }
                 for row in rows
             ]
@@ -457,9 +484,41 @@ class OdbcAdapter:
         """Return the unsupported SQL generation result."""
         return {"success": False, "error": "Not implemented"}
 
-    def get_database_statistics(self) -> dict:
-        """Return database statistics, which are unavailable through ODBC."""
-        return {}
+    def get_database_statistics(self) -> DatabaseStatistics:
+        """Return statistics derivable through ODBC, using DAO's result model.
+
+        ODBC cannot inspect Access forms, reports, macros, modules, or the
+        Access application version; those model fields use their unavailable
+        zero/empty semantics. File metadata and table/query counts are read
+        directly from the database path and ODBC catalog.
+        """
+        objects = {
+            "tables": len(self._query_table_list("TABLE")) if self._connected else 0,
+            "queries": len(self._query_table_list("VIEW")) if self._connected else 0,
+            "forms": 0,
+            "reports": 0,
+            "macros": 0,
+            "modules": 0,
+        }
+        file_info: dict[str, Any] = {"name": "", "size_bytes": 0, "modified": ""}
+        path = Path(self._db_path)
+        try:
+            if path.exists():
+                stat = path.stat()
+                file_info = {
+                    "name": str(path),
+                    "size_bytes": stat.st_size,
+                    "modified": str(stat.st_mtime),
+                }
+        except OSError:
+            pass
+
+        return DatabaseStatistics(
+            success=True,
+            objects=objects,
+            file=file_info,
+            system={"access_version": "", "com_available": False},
+        )
 
     def execute_raw_sql(self, sql: str) -> int:
         """Reject raw SQL execution because this adapter exposes parameterized operations."""

@@ -6,6 +6,68 @@ import pytest
 
 from ms_access_mcp.backends.odbc import OdbcAdapter
 from ms_access_mcp.errors import BackendCapabilityMismatchError
+from ms_access_mcp.models import DatabaseStatistics, FieldInfo, TableInfo
+
+
+class TestOdbcAdapterReadModels:
+    def test_read_methods_return_dao_typed_models(self, tmp_path):
+        class FakeRow:
+            table_name = "Users"
+
+        class FakeColumn:
+            column_name = "id"
+            type_name = "INTEGER"
+            column_size = 4
+            nullable = 0
+
+        class FakeCursor:
+            columns_called: bool = False
+
+            def tables(self, **_kwargs):
+                pass
+
+            def columns(self, **_kwargs):
+                pass
+
+            def fetchall(self):
+                return [FakeColumn()] if self.columns_called else [FakeRow()]
+
+            def close(self):
+                pass
+
+            def statistics(self, **_kwargs):
+                pass
+
+            def primaryKeys(self, **_kwargs):
+                pass
+
+        class FakeConnection:
+            def cursor(self):
+                cursor = FakeCursor()
+                original_columns = cursor.columns
+
+                def columns(**kwargs):
+                    cursor.columns_called = True
+                    original_columns(**kwargs)
+
+                cursor.columns = columns
+                return cursor
+
+        db_path = tmp_path / "fixture.accdb"
+        db_path.write_bytes(b"database")
+        adapter = OdbcAdapter(str(db_path))
+        adapter._connected = True
+        adapter._conn = FakeConnection()
+
+        tables = adapter.get_tables()
+        stats = adapter.get_database_statistics()
+
+        assert len(tables) == 1
+        assert isinstance(tables[0], TableInfo)
+        assert isinstance(tables[0].fields[0], FieldInfo)
+        assert tables[0].name == "Users"
+        assert isinstance(stats, DatabaseStatistics)
+        assert set(stats.__dict__) == {"success", "objects", "file", "system"}
 
 
 class TestOdbcAdapterBasics:

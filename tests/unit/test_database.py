@@ -13,7 +13,14 @@ from ms_access_mcp.application.database import (
     _ok,
 )
 from ms_access_mcp.backends.access import AccessAdapter
-from ms_access_mcp.models import FieldInfo, IndexInfo, ObjectMetadata, RelationshipInfo, TableInfo
+from ms_access_mcp.models import (
+    DatabaseStatistics,
+    FieldInfo,
+    IndexInfo,
+    ObjectMetadata,
+    RelationshipInfo,
+    TableInfo,
+)
 from ms_access_mcp.safety import WritePolicy
 
 
@@ -849,6 +856,44 @@ class TestExportDataXlsx:
 
         # No xlsx calls made when format is csv/json
         assert len(fake_adapter._export_calls) == 0
+
+
+class TestOdbcReadModelSerialization:
+    def test_odbc_table_and_statistics_models_match_dao_envelope_keys(self) -> None:
+        class OdbcModelAdapter:
+            def get_tables(self):
+                return [
+                    TableInfo(
+                        name="Users",
+                        fields=[FieldInfo(name="id", type="INTEGER", size=4, required=True)],
+                    )
+                ]
+
+            def get_database_statistics(self):
+                return DatabaseStatistics(
+                    success=True,
+                    objects={"tables": 1, "queries": 0, "forms": 0, "reports": 0, "macros": 0, "modules": 0},
+                    file={"name": "", "size_bytes": 0, "modified": ""},
+                    system={"access_version": "", "com_available": False},
+                )
+
+        db = DatabaseUseCases()
+        db._connections["default"] = OdbcModelAdapter()
+
+        tables = db.get_tables()
+        schema = db.get_table_schema("Users")
+        stats = db.get_database_statistics()
+
+        assert isinstance(tables, Ok)
+        assert set(tables.data[0]) == {"name", "fields", "primary_key"}
+        assert set(tables.data[0]["fields"][0]) == {
+            "name", "type", "size", "required", "allow_zero_length", "default_value", "is_autoincrement"
+        }
+        assert isinstance(schema, Ok)
+        assert set(schema.data) == {"name", "fields", "primary_key"}
+        assert isinstance(stats, Ok)
+        assert set(stats.data) == {"success", "objects", "file", "system"}
+        assert set(stats.data["objects"]) == {"tables", "queries", "forms", "reports", "macros", "modules"}
 
 
 class TestStep7cSerialization:

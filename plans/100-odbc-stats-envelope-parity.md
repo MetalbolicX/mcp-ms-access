@@ -18,6 +18,18 @@
 
 ## Why this matters
 
+> **SCOPE AMENDMENT (2026-10-10, during execution):** the
+> characterization matrix (plan Step 1) extended the defect class.
+> Live: `tables` failed with the same `asdict()` error, and `schema`
+> failed with `'str' object has no attribute 'name'`. Per the STOP
+> protocol the worker halted; the orchestrator amended the class to
+> "ODBC read-path methods return the same typed models as DAO"
+> (plan-071 pattern): `get_database_statistics`, `get_tables`, and
+> `get_schema` — the last fixed BY CONSEQUENCE of typed `get_tables`
+> (verified live). Evidence gaps (forms/reports/macros/modules counts,
+> COM-only metadata) use the model's zero/empty semantics and are
+> documented in `tests/integration/test_odbc_read_parity.py`.
+
 LIVE-CONFIRMED 2026-10-10:
 
 ```
