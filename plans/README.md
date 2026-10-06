@@ -864,3 +864,10 @@ unblock gates 092(a)/(c) with a permanent marker-gated lifecycle test.
 |------|-------|-------|----------|--------|------|------|------------|--------|
 | 098  | [Form/report creation repaired against live Access](098-form-creation-live.md) | 37 | P1 | M | MED | Live naming matrix + strict TDD + live acceptance | 092, E5 | DONE (4b2bc8b) — matrix: name-at-creation/Rename-before-save/Save-as all fail live; winner = CreateForm() → Close(acSaveYes) → Rename, per-step dispatcher calls; SIX live defects fixed (creation API, CreateControl, shifted AcControlType table creating LINES as "CommandButton", SetFocus/365 removal recipe, Properties On<Event>, phantom CodeModule.ProcKind); 092(a)/(c) PASSED live via tests/integration/test_form_lifecycle.py |
 
+**Delivery (2026-10-05)**: plans 077–098 + ad-hoc teardown E0/E1
+fast-forwarded into `main` (no merge commits; ancestry verified across
+all 23 plan branches): **77 commits** `e4a4ce0..3e4431e`, 132 files,
++9218/−1953. Post-merge gates on `main`: 1610 passed / 3 skipped, ruff
+clean, pyright 0, budget PASS. No remote configured — push/PR remains
+an operator decision. Plan branches retained (cleanup optional).
+
