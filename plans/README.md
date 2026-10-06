@@ -944,3 +944,35 @@ ff-only into `main` — **8 commits** `587e456..4cee9aa` on branch
 passed / 3 skipped, ruff clean, pyright 0, budget PASS. Tagged
 `audit-e3-e7`.
 
+## Plans 099–104: debt-findings evidence cycle (2026-10-10)
+
+Third improve cycle, from the authorized evidence-only revision
+(2026-10-10; repo untouched during evidence gathering — all probes on
+%TEMP% scratch). Verdicts recorded: **LIVE-CONFIRMED** — batch
+property setters commit half-applied sets (snapshot evidence),
+`stats --backend odbc` dies at an `asdict()` seam plan 071 missed,
+`links list` returns `rowcount=2` always + a double-nested envelope
+(`dao.get_linked_tables` returns a legacy dict wrapper), `schema_json`
+pydantic shadow warnings still fire (`models/migration.py:44/:60`).
+**CODE-CONFIRMED** — DAO empty-result column loss (`dao.py:383`; ODBC
+preserves; CLI hides both). **REFUTED / CLOSED during evidence** —
+PERF-04 salvage double-scan (now a single `OpenRecordset` per table),
+DEBT-06 ADO Execute (died with AdoAdapter, 093), dispatcher two-STA
+race (documented-ambient: plan-030 fix comments + E1 logging live in
+`dispatcher.py:253-313`). **Stale records** — row 047 still says g13
+evidence is void pending re-run (the re-run completed via 087,
+20/20); plan checklists 070–098 unticked despite DONE rows; root
+`nul` stray file still on disk. **Operator-blocked, NOT planned** —
+TEST-02 CI COM/ODBC coverage (needs Windows runner decision),
+VBA/macro write tools opt-in default, 20-round g13 crash matrix,
+`[project.urls]` (needs a remote).
+
+| Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
+|------|-------|-------|----------|--------|------|------|------------|--------|
+| 099  | [Transactional batch property setters (snapshot-restore)](099-transactional-batch-properties.md) | 38 | P1 | M | MED | Strict TDD on fakes + live gate | 077–098 | TODO |
+| 100  | [ODBC read-path envelope parity (stats asdict)](100-odbc-stats-envelope-parity.md) | 38 | P2 | S-M | MED | Characterization-first + strict TDD | 071/080/081 | TODO |
+| 101  | [Linked-tables envelope truth (rowcount, nesting)](101-linked-tables-envelope-truth.md) | 38 | P2 | S | LOW-MED | Characterization → refresh | 080/081 | TODO |
+| 102  | [Empty-result column preservation on DAO](102-empty-result-columns.md) | 38 | P3 | S | LOW | Strict TDD + integration pin | 037/071/088 | TODO |
+| 103  | [Rename shadowing schema_json fields (wire alias)](103-schema-json-shadow-rename.md) | 38 | P3 | S | LOW | Strict TDD (warning-as-error RED) | 075 | TODO |
+| 104  | [Ledger hygiene sweep (row 047, checkboxes, nul)](104-ledger-hygiene-sweep.md) | 38 | P3 | S | LOW | Direct docs edit | 099–103 (sequence last) | TODO |
+
