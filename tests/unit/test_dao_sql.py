@@ -247,7 +247,7 @@ class TestDaoAdapterLinkedTableReadStrip:
     """Case 11: get_linked_tables scrubs password at read time."""
 
     def test_get_linked_tables_strips_password(self, monkeypatch):
-        """connect_string in returned dict must not contain pwd= even if tdef.Connect has it."""
+        """Returned linked-table rows must not expose passwords from tdef.Connect."""
         from ms_access_mcp.backends.dao import DaoAdapter
 
         # Build a minimal fake DAO database with a linked table bearing a password
@@ -279,14 +279,7 @@ class TestDaoAdapterLinkedTableReadStrip:
         dispatcher = FakeDispatcher(fake_dao_db)
 
         adapter = DaoAdapter("fake.accdb", dispatcher=dispatcher)
-        result = adapter.get_linked_tables()
-        if not result["success"]:
-            err = result.get("error", "")
-            # Show repr to identify MagicMock
-            raise AssertionError(f"get_linked_tables failed: error={err!r}, type={type(err)}")
-
-        assert result["success"], f"get_linked_tables failed: {result.get('error')}"
-        tables = result["linked_tables"]
+        tables = adapter.get_linked_tables()
         assert len(tables) == 1
         connect_str = tables[0]["connect_string"]
         assert "hunter2" not in connect_str, f"password leaked: {connect_str}"

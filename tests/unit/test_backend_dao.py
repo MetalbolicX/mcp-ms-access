@@ -880,12 +880,16 @@ class TestLinkedTables:
 
         result = adapter.get_linked_tables()
 
-        assert result["success"] is True
-        assert [t["name"] for t in result["linked_tables"]] == ["lnk_odbc", "lnk_access"]
-        by_name = {t["name"]: t for t in result["linked_tables"]}
+        assert [t["name"] for t in result] == ["lnk_odbc", "lnk_access"]
+        by_name = {t["name"]: t for t in result}
         assert by_name["lnk_odbc"]["type"] == "ODBC"
         assert by_name["lnk_access"]["type"] == "Access"
         assert by_name["lnk_odbc"]["source_table"] == "src_odbc"
+
+    def test_get_linked_tables_disconnected_returns_empty_list(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
+        dispatcher._db = None
+
+        assert adapter.get_linked_tables() == []
 
     def test_get_linked_tables_com_failure(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         # TableDefs iteration raising simulates the COM failure:
@@ -896,10 +900,8 @@ class TestLinkedTables:
 
         dispatcher.db.table_defs = BoomingTableDefs([])
 
-        result = adapter.get_linked_tables()
-
-        assert result["success"] is False
-        assert result["error"] == "TableDefs unavailable"
+        with pytest.raises(DaoOperationError, match="TableDefs unavailable"):
+            adapter.get_linked_tables()
 
     def test_create_linked_table_strips_password(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         result = adapter.create_linked_table("lnk", "src", "ODBC;DATABASE=db;UID=u;PWD=secret")

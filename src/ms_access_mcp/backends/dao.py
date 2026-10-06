@@ -821,12 +821,12 @@ class DaoAdapter:
     # Linked tables
     # -------------------------------------------------------------------------- #
 
-    def get_linked_tables(self) -> dict:
-        """Return the linked (attached) tables in the current database."""
+    def get_linked_tables(self) -> list[dict]:
+        """Return linked (attached) tables directly, without a result envelope."""
         if not self._dispatcher.is_connected():
-            return {"success": False, "error": "Not connected"}
+            return []
 
-        def _do() -> dict:
+        def _do() -> list[dict]:
             linked_tables: list[dict] = []
             try:
                 db = self._dispatcher.current_db
@@ -852,9 +852,8 @@ class DaoAdapter:
                             }
                         )
             except Exception as e:
-                err = _strip_password(str(e))
-                return {"success": False, "error": err}
-            return {"success": True, "linked_tables": linked_tables}
+                raise DaoOperationError(_strip_password(str(e))) from e
+            return linked_tables
 
         return self._dispatcher.call(_do)
 

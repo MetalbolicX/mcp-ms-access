@@ -101,6 +101,23 @@ class FakeAdapter:
         return []
 
 
+def test_linked_tables_facade_preserves_direct_list_and_counts_rows() -> None:
+    linked_tables = [{"name": "one"}, {"name": "two"}]
+
+    class Adapter:
+        def get_linked_tables(self):
+            return linked_tables
+
+    db = DatabaseUseCases()
+    db._connections["default"] = Adapter()
+
+    result = db.get_linked_tables()
+
+    assert isinstance(result, Ok)
+    assert result.data == linked_tables
+    assert result.rowcount == len(linked_tables)
+
+
 class TestDatabaseUseCasesConstruction:
     """Test DatabaseUseCases initialization."""
 
