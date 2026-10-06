@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import warnings
 from datetime import datetime
 
 from ms_access_mcp.models import (
@@ -13,7 +15,27 @@ from ms_access_mcp.models.migration import (
     MigrationJob,
     TableResult,
     TableTransferConfig,
+    TransferDataParams,
+    UploadSchemaParams,
 )
+
+
+def test_import_does_not_warn_about_shadowed_schema_json_fields() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        importlib.reload(importlib.import_module("ms_access_mcp.models.migration"))
+
+
+def test_schema_payload_fields_preserve_schema_json_wire_alias() -> None:
+    payload = {"tables": []}
+
+    upload = UploadSchemaParams(schema_json=payload)
+    transfer = TransferDataParams(schema_payload=payload)
+
+    assert upload.schema_payload == payload
+    assert transfer.schema_payload == payload
+    assert upload.model_dump(by_alias=True)["schema_json"] == payload
+    assert transfer.model_dump(by_alias=True)["schema_json"] == payload
 
 
 class TestExtractedSchema:

@@ -112,7 +112,7 @@ def upload_schema(
         target_type=parsed.target_type,
         connection_string=parsed.connection_string,
         connection_ref=parsed.connection_ref,
-        schema_json=parsed.schema_json,
+        schema_json=parsed.schema_payload,
         confirm=confirm,
     )
     dict_result = _result_to_dict(result)
@@ -159,7 +159,7 @@ def transfer_data(
         connection_string=parsed.connection_string,
         connection_ref=parsed.connection_ref,
         database_path=path,
-        schema_json=parsed.schema_json,
+        schema_json=parsed.schema_payload,
         transfer_mode=parsed.transfer_mode,
         verification_mode=parsed.verification_mode,
         table_overrides=parsed.table_overrides,

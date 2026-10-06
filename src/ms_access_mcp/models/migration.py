@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..models import (
     ForeignKeySchema,
@@ -54,7 +54,9 @@ class UploadSchemaParams(BaseModel):
     target_type: str = ""
     connection_string: str = ""
     connection_ref: str = ""
-    schema_json: dict[str, Any] = Field(default_factory=dict)
+    schema_payload: dict[str, Any] = Field(default_factory=dict, alias="schema_json")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class TransferDataParams(BaseModel):
@@ -73,10 +75,12 @@ class TransferDataParams(BaseModel):
     target_type: str = ""
     connection_string: str = ""
     connection_ref: str = ""
-    schema_json: dict[str, Any] | None = None
+    schema_payload: dict[str, Any] | None = Field(default=None, alias="schema_json")
     transfer_mode: str = "auto"
     verification_mode: str = "full"
     table_overrides: dict[str, Any] | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GetMigrationStatusParams(BaseModel):
