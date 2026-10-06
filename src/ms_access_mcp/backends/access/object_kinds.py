@@ -50,7 +50,7 @@ def _with_design_view(
     kind: str,
     object_name: str,
     *,
-    save_flag: int,
+    save_flag: int | Callable[[], int],
     work: Callable[[Any], _T],
     on_error: Callable[[BaseException], _T],
     default: _T,
@@ -79,7 +79,8 @@ def _with_design_view(
         finally:
             try:
                 close_ac = OBJECT_KINDS[kind]["close_ac"]
-                dispatcher.access_app.DoCmd.Close(close_ac, object_name, save_flag)
+                close_save_flag = save_flag() if callable(save_flag) else save_flag
+                dispatcher.access_app.DoCmd.Close(close_ac, object_name, close_save_flag)
             except Exception as exc:
                 logger.debug("design-view close %s/%s failed: %s", kind, object_name, exc)
                 pass

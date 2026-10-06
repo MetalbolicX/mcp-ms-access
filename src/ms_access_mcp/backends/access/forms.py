@@ -150,6 +150,87 @@ def set_form_property(dispatcher, form_name: str, property_name: str, value: str
     return _set_object_property(dispatcher, "form", form_name, property_name, value, log_object_failure=log_object_failure)
 
 
+_NO_PROPERTY_SNAPSHOT = object()
+
+
+def _set_object_property_batch(
+    dispatcher,
+    kind: str,
+    object_name: str,
+    properties: dict[str, Any],
+    get_property: Any,
+    operation: str,
+    log_object_failure: Any = None,
+) -> dict[str, Any]:
+    """Apply one property batch in one design-view session, restoring on failure."""
+    close_flag = 1
+    results: dict[str, Any] = dict.fromkeys(properties, False)
+    results["rolled_back"] = False
+
+    def work(obj):
+        nonlocal close_flag
+        if obj is None:
+            return results
+
+        snapshots = {}
+        targets = {}
+        for prop_name in properties:
+            try:
+                prop = get_property(obj, prop_name)
+                targets[prop_name] = prop
+                snapshots[prop_name] = prop.Value
+            except Exception:
+                snapshots[prop_name] = _NO_PROPERTY_SNAPSHOT
+
+        applied = []
+        for prop_name, value in properties.items():
+            try:
+                prop = targets.get(prop_name)
+                if prop is None:
+                    prop = get_property(obj, prop_name)
+                    targets[prop_name] = prop
+                prop.Value = value
+                results[prop_name] = True
+                applied.append(prop_name)
+            except Exception as exc:
+                if log_object_failure:
+                    log_object_failure(kind, operation, object_name, exc)
+
+        if any(not results[name] for name in properties):
+            restore_targets = [
+                name for name in applied
+                if snapshots.get(name, _NO_PROPERTY_SNAPSHOT) is not _NO_PROPERTY_SNAPSHOT
+            ]
+            results["rolled_back"] = bool(restore_targets)
+            restore_failed = False
+            for prop_name in restore_targets:
+                try:
+                    targets[prop_name].Value = snapshots[prop_name]
+                except Exception as exc:
+                    restore_failed = True
+                    logger.warning(
+                        "restore %s property '%s' on '%s' failed: %s",
+                        kind, prop_name, object_name, exc,
+                    )
+            close_flag = 2 if restore_failed else 1
+        return results
+
+    def on_error(exc):
+        if log_object_failure:
+            log_object_failure(kind, operation, object_name, exc)
+        return results
+
+    return object_kinds._with_design_view(
+        dispatcher,
+        kind,
+        object_name,
+        save_flag=lambda: close_flag,
+        work=work,
+        on_error=on_error,
+        default=results,
+    )
+
+
 def _set_object_properties(
     dispatcher,
     kind: str,
@@ -157,33 +238,16 @@ def _set_object_properties(
     properties: dict[str, Any],
     log_object_failure: Any = None,
 ) -> dict[str, bool]:
-    """Set multiple properties of a form/report. Returns dict of {property_name: success}."""
-    def work_for_prop(prop_name: str, value: Any) -> bool:
-        def inner(obj):
-            if obj is None:
-                return False
-            try:
-                obj.Properties(prop_name).Value = value
-                return True
-            except Exception:
-                return False
-
-        on_error = (lambda exc: (log_object_failure(kind, "set_properties", object_name, exc) or False)) if log_object_failure else (lambda exc: False)
-
-        return object_kinds._with_design_view(
-            dispatcher,
-            kind,
-            object_name,
-            save_flag=1,
-            work=inner,
-            on_error=on_error,
-            default=False,
-        )
-
-    results: dict[str, bool] = {}
-    for prop_name, value in properties.items():
-        results[prop_name] = work_for_prop(prop_name, value)
-    return results
+    """Set multiple properties of a form/report transactionally."""
+    return _set_object_property_batch(
+        dispatcher,
+        kind,
+        object_name,
+        properties,
+        lambda obj, name: obj.Properties(name),
+        "set_properties",
+        log_object_failure,
+    )
 
 
 def set_form_properties(dispatcher, form_name: str, properties: dict[str, Any]) -> dict[str, bool]:
@@ -333,40 +397,23 @@ def _set_object_control_properties(
     properties: dict[str, Any],
     log_object_failure: Any = None,
 ) -> dict[str, bool]:
-    """Set multiple properties of a form/report control. Returns dict of {property_name: success}."""
-    def work_for_prop(prop_name: str, value: Any) -> bool:
-        def inner(obj):
-            if obj is None:
-                return False
-            skipped = 0
-            for i in range(obj.Controls.Count):
-                try:
-                    ctrl = obj.Controls(i)
-                    if ctrl.Name == control_name:
-                        ctrl.Properties(prop_name).Value = value
-                        return True
-                except Exception:
-                    skipped += 1
-            if skipped:
-                logger.debug("set_control_properties %s/%s[%s]: %d controls skipped", kind, object_name, control_name, skipped)
-            return False
+    """Set multiple properties of a control transactionally."""
+    def control_property(obj, prop_name):
+        for i in range(obj.Controls.Count):
+            ctrl = obj.Controls(i)
+            if ctrl.Name == control_name:
+                return ctrl.Properties(prop_name)
+        raise LookupError(control_name)
 
-        on_error = (lambda exc: (log_object_failure(kind, "set_control_properties", object_name, exc) or False)) if log_object_failure else (lambda exc: False)
-
-        return object_kinds._with_design_view(
-            dispatcher,
-            kind,
-            object_name,
-            save_flag=1,
-            work=inner,
-            on_error=on_error,
-            default=False,
-        )
-
-    results: dict[str, bool] = {}
-    for prop_name, value in properties.items():
-        results[prop_name] = work_for_prop(prop_name, value)
-    return results
+    return _set_object_property_batch(
+        dispatcher,
+        kind,
+        object_name,
+        properties,
+        control_property,
+        "set_control_properties",
+        log_object_failure,
+    )
 
 
 def set_control_properties(dispatcher, form_name: str, control_name: str, properties: dict[str, Any]) -> dict[str, bool]:
@@ -733,35 +780,16 @@ def _set_object_section_properties(
     properties: dict[str, Any],
     log_object_failure: Any = None,
 ) -> dict[str, bool]:
-    """Set multiple properties of a form/report section. Returns dict of {property_name: success}."""
-    def work_for_prop(prop_name: str, value: Any) -> bool:
-        def inner(obj):
-            if obj is None:
-                return False
-            try:
-                section = obj.Section(section_id)
-                section.Properties(prop_name).Value = value
-                return True
-            except Exception as exc:
-                logger.debug("set_section_property %s/%s[%s].%s failed: %s", kind, object_name, section_id, prop_name, exc)
-                return False
-
-        on_error = (lambda exc: (log_object_failure(kind, "set_section_properties", object_name, exc) or False)) if log_object_failure else (lambda exc: False)
-
-        return object_kinds._with_design_view(
-            dispatcher,
-            kind,
-            object_name,
-            save_flag=1,
-            work=inner,
-            on_error=on_error,
-            default=False,
-        )
-
-    results: dict[str, bool] = {}
-    for prop_name, value in properties.items():
-        results[prop_name] = work_for_prop(prop_name, value)
-    return results
+    """Set multiple properties of a form/report section transactionally."""
+    return _set_object_property_batch(
+        dispatcher,
+        kind,
+        object_name,
+        properties,
+        lambda obj, name: obj.Section(section_id).Properties(name),
+        "set_section_properties",
+        log_object_failure,
+    )
 
 
 def set_form_section_properties(dispatcher, form_name: str, section_id: int, properties: dict[str, Any]) -> dict[str, bool]:

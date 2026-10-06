@@ -54,6 +54,63 @@ class _FakeDispatcher:
         pass
 
 
+class _TransactionProperty:
+    def __init__(self, name, owner):
+        self.name = name
+        self.owner = owner
+
+    @property
+    def Value(self):
+        self.owner.events.append(("read", self.name))
+        return self.owner.values[self.name]
+
+    @Value.setter
+    def Value(self, value):
+        self.owner.events.append(("write", self.name, value))
+        if value == "FAIL" or (self.owner.fail_restore and value == "old-first"):
+            raise RuntimeError("injected property failure")
+        self.owner.values[self.name] = value
+
+
+class _TransactionProperties:
+    def __init__(self, owner):
+        self.owner = owner
+
+    def __call__(self, name):
+        return _TransactionProperty(name, self.owner)
+
+
+class _TransactionTarget:
+    def __init__(self, initial, fail_restore=False):
+        self.values = dict(initial)
+        self.events = []
+        self.fail_restore = fail_restore
+        self.Properties = _TransactionProperties(self)
+
+
+class _TransactionControl(_TransactionTarget):
+    Name = "btn1"
+
+
+class _TransactionLiveObject(_TransactionTarget):
+    def __init__(self, fail_restore=False):
+        super().__init__({"First": "old-first", "Second": "old-second"}, fail_restore)
+        self.control = _TransactionControl(
+            {"First": "old-first", "Second": "old-second"}, fail_restore
+        )
+        self.controls = _FakeControlsColl([self.control])
+        self.section = _TransactionTarget(
+            {"First": "old-first", "Second": "old-second"}, fail_restore
+        )
+
+    @property
+    def Controls(self):
+        return self.controls
+
+    def Section(self, section_id):
+        return self.section
+
+
 class _FakePropItem:
     """Fake property item exposing .Name and a recording .Value."""
 
@@ -238,7 +295,7 @@ _SINGLE_SECTION = {"form": "set_form_section_property", "report": "set_report_se
 _MULTI_SECTION = {"form": "set_form_section_properties", "report": "set_report_section_properties"}
 
 
-def _make_adapter(live: _FakeLiveObject):
+def _make_adapter(live: Any):
     """Wire an adapter to a fake dispatcher serving the given live object."""
     adapter = AccessAdapter("test.accdb")
     adapter._connected = True
@@ -280,15 +337,15 @@ class TestSetObjectPropertyMirror:
         method = getattr(adapter, _MULTI_PROP[kind])
         result = method("Obj1", {"Caption": "A", "RecordSource": "T"})
 
-        assert result == {"Caption": True, "RecordSource": True}
-        # One open/close cycle PER property — pinned legacy behavior.
-        assert adapter._dispatcher.access_app.DoCmd.calls == [
-            (tok["open"], "Obj1", 1),
-            ("Close", tok["ac"], "Obj1", 1),
-            (tok["open"], "Obj1", 1),
-            ("Close", tok["ac"], "Obj1", 1),
-        ]
-        assert live_calls == [(tok["live"], "Obj1"), (tok["live"], "Obj1")]
+        expected = {"Caption": True, "RecordSource": True}
+        if kind == "form":
+            expected["rolled_back"] = False
+        assert result == expected
+        expected_calls = [(tok["open"], "Obj1", 1), ("Close", tok["ac"], "Obj1", 1)]
+        if kind == "report":
+            expected_calls *= 2
+        assert adapter._dispatcher.access_app.DoCmd.calls == expected_calls
+        assert live_calls == [(tok["live"], "Obj1")] * (1 if kind == "form" else 2)
         assert live.writes == [("Caption", "A"), ("RecordSource", "T")]
 
 
@@ -341,13 +398,14 @@ class TestControlPropertyMirror:
         method = getattr(adapter, _SET_CTRL_PROPS[kind])
         result = method("Obj1", "btn1", {"Caption": "A", "Visible": True})
 
-        assert result == {"Caption": True, "Visible": True}
-        assert adapter._dispatcher.access_app.DoCmd.calls == [
-            (tok["open"], "Obj1", 1),
-            ("Close", tok["ac"], "Obj1", 1),
-            (tok["open"], "Obj1", 1),
-            ("Close", tok["ac"], "Obj1", 1),
-        ]
+        expected = {"Caption": True, "Visible": True}
+        if kind == "form":
+            expected["rolled_back"] = False
+        assert result == expected
+        expected_calls = [(tok["open"], "Obj1", 1), ("Close", tok["ac"], "Obj1", 1)]
+        if kind == "report":
+            expected_calls *= 2
+        assert adapter._dispatcher.access_app.DoCmd.calls == expected_calls
         assert live._controls[0].writes == [("Caption", "A"), ("Visible", True)]
 
 
@@ -443,12 +501,67 @@ class TestSetSectionPropertyMirror:
         method = getattr(adapter, _MULTI_SECTION[kind])
         result = method("Obj1", 0, {"Height": "1000", "Visible": True})
 
-        assert result == {"Height": True, "Visible": True}
+        expected = {"Height": True, "Visible": True}
+        if kind == "form":
+            expected["rolled_back"] = False
+        assert result == expected
         section = live.Section(0)
         assert section.writes == [("Height", "1000"), ("Visible", True)]
-        assert adapter._dispatcher.access_app.DoCmd.calls == [
-            (tok["open"], "Obj1", 1),
-            ("Close", tok["ac"], "Obj1", 1),
-            (tok["open"], "Obj1", 1),
-            ("Close", tok["ac"], "Obj1", 1),
-        ]
+        expected_calls = [(tok["open"], "Obj1", 1), ("Close", tok["ac"], "Obj1", 1)]
+        if kind == "report":
+            expected_calls *= 2
+        assert adapter._dispatcher.access_app.DoCmd.calls == expected_calls
+
+
+@pytest.mark.parametrize("batch_kind", ["properties", "control", "section"])
+@pytest.mark.parametrize("fail_restore", [False, True])
+def test_batch_property_failure_restores_snapshot(batch_kind, fail_restore, caplog):
+    live = _TransactionLiveObject(fail_restore=fail_restore)
+    adapter, _ = _make_adapter(live)
+    if batch_kind == "properties":
+        result = adapter.set_form_properties(
+            "Obj1", {"First": "new-first", "Second": "FAIL"}
+        )
+        target = live
+    elif batch_kind == "control":
+        result = adapter.set_control_properties(
+            "Obj1", "btn1", {"First": "new-first", "Second": "FAIL"}
+        )
+        target = live.control
+    else:
+        result = adapter.set_form_section_properties(
+            "Obj1", 0, {"First": "new-first", "Second": "FAIL"}
+        )
+        target = live.section
+
+    assert result == {"First": True, "Second": False, "rolled_back": True}
+    assert target.events[:2] == [("read", "First"), ("read", "Second")]
+    assert ("write", "First", "old-first") in target.events
+    close = [call for call in adapter._dispatcher.access_app.DoCmd.calls if call[0] == "Close"]
+    assert close == [("Close", 2, "Obj1", 2 if fail_restore else 1)]
+    if fail_restore:
+        assert "restore" in caplog.text.lower()
+
+
+@pytest.mark.parametrize("batch_kind", ["properties", "control", "section"])
+def test_batch_property_success_does_not_restore(batch_kind):
+    live = _TransactionLiveObject()
+    adapter, _ = _make_adapter(live)
+    if batch_kind == "properties":
+        result = adapter.set_form_properties(
+            "Obj1", {"First": "new-first", "Second": "new-second"}
+        )
+        target = live
+    elif batch_kind == "control":
+        result = adapter.set_control_properties(
+            "Obj1", "btn1", {"First": "new-first", "Second": "new-second"}
+        )
+        target = live.control
+    else:
+        result = adapter.set_form_section_properties(
+            "Obj1", 0, {"First": "new-first", "Second": "new-second"}
+        )
+        target = live.section
+
+    assert result == {"First": True, "Second": True, "rolled_back": False}
+    assert not any(event[0] == "write" and event[2].startswith("old-") for event in target.events)
