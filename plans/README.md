@@ -839,3 +839,14 @@ its own generate_sql pass, odbc_schema_reader) plus consumers in
 migration/sql_generator/db_analysis — Step 1 builds the orientation
 matrix before any fix.
 
+## Plan 098: E5 form-creation follow-up (2026-10-05)
+
+Gate-session follow-up: repair `create_form`/`create_report` against
+live Access (ledger E5(a) — `DoCmd.CreateForm` does not exist, the name
+is never applied), make listing failures loud (E5(c) concern), and
+unblock gates 092(a)/(c) with a permanent marker-gated lifecycle test.
+
+| Plan | Title | Phase | Priority | Effort | Risk | Mode | Depends on | Status |
+|------|-------|-------|----------|--------|------|------|------------|--------|
+| 098  | [Form/report creation repaired against live Access](098-form-creation-live.md) | 37 | P1 | M | MED | Live naming matrix + strict TDD + live acceptance | 092, E5 | TODO |
+
