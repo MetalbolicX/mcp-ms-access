@@ -11,7 +11,7 @@ stop after each task for review.
 
 - [x] T1 docs/01-architecture.md — as-built architecture derived from code
 - [x] T2 docs/02-contracts.md — command/error/limits contract catalogue
-- [ ] T3 docs/03-safety-and-configuration.md — consolidated safety model, deduplicated against README
+- [x] T3 docs/03-safety-and-configuration.md — consolidated safety model, deduplicated against README
 - [ ] T4 Cross-references README <-> docs + consistency readback
 - [ ] T5 Final verification + work-unit commit closure
 
@@ -48,3 +48,14 @@ stop after each task for review.
   errors.py:34/54/90, tool_budget core<=30. Passive docs: structural
   verification only. Work-unit commit recorded in git history on
   docs/as-built-consolidation (T2 commit; hash backfilled below).
+- T3: residual evidence gathered inline (env-var inventory grep, crash-recovery
+  spec read, backend selector read, doctor check map, README section map);
+  parent wrote docs/03-safety-and-configuration.md (162 lines, 10 sections):
+  5-env-var complete table, safety invariants + honest boundaries, backend
+  capability model (COM-only caps), credentials storage security, crash
+  resilience model (5-rung ladder + auto-session invariants + g13 matrix),
+  7 doctor checks, distribution surface, dedupe map README<->docs, 4
+  unverified claims. Spot-checks verified safety.py:15/62, profiles.py:84/130,
+  credentials.py:13, automation.py:68/76, backends __init__ 80/121,
+  opencode_config.py:173/307, database.py:182/187. Passive docs: structural
+  verification only. Work-unit commit on docs/as-built-consolidation.
