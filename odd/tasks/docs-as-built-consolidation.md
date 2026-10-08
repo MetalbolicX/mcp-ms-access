@@ -13,7 +13,7 @@ stop after each task for review.
 - [x] T2 docs/02-contracts.md — command/error/limits contract catalogue
 - [x] T3 docs/03-safety-and-configuration.md — consolidated safety model, deduplicated against README
 - [x] T4 Cross-references README <-> docs + consistency readback
-- [ ] T5 Final verification + work-unit commit closure
+- [x] T5 Final verification + work-unit commit closure
 
 ## Constraints
 
@@ -67,3 +67,13 @@ stop after each task for review.
   not fixed (docs-only scope): cli.py:1478 help 5-vs-8 profiles drift
   (docs/01 item 6, docs/02 item 5); kernel DaoOperationError dead
   (docs/02 item 2). Work-unit commit on docs/as-built-consolidation.
+- T5 (closure, 2026-10-08): verification passed — 4 work-unit commits
+  (42f29bd, 41bb76e, 82d1473, 2bec675) + this closure commit; scope proof:
+  575 insertions across 5 files, ZERO files under src/tests/scripts/
+  pyproject.toml, so the runtime qualify gate is inapplicable (passive
+  docs); structural readback: docs 170/161/162 lines, 9/9/10 sections,
+  README 176 lines, 0 forthcoming, links resolve, numbers consistent.
+  Discrepancies left recorded for future source plans: cli.py:1478 help
+  drift; kernel DaoOperationError dead. Merge/push: user decision.
+
+## Status: CLOSED (all 5 tasks done, feature delivered on branch)
