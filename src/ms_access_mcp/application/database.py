@@ -15,7 +15,15 @@ from typing import Any, Literal, cast
 from ..backends import DATA_READ_CAPS, BackendSelector
 from ..backends.format_detector import AccessFormat, detect_access_format
 from ..credentials import contains_credential, resolve_profile
-from ..errors import Err, Ok, Result, err, ok, strip_password  # noqa: F401 — re-exported for backward compatibility
+from ..errors import (  # noqa: F401 — re-exported for backward compatibility
+    DaoOperationError,
+    Err,
+    Ok,
+    Result,
+    err,
+    ok,
+    strip_password,
+)
 from ..models import QueryResult, RelationshipResult, WriteResult
 from ..safety import WritePolicy, is_path_allowed
 from . import session_backup as _session_backup
@@ -34,6 +42,14 @@ from .db_export import export_data as _export_data
 _ok = ok  # backward-compat aliases; remove in a later cleanup
 _err = err
 _logger = logging.getLogger(__name__)
+
+
+def _operation_error(e: BaseException) -> Err:
+    """Build a sanitized operation error, labeling typed DAO failures."""
+    message = strip_password(str(e))
+    if isinstance(e, DaoOperationError):
+        return _err(f"DAO operation failed: {message}")
+    return _err(message)
 
 
 def _get_lock_file(db_path: str) -> str | None:
@@ -221,7 +237,7 @@ class DatabaseUseCases:
                 self._active_connection = "default"
             result: Result = _ok()
         except Exception as e:
-            result = _err(str(e))
+            result = _operation_error(e)
         finally:
             # Always cleanup session backup in finally — even on partial failures.
             # Belt-and-suspenders: the server.py lifespan also cleans up open connections.
@@ -285,7 +301,7 @@ class DatabaseUseCases:
                 table.pop("record_count", None)
             return _ok(data=table_data, rowcount=len(tables))
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def get_system_tables(self, connection_name: str = "default") -> Result:
         """Get list of system tables.
@@ -303,7 +319,7 @@ class DatabaseUseCases:
             tables = adapter.get_system_tables()
             return _ok(data=tables, rowcount=len(tables))
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def get_schemas_for(
         self, table_names: list[str], connection_name: str = "default"
@@ -326,7 +342,7 @@ class DatabaseUseCases:
                 schemas[table_name] = schema
             return _ok(data=schemas)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def get_table_schema(self, table_name: str, connection_name: str = "default") -> Result:
         """Get schema for a table (composed from get_tables per oracle mcp/schema.py)."""
@@ -342,7 +358,7 @@ class DatabaseUseCases:
                     return _ok(data=schema)
             return _err(f"Table '{table_name}' not found")
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def get_indexes(self, table_name: str, connection_name: str = "default") -> Result:
         """Get indexes for a table.
@@ -361,7 +377,7 @@ class DatabaseUseCases:
             indexes = adapter.get_indexes(table_name)
             return _ok(data=[dataclasses.asdict(i) for i in indexes], rowcount=len(indexes))
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def get_relationships(self, connection_name: str = "default") -> Result:
         """Get all relationships.
@@ -379,7 +395,7 @@ class DatabaseUseCases:
             rels = adapter.get_relationships()
             return _ok(data=[dataclasses.asdict(r) for r in rels], rowcount=len(rels))
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def get_object_metadata(self, object_name: str, _object_type: str = "table", connection_name: str = "default") -> Result:
         """Get metadata for an object.
@@ -399,7 +415,7 @@ class DatabaseUseCases:
             meta = adapter.get_object_metadata(object_name)
             return _ok(data=dataclasses.asdict(meta) if meta is not None else {})
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def get_queries(self, connection_name: str = "default") -> Result:
         """Get list of saved queries.
@@ -418,7 +434,7 @@ class DatabaseUseCases:
             queries = adapter.get_queries()
             return _ok(data=[asdict(q) for q in queries], rowcount=len(queries))
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def get_database_properties(self, connection_name: str = "default") -> Result:
         """Get database properties.
@@ -464,7 +480,7 @@ class DatabaseUseCases:
             linked = adapter.get_linked_tables()
             return _ok(data=linked, rowcount=len(linked))
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     # -------------------------------------------------------------------------
     # Query Operations
@@ -495,7 +511,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def set_query_sql(self, query_name: str, sql: str, connection_name: str = "default", confirm: bool = False) -> Result:
         """Update SQL for a saved query.
@@ -522,7 +538,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def delete_query(self, query_name: str, connection_name: str = "default", confirm: bool = False) -> Result:
         """Delete a saved query.
@@ -548,7 +564,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def query_data(
         self,
@@ -586,7 +602,7 @@ class DatabaseUseCases:
                 return _ok(data=result, rowcount=len(result))
             return _ok(data=result, rowcount=len(result) if result else 0)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def execute_action_sql(
         self,
@@ -611,7 +627,7 @@ class DatabaseUseCases:
         except (NotImplementedError, AttributeError) as e:
             return _err(f"Backend does not support raw action SQL: {e}")
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     # -------------------------------------------------------------------------
     # Data Modification
@@ -649,7 +665,7 @@ class DatabaseUseCases:
             rowcount = result.affected
             return _ok(rowcount=rowcount)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def update_data(
         self,
@@ -685,7 +701,7 @@ class DatabaseUseCases:
             rowcount = result.affected
             return _ok(rowcount=rowcount)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def delete_data(
         self,
@@ -719,7 +735,7 @@ class DatabaseUseCases:
             rowcount = result.affected
             return _ok(rowcount=rowcount)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     # -------------------------------------------------------------------------
     # DDL Operations
@@ -769,7 +785,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def alter_table(
         self,
@@ -813,7 +829,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def delete_table(self, table_name: str, connection_name: str = "default", confirm: bool = False) -> Result:
         """Delete a table.
@@ -839,7 +855,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def create_index(
         self,
@@ -876,7 +892,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def drop_index(self, table_name: str, index_name: str, connection_name: str = "default", confirm: bool = False) -> Result:
         """Drop an index from a table.
@@ -903,7 +919,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def create_relationship(
         self,
@@ -942,7 +958,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def delete_relationship(self, relationship_name: str, connection_name: str = "default", confirm: bool = False) -> Result:
         """Delete a relationship.
@@ -968,7 +984,7 @@ class DatabaseUseCases:
                 return _err(failed)
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     # -------------------------------------------------------------------------
     # Export helpers
@@ -1132,7 +1148,7 @@ class DatabaseUseCases:
                 return _err(raw_error)
             return _ok(rowcount=1)
         except Exception as e:
-            raw = strip_password(str(e))
+            raw = _operation_error(e).message
             if resolved and resolved in raw:
                 raw = raw.replace(resolved, "***")
             return _err(raw)
@@ -1179,7 +1195,7 @@ class DatabaseUseCases:
                 return _err(raw_error)
             return _ok(rowcount=1)
         except Exception as e:
-            raw = strip_password(str(e))
+            raw = _operation_error(e).message
             if resolved and resolved in raw:
                 raw = raw.replace(resolved, "***")
             return _err(raw)
@@ -1213,7 +1229,7 @@ class DatabaseUseCases:
                 return _err(result.get("error", "unlink_table failed"))
             return _ok(rowcount=1)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)
 
     def upsert_linked_table(
         self,
@@ -1259,7 +1275,7 @@ class DatabaseUseCases:
                 return _err(raw_error)
             return _ok(rowcount=1)
         except Exception as e:
-            raw = strip_password(str(e))
+            raw = _operation_error(e).message
             if resolved and resolved in raw:
                 raw = raw.replace(resolved, "***")
             return _err(raw)
@@ -1364,4 +1380,4 @@ class DatabaseUseCases:
             result = execute_script(sql)
             return _ok(data=result)
         except Exception as e:
-            return _err(str(e))
+            return _operation_error(e)

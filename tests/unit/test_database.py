@@ -1246,3 +1246,49 @@ class TestCreateLinkedTableErrorScrub:
         # than substituted with a marker; the non-secret remainder survives.
         assert "PWD=" not in result.message.upper()
         assert "ODBC;Server=srv" in result.message
+
+
+class TestOperationErrorEnvelopes:
+    def test_dao_operation_error_gets_typed_prefix(self):
+        from ms_access_mcp.errors import DaoOperationError
+
+        class FailingAdapter:
+            def get_tables(self):
+                raise DaoOperationError("op boom")
+
+        db = DatabaseUseCases()
+        db._connections["default"] = FailingAdapter()
+
+        result = db.get_tables()
+
+        assert isinstance(result, Err)
+        assert result.message.startswith("DAO operation failed:")
+        assert "op boom" in result.message
+
+    def test_generic_operation_error_scrubs_password_at_boundary(self):
+        class FailingAdapter:
+            def get_tables(self):
+                raise Exception("cannot open; PWD=hunter2; provider=ACE")
+
+        db = DatabaseUseCases()
+        db._connections["default"] = FailingAdapter()
+
+        result = db.get_tables()
+
+        assert isinstance(result, Err)
+        assert "PWD=" not in result.message
+        assert "hunter2" not in result.message
+
+    def test_generic_operation_error_does_not_get_dao_prefix(self):
+        class FailingAdapter:
+            def get_tables(self):
+                raise Exception("plain failure")
+
+        db = DatabaseUseCases()
+        db._connections["default"] = FailingAdapter()
+
+        result = db.get_tables()
+
+        assert isinstance(result, Err)
+        assert "plain failure" in result.message
+        assert not result.message.startswith("DAO operation failed:")

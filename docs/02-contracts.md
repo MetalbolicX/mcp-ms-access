@@ -1,7 +1,8 @@
 # 02 — Contracts (as-built)
 
-> **As-built snapshot** of the contracts surface (updated 2026-10-08 on
-> `fix/dao-error-unification`: DAO error unification). Describes what
+> **As-built snapshot** of the contracts surface (updated 2026-10-08: DAO
+> error unification on `fix/dao-error-unification`, operation-path typing on
+> `fix/db-op-error-typing`). Describes what
 > the code enforces today, with file references. Architecture context lives in
 > `docs/01-architecture.md`.
 
@@ -33,21 +34,26 @@ with `ok()/err()` helpers.
 |---|---|---|
 | `BackendUnavailableError` | DAO requested off-Windows; COM on Linux; connector lacks migration support | `backends/__init__.py:156,174`; `application/migration.py:54,69,81` |
 | `BackendCapabilityMismatchError` | `ACCESS_MCP_BACKEND=odbc` vs COM-only capability; ODBC unsupported ops (incl. `execute_raw_sql`, `execute_script`) | `backends/__init__.py:147,183`; `odbc.py:344-473,526,531` |
-| `DaoOperationError` | DAO operation failures raised by the DAO backend at five sites (connect-path and query/mutation paths) with scrubbed messages; typed catch in the adapter lifecycle yields `Err("DAO operation failed: …")` | `errors.py:102`; `dao.py:143,178,431,480,851`; `_adapter_lifecycle.py:76-78` |
+| `DaoOperationError` | DAO operation failures raised by the DAO backend at five sites (connect-path and query/mutation paths) with scrubbed messages; typed catch in the adapter lifecycle and the `_operation_error` envelope helper on the operation path yield `Err("DAO operation failed: …")` | `errors.py:102`; `dao.py:143,178,431,480,851`; `_adapter_lifecycle.py:76-78`; `database.py:47-52` |
 | `AccessObjectNotFoundError` | `"{kind} '{name}' not found"` | `errors.py:112`; `object_kinds.py:214-218` |
 | `AccessBackendError` | `"{op} '{name}' failed: {detail}"` | `errors.py:122` |
 
 Backend exceptions surface as `Err(f"Backend unavailable: {e}")` through the
 adapter lifecycle (`application/_adapter_lifecycle.py:70-81`); `DaoOperationError`
 is the typed exception and yields `Err("DAO operation failed: …")` (`:76-78`).
-Honest boundary: operation-path handlers in `application/database.py` still
-catch generically; retyping them is a recorded follow-up, not implemented.
+On the operation path, every generic handler in `database.py` routes through
+`_operation_error` (`:47-52`): typed DAO failures are labeled
+`DAO operation failed:` and **all operation envelopes are scrubbed at the
+boundary** — password hygiene no longer depends on each backend remembering
+to scrub at raise time. Remaining boundary: other application modules
+(automation, maintenance, migration, db_admin, db_export) still catch
+generically — recorded follow-up.
 
 **Password scrubbing guarantee.** `strip_password` removes `PWD=`,
 `Password=`, `Jet OLEDB:Database Password=` (case-insensitive) and trailing
 `;` (`errors.py:10-31`). Applied at DAO/ODBC error boundaries, connect
 failures, linked-table and doctor paths (representative: `dao.py:480,851`;
-`odbc.py:124,144`; `application/database.py:196-200,1135-1137`).
+`odbc.py:124,144`; `application/database.py:47-52,212-216`).
 **Known hole:** free SQL text cannot be scrubbed (`README.md:104`) — see the
 credentials hard-reject rule below.
 
@@ -60,11 +66,11 @@ Write safety is layered (checked before any write executes):
 2. **Write policy** — `WritePolicy` defaults `readonly=True`;
    `require_acknowledgment(op, confirm=False)` returns an error string unless
    `confirm` (`safety.py:77-97`). Checked by every write use case
-   (`application/database.py:485-958` passim; `automation.py:64-66`).
+   (`application/database.py:501-1000` passim; `automation.py:64-66`).
 3. **Tool-level confirm** — write cohort tools take `confirm: bool = False`;
    `execute_raw_sql` with `confirm=False` fails immediately with
    `"write policy blocks this; pass confirm=True and enable writes"`
-   (`mcp_tools/core.py:270-281`; use case `application/database.py:598-601`).
+   (`mcp_tools/core.py:270-281`; use case `application/database.py:614-617`).
    The ODBC backend hard-refuses raw SQL regardless (`odbc.py:523-526`).
 4. **VBA/macro opt-in** — `ACCESS_MCP_ENABLE_VBA_WRITES` must casefold to
    `1|true|yes` (`application/automation.py:68-76`), default off. Gates 10
@@ -79,9 +85,9 @@ Write safety is layered (checked before any write executes):
 | Profile tool budget | 8 profiles must register ≥1 tool; **core ≤ 30** (hard fail); cross-profile warnings | `scripts/tool_budget.py:12,56-87` |
 | COM dispatch timeout | 120 s per call (`TimeoutError`) | `backends/dispatcher.py:43,101` |
 | Dispatcher shutdown | 15 s join; 5/10 s tasklist/taskkill subprocess timeouts | `dispatcher.py:272,286,305` |
-| Query row cap | **None by default** — `limit: int \| None = None`; DAO rewrites `SELECT … TOP {n}` and slices results | `application/database.py:557`; `dao.py:352-362,392-393` |
-| Export caps | Sheet name ≤ 31 chars; guarded out-path; **no row cap** | `database.py:978,1005-1006` |
-| Connections | No count cap; reopening disconnects the previous handle | `database.py:92-93,116-122` |
+| Query row cap | **None by default** — `limit: int \| None = None`; DAO rewrites `SELECT … TOP {n}` and slices results | `application/database.py:573`; `dao.py:352-362,392-393` |
+| Export caps | Sheet name ≤ 31 chars; guarded out-path; **no row cap** | `database.py:1006,1021` |
+| Connections | No count cap; reopening disconnects the previous handle | `database.py:108,132-140` |
 
 Session semantics: `connect_access` persists until `disconnect_access`;
 other core tools open per-call sessions closed by decorator
@@ -116,7 +122,7 @@ flags: `--db --backend --json --yes --allow-write` (`cli.py:40-46`).
   (`mcp_tools/automation.py:329-333`).
 - Database reference is `path: str` (absolute `.accdb`/`.mdb`); the use-case
   layer adds `connection_name="default"`. Linked tables use `connect_ref`;
-  migration tools use `connection_ref` (`database.py:558,1095-1107`;
+  migration tools use `connection_ref` (`database.py:573,1094-1122`;
   `migration.py:181+`).
 - Representative shapes (`core.py:245-420`):
   - `query_data(path, sql, params: list | None, limit)`
@@ -136,7 +142,7 @@ flags: `--db --backend --json --yes --allow-write` (`cli.py:40-46`).
   only; `None` if missing; never raises.
 - **Hard-reject rule** — SQL text matching `PWD=`, `Password=`,
   `Jet OLEDB:Database Password=` is rejected, never executed: linked tables
-  (`database.py:1077-1082`), migration (`migration.py:194-199`); ambiguous
+  (`database.py:1094-1100`), migration (`migration.py:194-199`); ambiguous
   ref+string is rejected (`migration.py:181-185`); unknown profile yields Err
   with remediation (`migration.py:187-193`).
 - **Storage guarantees**: atomic writes with NT DACL hardening
@@ -147,9 +153,10 @@ flags: `--db --backend --json --yes --allow-write` (`cli.py:40-46`).
 1. Argparse usage errors exiting with code 2 is standard behavior, not
    observed in source (`SystemExit` path).
 2. ~~Kernel `errors.DaoOperationError` appears dead~~ — **resolved
-   2026-10-08** (`fix/dao-error-unification`): the kernel class is now the
-   single `DaoOperationError`, raised by the DAO backend and typed-caught in
-   `_adapter_lifecycle.py:76-78`.
+   2026-10-08** (`fix/dao-error-unification` + `fix/db-op-error-typing`):
+   the kernel class is now the single `DaoOperationError`, raised by the DAO
+   backend, typed-caught in `_adapter_lifecycle.py:76-78`, and typed-labeled
+   on the operation path via `database.py` `_operation_error` (`:47-52`).
 3. Exact per-profile tool counts require building the server
    (`tool_budget.py` execution out of scope for this snapshot).
 4. `_classify_object_failure` not-found condition only partially reviewed
