@@ -81,7 +81,7 @@ The boundary test does not cover these; treat them as accepted caveats:
   dedicated daemon thread (`ComDispatcher-STA`). All COM handles are created
   and released on that thread only; other threads enqueue calls with a 120 s
   dispatch timeout.
-- **Adapters own or inject the dispatcher** (`dao.py:122-168`);
+- **Adapters own or inject the dispatcher** (`dao.py:113-151`);
   `AdapterLifecycle` (`application/_adapter_lifecycle.py:26`) implements
   reuse-or-reconnect with idempotent close for use cases.
 - **MCP session registry**: `SessionRegistry` (`mcp_tools/_session_registry.py:27`)

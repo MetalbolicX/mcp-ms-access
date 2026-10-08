@@ -1,5 +1,6 @@
 from ms_access_mcp import backends
 from ms_access_mcp.application._adapter_lifecycle import AdapterLifecycle
+from ms_access_mcp.errors import AccessMcpError, DaoOperationError, Err
 
 
 class DaoLikeFake:
@@ -79,3 +80,28 @@ def test_close_without_adapter_is_noop() -> None:
     consumer._adapter = None
 
     consumer.close()
+
+
+def test_dao_operation_error_is_shared_with_kernel() -> None:
+    from ms_access_mcp.backends.dao import DaoOperationError as backend_err  # noqa: N813
+    from ms_access_mcp.errors import DaoOperationError as kernel_err  # noqa: N813
+
+    assert backend_err is kernel_err
+    assert issubclass(kernel_err, AccessMcpError)
+
+
+def test_lazy_adapter_dao_connect_error_has_typed_message(monkeypatch) -> None:
+    class AdapterWithDaoConnectError(DaoLikeFake):
+        def connect(self, db_path: str | None = None, /) -> None:
+            raise DaoOperationError("connect boom")
+
+    adapter = AdapterWithDaoConnectError()
+    consumer = LifecycleConsumer(adapter)
+    consumer._adapter = None
+    monkeypatch.setattr(backends.BackendSelector, "get_adapter", lambda **kwargs: adapter)
+
+    result = consumer._ensure_adapter()
+
+    assert isinstance(result, Err)
+    assert result.message.startswith("DAO operation failed:")
+    assert "connect boom" in result.message

@@ -1,7 +1,7 @@
 # 02 — Contracts (as-built)
 
-> **As-built snapshot** of the contracts surface at branch
-> `docs/as-built-consolidation` (after `42f29bd`, 2026-10-08). Describes what
+> **As-built snapshot** of the contracts surface (updated 2026-10-08 on
+> `fix/dao-error-unification`: DAO error unification). Describes what
 > the code enforces today, with file references. Architecture context lives in
 > `docs/01-architecture.md`.
 
@@ -33,17 +33,20 @@ with `ok()/err()` helpers.
 |---|---|---|
 | `BackendUnavailableError` | DAO requested off-Windows; COM on Linux; connector lacks migration support | `backends/__init__.py:156,174`; `application/migration.py:54,69,81` |
 | `BackendCapabilityMismatchError` | `ACCESS_MCP_BACKEND=odbc` vs COM-only capability; ODBC unsupported ops (incl. `execute_raw_sql`, `execute_script`) | `backends/__init__.py:147,183`; `odbc.py:344-473,526,531` |
-| `DaoOperationError` (kernel) | **No raise site found — appears dead**; a *separate* `DaoOperationError(Exception)` in `dao.py:93` is raised with scrubbed messages and falls into generic handlers | `errors.py:102`; `dao.py:152,187,440,489` |
+| `DaoOperationError` | DAO operation failures raised by the DAO backend at five sites (connect-path and query/mutation paths) with scrubbed messages; typed catch in the adapter lifecycle yields `Err("DAO operation failed: …")` | `errors.py:102`; `dao.py:143,178,431,480,851`; `_adapter_lifecycle.py:76-78` |
 | `AccessObjectNotFoundError` | `"{kind} '{name}' not found"` | `errors.py:112`; `object_kinds.py:214-218` |
 | `AccessBackendError` | `"{op} '{name}' failed: {detail}"` | `errors.py:122` |
 
 Backend exceptions surface as `Err(f"Backend unavailable: {e}")` through the
-adapter lifecycle (`application/_adapter_lifecycle.py:69-77`).
+adapter lifecycle (`application/_adapter_lifecycle.py:70-81`); `DaoOperationError`
+is the typed exception and yields `Err("DAO operation failed: …")` (`:76-78`).
+Honest boundary: operation-path handlers in `application/database.py` still
+catch generically; retyping them is a recorded follow-up, not implemented.
 
 **Password scrubbing guarantee.** `strip_password` removes `PWD=`,
 `Password=`, `Jet OLEDB:Database Password=` (case-insensitive) and trailing
 `;` (`errors.py:10-31`). Applied at DAO/ODBC error boundaries, connect
-failures, linked-table and doctor paths (representative: `dao.py:489,860`;
+failures, linked-table and doctor paths (representative: `dao.py:480,851`;
 `odbc.py:124,144`; `application/database.py:196-200,1135-1137`).
 **Known hole:** free SQL text cannot be scrubbed (`README.md:104`) — see the
 credentials hard-reject rule below.
@@ -76,7 +79,7 @@ Write safety is layered (checked before any write executes):
 | Profile tool budget | 8 profiles must register ≥1 tool; **core ≤ 30** (hard fail); cross-profile warnings | `scripts/tool_budget.py:12,56-87` |
 | COM dispatch timeout | 120 s per call (`TimeoutError`) | `backends/dispatcher.py:43,101` |
 | Dispatcher shutdown | 15 s join; 5/10 s tasklist/taskkill subprocess timeouts | `dispatcher.py:272,286,305` |
-| Query row cap | **None by default** — `limit: int \| None = None`; DAO rewrites `SELECT … TOP {n}` and slices results | `application/database.py:557`; `dao.py:361-371,401-402` |
+| Query row cap | **None by default** — `limit: int \| None = None`; DAO rewrites `SELECT … TOP {n}` and slices results | `application/database.py:557`; `dao.py:352-362,392-393` |
 | Export caps | Sheet name ≤ 31 chars; guarded out-path; **no row cap** | `database.py:978,1005-1006` |
 | Connections | No count cap; reopening disconnects the previous handle | `database.py:92-93,116-122` |
 
@@ -143,8 +146,10 @@ flags: `--db --backend --json --yes --allow-write` (`cli.py:40-46`).
 
 1. Argparse usage errors exiting with code 2 is standard behavior, not
    observed in source (`SystemExit` path).
-2. Kernel `errors.DaoOperationError` appears dead (no raise site found);
-   absence is not proof across dynamic dispatch.
+2. ~~Kernel `errors.DaoOperationError` appears dead~~ — **resolved
+   2026-10-08** (`fix/dao-error-unification`): the kernel class is now the
+   single `DaoOperationError`, raised by the DAO backend and typed-caught in
+   `_adapter_lifecycle.py:76-78`.
 3. Exact per-profile tool counts require building the server
    (`tool_budget.py` execution out of scope for this snapshot).
 4. `_classify_object_failure` not-found condition only partially reviewed

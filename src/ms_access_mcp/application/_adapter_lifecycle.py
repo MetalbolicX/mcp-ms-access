@@ -54,7 +54,7 @@ class AdapterLifecycle(Generic[_AdapterT]):
             return _err(self._not_connected_error)
 
         from .. import backends
-        from ..errors import BackendCapabilityMismatchError, BackendUnavailableError
+        from ..errors import BackendCapabilityMismatchError, BackendUnavailableError, DaoOperationError
 
         try:
             self._adapter = cast(
@@ -73,6 +73,9 @@ class AdapterLifecycle(Generic[_AdapterT]):
         except BackendCapabilityMismatchError as e:
             self._adapter = None
             return _err(f"Backend unavailable: {e}")
+        except DaoOperationError as e:
+            self._adapter = None
+            return _err(f"DAO operation failed: {e}")
         except Exception as e:
             self._adapter = None
             return _err(f"Backend unavailable: {e}")

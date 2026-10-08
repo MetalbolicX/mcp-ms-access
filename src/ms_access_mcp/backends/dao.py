@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from types import TracebackType
 from typing import Any
 
+from ..errors import DaoOperationError
 from ..models import DatabaseStatistics, GenerateSqlResult, ObjectMetadata, QueryResult, RelationshipResult, WriteResult
 from .dao_sql import (
     _access_sql_type,
@@ -88,16 +89,6 @@ class DaoSession:
 # ============================================================================= #
 # DaoOperationError + DaoAdapter
 # ============================================================================= #
-
-
-class DaoOperationError(Exception):
-    """Raised by DaoAdapter for any DAO operation failure."""
-
-    def __init__(self, message: str, cause: BaseException | None = None) -> None:
-        """Initialize an operation error with its optional underlying cause."""
-        super().__init__(message)
-        self.message: str = message
-        self.cause: BaseException | None = cause
 
 
 class DaoAdapter:
