@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..errors import Err, Ok, Result
+from ..errors import Err, Ok, Result, operation_error
 from ..errors import err as _err
 from ..errors import ok as _ok
 from ..safety import WritePolicy, is_path_allowed
@@ -73,7 +73,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             result = getattr(self._adapter, method_name)(*args, **kwargs)
             return _ok(data=result)
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def _call_adapter_bool(self, method_name: str, *args, **kwargs) -> Err | Ok:
         if err := self._ensure_adapter():
@@ -82,7 +82,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             result = getattr(self._adapter, method_name)(*args, **kwargs)
             return _ok(data=result, rowcount=1 if result else 0)
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def _resolve_kind(self, kind: str) -> tuple[str, str, str, str] | Err:
         entry = self._KIND_METHODS.get(kind)
@@ -116,7 +116,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             output.write_bytes(data.encode("utf-8"))
             return _ok(data={"kind": kind, "name": name, "data": data, "output_path": output_path})
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def export_all(self, out_dir: str) -> Result:
         if not is_path_allowed(out_dir, self._allowed_dirs, must_exist=False):
@@ -138,7 +138,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
                 }
             )
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def import_object(self, kind: str, name: str, file_path: str, confirm: bool) -> Result:
         if err := self._dangerous(f"import_{kind}", confirm):
@@ -166,7 +166,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
             getattr(self._adapter, import_method)(name, text_data)
             return _ok(data={"kind": kind, "name": name, "input_path": file_path})
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def import_all(self, input_dir: str, confirm: bool) -> Result:
         if err := self._dangerous("import_all", confirm):
@@ -191,7 +191,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
                 }
             )
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def compare(self, export_dir: str) -> Result:
         if not is_path_allowed(export_dir, self._allowed_dirs):
@@ -214,7 +214,7 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
                 }
             )
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def export_schema_ddl(self, out_dir: str) -> Result:
         if not is_path_allowed(out_dir, self._allowed_dirs, must_exist=False):
@@ -237,4 +237,4 @@ class VersioningUseCases(AdapterLifecycle[VersioningAdapterProtocol]):
                 }
             )
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)

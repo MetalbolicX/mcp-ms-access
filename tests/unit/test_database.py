@@ -118,6 +118,13 @@ def test_linked_tables_facade_preserves_direct_list_and_counts_rows() -> None:
     assert result.rowcount == len(linked_tables)
 
 
+def test_database_operation_error_is_kernel_alias():
+    from ms_access_mcp import errors
+    from ms_access_mcp.application import database
+
+    assert database._operation_error is errors.operation_error
+
+
 class TestDatabaseUseCasesConstruction:
     """Test DatabaseUseCases initialization."""
 

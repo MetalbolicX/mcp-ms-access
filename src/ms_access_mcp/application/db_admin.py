@@ -6,7 +6,7 @@ import dataclasses
 from typing import Any, Literal, cast
 
 from ..backends import DATA_READ_CAPS, BackendSelector
-from ..errors import Result, err, ok
+from ..errors import Result, err, ok, operation_error
 
 _ok = ok
 _err = err
@@ -25,7 +25,7 @@ def get_database_properties(adapter: Any) -> Result:
         props = adapter.get_database_properties()
         return _ok(data=props)
     except Exception as e:
-        return _err(str(e))
+        return operation_error(e)
 
 
 def get_database_statistics(adapter: Any) -> Result:
@@ -41,7 +41,7 @@ def get_database_statistics(adapter: Any) -> Result:
         stats = adapter.get_database_statistics()
         return _ok(data=dataclasses.asdict(stats) if stats is not None else {})
     except Exception as e:
-        return _err(str(e))
+        return operation_error(e)
 
 
 def set_database_property(
@@ -72,7 +72,7 @@ def set_database_property(
             return _ok(rowcount=1)
         return _err("Database property write is not supported by this backend")
     except Exception as e:
-        return _err(str(e))
+        return operation_error(e)
 
 
 def create_access_database(
@@ -118,4 +118,4 @@ def create_access_database(
         cast(Any, adapter).create_database(path, format=format)
         return _ok(rowcount=1)
     except Exception as e:
-        return _err(f"create_access_database failed: {e}")
+        return operation_error(e, label="create_access_database failed")

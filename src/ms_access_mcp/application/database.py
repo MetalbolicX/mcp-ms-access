@@ -22,6 +22,7 @@ from ..errors import (  # noqa: F401 — re-exported for backward compatibility
     Result,
     err,
     ok,
+    operation_error,
     strip_password,
 )
 from ..models import QueryResult, RelationshipResult, WriteResult
@@ -44,12 +45,7 @@ _err = err
 _logger = logging.getLogger(__name__)
 
 
-def _operation_error(e: BaseException) -> Err:
-    """Build a sanitized operation error, labeling typed DAO failures."""
-    message = strip_password(str(e))
-    if isinstance(e, DaoOperationError):
-        return _err(f"DAO operation failed: {message}")
-    return _err(message)
+_operation_error = operation_error
 
 
 def _get_lock_file(db_path: str) -> str | None:

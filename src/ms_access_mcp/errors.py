@@ -129,3 +129,13 @@ class AccessBackendError(AccessMcpError):
         msg = f"{operation} '{object_name}' failed: {detail}"
         super().__init__(msg)
         self.__cause__ = cause
+
+
+def operation_error(e: BaseException, label: str | None = None) -> Err:
+    """Build a sanitized operation error with optional context or DAO labeling."""
+    message = strip_password(str(e))
+    if label is not None:
+        return err(f"{label}: {message}")
+    if isinstance(e, DaoOperationError):
+        return err(f"DAO operation failed: {message}")
+    return err(message)

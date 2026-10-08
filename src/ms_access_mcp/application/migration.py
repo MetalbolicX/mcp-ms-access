@@ -27,7 +27,7 @@ from ..backends.schema_inspector import (
     UnknownMetadata,
 )
 from ..credentials import contains_credential, resolve_profile
-from ..errors import BackendUnavailableError, Err, Result
+from ..errors import BackendUnavailableError, Err, Result, operation_error
 from ..errors import err as _err
 from ..errors import ok as _ok
 from ..models import QueryResult
@@ -267,7 +267,7 @@ class MigrationUseCases:
             return _ok(data=schema)
 
         except Exception as e:
-            return _err(_sanitize_error(str(e), "extract_schema failed"))
+            return operation_error(e, label="extract_schema failed")
 
     def _extract_dao(
         self, database_path: str
@@ -431,7 +431,7 @@ class MigrationUseCases:
         try:
             schema = ExtractedSchema.model_validate(schema_json or {})
         except Exception as e:
-            return _err(_sanitize_error(str(e), "schema"))
+            return operation_error(e, label="schema")
 
         # Get connector
         connector_result = self._get_connector(target_type, resolved or "")
@@ -539,7 +539,7 @@ class MigrationUseCases:
             try:
                 schema = ExtractedSchema.model_validate(schema_json)
             except Exception as e:
-                return _err(_sanitize_error(str(e), "schema"))
+                return operation_error(e, label="schema")
 
         if not schema.tables:
             return _err("no tables in schema to transfer")
@@ -734,9 +734,9 @@ class MigrationUseCases:
             connector = get_connector(target_type, connection_string)
             return _ok(data=connector)
         except ImportError as e:
-            return _err(_sanitize_error(str(e), "connection"))
+            return operation_error(e, label="connection")
         except Exception as e:
-            return _err(_sanitize_error(str(e), "connection"))
+            return operation_error(e, label="connection")
 
     # -------------------------------------------------------------------------
     # get_migration_status

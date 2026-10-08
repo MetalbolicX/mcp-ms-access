@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from ..errors import Err, Ok, Result
+from ..errors import Err, Ok, Result, operation_error
 from ..errors import err as _err
 from ..errors import ok as _ok
 from ..safety import WritePolicy, is_path_allowed
@@ -105,7 +105,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
             result = fn(*args, **kwargs)
             return _ok(data=result)
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def _is_disposable_path(self, path: str) -> bool:
         temp_dir = tempfile.gettempdir()
@@ -132,7 +132,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         try:
             shutil.copy2(path, backup_file)
         except Exception as e:
-            return _err(f"Cannot backup {path}: {e}")
+            return operation_error(e, label=f"Cannot backup {path}")
 
         sha256 = hashlib.sha256()
         with backup_file.open("rb") as f:
@@ -173,7 +173,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         try:
             shutil.copy2(path, backup_file)
         except Exception as e:
-            return _err(f"Cannot backup {path}: {e}")
+            return operation_error(e, label=f"Cannot backup {path}")
 
         sha256 = hashlib.sha256()
         with backup_file.open("rb") as f:
@@ -258,7 +258,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         try:
             shutil.copy2(source, dev_path)
         except Exception as e:
-            return _err(f"Cannot create dev copy: {e}")
+            return operation_error(e, label="Cannot create dev copy")
 
         manifest = {
             "production_path": source,
@@ -307,7 +307,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         try:
             shutil.copy2(dev_path, target)
         except Exception as e:
-            return _err(f"Cannot deploy dev copy: {e}")
+            return operation_error(e, label="Cannot deploy dev copy")
 
         dev_dir = Path(tempfile.gettempdir()) / "ms_access_dev"
 
@@ -419,7 +419,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
                 }
             )
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def diagnose_environment(self) -> Result:
         from .. import doctor
@@ -583,7 +583,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
         try:
             source_path.rename(corrupt_path)
         except Exception as e:
-            return _err(f"Cannot rename original file: {e}")
+            return operation_error(e, label="Cannot rename original file")
 
         fresh_adapter = None
         try:
@@ -600,7 +600,7 @@ class MaintenanceUseCases(AdapterLifecycle[MaintenanceAdapterProtocol]):
                 )
                 cast(Any, fresh_adapter).create_database(path, format=file_format)
             except Exception as e:
-                return _err(f"Cannot create fresh database at {path}: {e}")
+                return operation_error(e, label=f"Cannot create fresh database at {path}")
 
             # Salvage tables from corrupt DB using DAO backend seam
             try:

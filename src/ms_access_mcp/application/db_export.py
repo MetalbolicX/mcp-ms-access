@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ..backends.access import AccessAdapter
-from ..errors import Err, Ok, Result, err, ok
+from ..errors import Err, Ok, Result, err, ok, operation_error
 from ..models import QueryResult
 from .sql_builder import build_select
 from .xlsx_capability import IisamProviderProbe
@@ -91,7 +91,7 @@ def _query_adapter(adapter: Any, sql: str) -> Result:
             return _ok(data=result, rowcount=len(result))
         return _ok(data=result, rowcount=len(result) if result else 0)
     except Exception as e:
-        return _err(str(e))
+        return operation_error(e)
 
 
 def export_data(
@@ -184,4 +184,4 @@ def export_data(
 
         return _ok(rowcount=len(rows))
     except Exception as e:
-        return _err(str(e))
+        return operation_error(e)

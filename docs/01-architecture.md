@@ -51,7 +51,7 @@ and "no win32com in application".
 | `mcp_tools/` | One module per profile; tools wrap application use cases; per-call session closing | `mcp_tools/core.py:485-507`; `_session_registry.py:29` |
 | `application/` | Business use cases (database, analysis, automation, migration, maintenance, versioning, export); adapter lifecycle; automatic session backup | `application/database.py`; `_adapter_lifecycle.py:26`; `session_backup.py` |
 | `backends/` | Access-specific execution: COM dispatcher, DAO/SQL adapters, ODBC reader, schema inspection, format detection, Jet 3 bridge | `backends/dispatcher.py:35`; `dao.py`; `odbc.py` |
-| Kernel | Error envelope + hierarchy, path safety, profile resolution, shared models — imports nothing upward | `errors.py:34-122`; `safety.py:10-76`; `profiles.py:14-95` |
+| Kernel | Error envelope + hierarchy + boundary helper, path safety, profile resolution, shared models — imports nothing upward | `errors.py:34-140`; `safety.py:10-76`; `profiles.py:14-95` |
 
 ### Known edge cases (documented, not guarded)
 

@@ -34,26 +34,30 @@ with `ok()/err()` helpers.
 |---|---|---|
 | `BackendUnavailableError` | DAO requested off-Windows; COM on Linux; connector lacks migration support | `backends/__init__.py:156,174`; `application/migration.py:54,69,81` |
 | `BackendCapabilityMismatchError` | `ACCESS_MCP_BACKEND=odbc` vs COM-only capability; ODBC unsupported ops (incl. `execute_raw_sql`, `execute_script`) | `backends/__init__.py:147,183`; `odbc.py:344-473,526,531` |
-| `DaoOperationError` | DAO operation failures raised by the DAO backend at five sites (connect-path and query/mutation paths) with scrubbed messages; typed catch in the adapter lifecycle and the `_operation_error` envelope helper on the operation path yield `Err("DAO operation failed: …")` | `errors.py:102`; `dao.py:143,178,431,480,851`; `_adapter_lifecycle.py:76-78`; `database.py:47-52` |
+| `DaoOperationError` | DAO operation failures raised by the DAO backend at five sites (connect-path and query/mutation paths) with scrubbed messages; typed catch in the adapter lifecycle and the kernel `operation_error` envelope helper yield `Err("DAO operation failed: …")` | `errors.py:102,134-140`; `dao.py:143,178,431,480,851`; `_adapter_lifecycle.py:76-78`; `database.py:48` |
 | `AccessObjectNotFoundError` | `"{kind} '{name}' not found"` | `errors.py:112`; `object_kinds.py:214-218` |
 | `AccessBackendError` | `"{op} '{name}' failed: {detail}"` | `errors.py:122` |
 
 Backend exceptions surface as `Err(f"Backend unavailable: {e}")` through the
 adapter lifecycle (`application/_adapter_lifecycle.py:70-81`); `DaoOperationError`
 is the typed exception and yields `Err("DAO operation failed: …")` (`:76-78`).
-On the operation path, every generic handler in `database.py` routes through
-`_operation_error` (`:47-52`): typed DAO failures are labeled
-`DAO operation failed:` and **all operation envelopes are scrubbed at the
-boundary** — password hygiene no longer depends on each backend remembering
-to scrub at raise time. Remaining boundary: other application modules
-(automation, maintenance, migration, db_admin, db_export) still catch
-generically — recorded follow-up.
+On the operation path, every application module routes generic handlers
+through the kernel helper `operation_error` (`errors.py:134-140`;
+`database.py` keeps `_operation_error` as a kernel alias at `:48`): typed
+DAO failures are labeled `DAO operation failed:` and **all operation
+envelopes are scrubbed at the boundary** — password hygiene no longer
+depends on each backend remembering to scrub at raise time. Rewired
+2026-10-08 (`fix-kernel-operation-error`): database, versioning, automation,
+maintenance, migration, db_admin, db_export. Preserved complex blocks
+(reported, not force-rewired): migration transfer job-state updates,
+maintenance process-kill/recovery aggregation, analysis structured result
+payloads.
 
 **Password scrubbing guarantee.** `strip_password` removes `PWD=`,
 `Password=`, `Jet OLEDB:Database Password=` (case-insensitive) and trailing
 `;` (`errors.py:10-31`). Applied at DAO/ODBC error boundaries, connect
 failures, linked-table and doctor paths (representative: `dao.py:480,851`;
-`odbc.py:124,144`; `application/database.py:47-52,212-216`).
+`odbc.py:124,144`; `application/database.py:48-52,212-216`).
 **Known hole:** free SQL text cannot be scrubbed (`README.md:104`) — see the
 credentials hard-reject rule below.
 

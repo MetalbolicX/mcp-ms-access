@@ -152,6 +152,22 @@ class FakeVersioningAdapter:
 class TestVersioningUseCases:
     """Tests for VersioningUseCases public methods."""
 
+    def test_adapter_dao_error_gets_typed_label(self, tmp_path):
+        from ms_access_mcp.application.versioning import VersioningUseCases
+        from ms_access_mcp.errors import DaoOperationError
+
+        class FailingAdapter(FakeVersioningAdapter):
+            def export_form_to_text(self, name: str) -> str:
+                raise DaoOperationError("vba boom")
+
+        uc = VersioningUseCases(
+            adapter=FailingAdapter(), readonly=True, db_path=None, allowed_dirs=[tmp_path]
+        )
+        result = uc.export_object("form", "Form1", str(tmp_path / "out"))
+
+        assert isinstance(result, Err)
+        assert result.message.startswith("DAO operation failed:")
+
     def test_export_object_form_happy(self, tmp_path):
         from ms_access_mcp.application.versioning import VersioningUseCases
 

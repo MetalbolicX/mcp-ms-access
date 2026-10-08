@@ -67,6 +67,39 @@ class TestModels:
         assert actual_fields == expected_fields, f"{cls_name} fields mismatch: {actual_fields} vs {expected_fields}"
 
 
+class TestOperationError:
+    """Verify the shared operation-error boundary contract."""
+
+    def test_plain_exception_message_passes_through(self):
+        from ms_access_mcp.errors import operation_error
+
+        result = operation_error(Exception("plain failure"))
+
+        assert result.message == "plain failure"
+
+    def test_dao_exception_gets_typed_label(self):
+        from ms_access_mcp.errors import DaoOperationError, operation_error
+
+        result = operation_error(DaoOperationError("op boom"))
+
+        assert result.message == "DAO operation failed: op boom"
+
+    def test_password_is_stripped(self):
+        from ms_access_mcp.errors import operation_error
+
+        result = operation_error(Exception("cannot open; PWD=hunter2; provider=ACE"))
+
+        assert "PWD=" not in result.message
+        assert "hunter2" not in result.message
+
+    def test_custom_label_is_applied(self):
+        from ms_access_mcp.errors import operation_error
+
+        result = operation_error(Exception("boom"), label="Export failed")
+
+        assert result.message == "Export failed: boom"
+
+
 class TestErrors:
     """Verify error taxonomy from oracle."""
 

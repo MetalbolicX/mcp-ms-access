@@ -10,7 +10,7 @@ import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal
 
-from ..errors import Err, Ok, Result
+from ..errors import Err, Ok, Result, operation_error
 from ..errors import err as _err
 from ..errors import ok as _ok
 from ..safety import WritePolicy
@@ -110,7 +110,7 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
             result = method(*args, **kwargs)
             return _ok(result)
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def _call_adapter_bool(
         self,
@@ -135,7 +135,7 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
                 return _ok(rowcount=rowcount)
             return _err(f"operation failed: {method_name} returned {result!r}")
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def _to_dict(self, obj: Any) -> Any:
         """Convert dataclass to dict if needed."""
@@ -876,7 +876,7 @@ class AutomationUseCases(AdapterLifecycle[AutomationAdapterProtocol]):
                 return _ok(data=data)
             return _err(f"compile_vba returned unexpected type: {type(result)}")
         except Exception as e:
-            return _err(str(e))
+            return operation_error(e)
 
     def vba_list_procedures(self, module_name: str) -> Result:
         """List procedures in a VBA module.
