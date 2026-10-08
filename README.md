@@ -14,6 +14,19 @@ uv run ms-access-mcp --version
 Fast local gate (mirrors CI): `uv run python scripts/qualify.py`.
 Full 13-gate qualification (requires local MS Access): `uv run python scripts/step5_qualify.py`.
 
+## Documentation
+
+Engineering reference (as-built) lives under `docs/`:
+
+| Document | Purpose |
+|---|---|
+| [Architecture](docs/01-architecture.md) | Layers, COM lifecycle, sessions, tool surface by profile |
+| [Contracts](docs/02-contracts.md) | Result envelope, error hierarchy, authorization gates, limits |
+| [Safety and configuration](docs/03-safety-and-configuration.md) | Environment variables, backend selection, crash-resilience model |
+
+Operational how-to stays in this README. The crash-recovery specification is
+`docs/specs/crash-recovery.md`; implementation history is in `plans/`.
+
 ## Password-protected databases
 
 The server resolves database passwords **server-side** so they never appear as MCP tool arguments or reach the LLM. Register a password once via the CLI, and all subsequent connections use it automatically.

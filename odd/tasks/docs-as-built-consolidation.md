@@ -12,7 +12,7 @@ stop after each task for review.
 - [x] T1 docs/01-architecture.md — as-built architecture derived from code
 - [x] T2 docs/02-contracts.md — command/error/limits contract catalogue
 - [x] T3 docs/03-safety-and-configuration.md — consolidated safety model, deduplicated against README
-- [ ] T4 Cross-references README <-> docs + consistency readback
+- [x] T4 Cross-references README <-> docs + consistency readback
 - [ ] T5 Final verification + work-unit commit closure
 
 ## Constraints
@@ -59,3 +59,11 @@ stop after each task for review.
   credentials.py:13, automation.py:68/76, backends __init__ 80/121,
   opencode_config.py:173/307, database.py:182/187. Passive docs: structural
   verification only. Work-unit commit on docs/as-built-consolidation.
+- T4: fixed 4 forthcoming placeholders (docs/01:19,165,166; docs/02:159);
+  added README Documentation section linking docs/01-03 + crash spec + plans;
+  consistency readback passed: all internal links resolve, cross-doc numbers
+  agree (8 profiles, core 21 vs <=30 budget, 120s dispatch, 5-rung ladder,
+  7 doctor checks), 0 forthcoming remaining. Discrepancies recorded in-doc,
+  not fixed (docs-only scope): cli.py:1478 help 5-vs-8 profiles drift
+  (docs/01 item 6, docs/02 item 5); kernel DaoOperationError dead
+  (docs/02 item 2). Work-unit commit on docs/as-built-consolidation.

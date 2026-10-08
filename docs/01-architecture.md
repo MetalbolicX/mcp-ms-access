@@ -16,7 +16,8 @@ plain Python over COM/DAO/ODBC.
 - COM automation requires desktop Access; some operations additionally use
   ODBC, a 32-bit JRO bridge (Jet 3), or `msaccess /compact` subprocesses.
 - Destructive surface is gated: raw SQL and VBA/macro writes require explicit
-  confirmation or opt-in environment flags (see `docs/03`, forthcoming).
+  confirmation or opt-in environment flags (see
+  `docs/03-safety-and-configuration.md`).
 
 ## Layered architecture
 
@@ -162,8 +163,8 @@ Recorded so this document does not overstate; verify before relying on them:
 ## Reading map
 
 - Operations and quick start → `README.md`
-- Command, error, and limits contracts → `docs/02-contracts.md` (forthcoming)
-- Safety and configuration model → `docs/03-safety-and-configuration.md` (forthcoming)
+- Command, error, and limits contracts → `docs/02-contracts.md`
+- Safety and configuration model → `docs/03-safety-and-configuration.md`
 - Implementation history and evidence → `plans/`
 - Change specifications → `openspec/`
 - Crash recovery detail → `docs/specs/crash-recovery.md`

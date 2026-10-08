@@ -156,6 +156,6 @@ flags: `--db --backend --json --yes --allow-write` (`cli.py:40-46`).
 ## Reading map
 
 - Architecture → `docs/01-architecture.md`
-- Safety and configuration model → `docs/03-safety-and-configuration.md` (forthcoming)
+- Safety and configuration model → `docs/03-safety-and-configuration.md`
 - Operational quick start and credentials usage → `README.md`
 - Error-contract defect history → `plans/` (plans 010, 017)
