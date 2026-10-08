@@ -158,7 +158,10 @@ Recorded so this document does not overstate; verify before relying on them:
 4. ODBC backend dispatcher usage not verified.
 5. Multi-connection fan-out (`application/database.py` `_connections`) not
    exercised against the MCP surface.
-6. Help-text drift: `cli.py:1476-1478` lists 5 profiles vs 8 in `server.py:118`.
+6. ~~Help-text drift: `cli.py:1476-1478` lists 5 profiles vs 8 in
+   `server.py:118`~~ — **resolved 2026-10-08** (`fix/cli-profile-help`):
+   the `--profile` help now derives its valid-values sentence from
+   `PROFILES` (`cli.py:1471`), making the drift structurally impossible.
 
 ## Reading map
 

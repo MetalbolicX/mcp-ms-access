@@ -30,6 +30,7 @@ from .credentials import (
 from .doctor import doctor_main
 from .opencode_config import Ok as OpenCodeOk
 from .opencode_config import entry_from, register, remove
+from .profiles import PROFILES
 from .safety import allowed_dirs_from_env
 
 # =============================================================================
@@ -1467,6 +1468,7 @@ def _run_mcp(opts: Any) -> Any:
 def _build_mcp_parser(sub: argparse._SubParsersAction) -> None:
     """Add mcp subcommand family."""
     mcp_parser = sub.add_parser("mcp", help="Run the MCP server over stdio")
+    valid_profiles = ", ".join(sorted(PROFILES))
     mcp_parser.add_argument(
         "--profile",
         type=str,
@@ -1474,8 +1476,8 @@ def _build_mcp_parser(sub: argparse._SubParsersAction) -> None:
         help=(
             "MCP tool profile to expose. "
             "Token-cost rationale: core <= 30 tools keeps LLM context lean; "
-            "additional profiles (automation, maintenance, versioning) are opt-in. "
-            "Valid values: core, automation, maintenance, versioning, full. "
+            "additional profiles are opt-in. "
+            f"Valid values: {valid_profiles}. "
             "Default: core. Can also be set via ACCESS_MCP_PROFILE env var."
         ),
     )

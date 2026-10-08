@@ -161,9 +161,12 @@ flags: `--db --backend --json --yes --allow-write` (`cli.py:40-46`).
    (`tool_budget.py` execution out of scope for this snapshot).
 4. `_classify_object_failure` not-found condition only partially reviewed
    (`object_kinds.py:207-218`).
-5. CLI `mcp --profile` help lists 5 values (`cli.py:1478`) while validation
-   accepts 8 (`profiles.py:14`, `server.py:149`) — help-text drift,
-   intended state unconfirmed.
+5. ~~CLI `mcp --profile` help lists 5 values while validation accepts 8 —
+   help-text drift~~ — **resolved 2026-10-08** (`fix/cli-profile-help`):
+   the help derives its valid-values sentence from `PROFILES`
+   (`cli.py:1471`), pinned by a parser-surface contract test. Validation
+   ownership stays server-side by design (no `choices=` added, exit codes
+   unchanged).
 
 ## Reading map
 

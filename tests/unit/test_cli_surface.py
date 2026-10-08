@@ -352,3 +352,31 @@ class TestCLISurface:
         assert "--db" in flags
         assert "--local" in flags
         assert "--yes" in flags
+
+
+class TestMcpProfileHelpContract:
+    """Pin the mcp --profile help to the single source of truth (PROFILES)."""
+
+    def test_mcp_profile_help_valid_values_match_profiles(self) -> None:
+        """The 'Valid values:' segment must list exactly set(PROFILES)."""
+        import re
+
+        from ms_access_mcp.profiles import PROFILES
+
+        parser = build_parser()
+        main_subparsers = next(
+            a for a in parser._actions if getattr(a, "dest", None) == "command"
+        )
+        mcp_parser = main_subparsers.choices["mcp"]
+        profile_action = next(
+            a
+            for a in mcp_parser._actions
+            if "--profile" in getattr(a, "option_strings", [])
+        )
+        help_text = profile_action.help or ""
+        match = re.search(r"Valid values: (.*?)\. Default:", help_text)
+        assert match is not None, f"'Valid values:' segment missing: {help_text!r}"
+        listed = {token.strip() for token in match.group(1).split(",")}
+        assert listed == set(PROFILES), (
+            f"Help lists {sorted(listed)} but PROFILES is {sorted(PROFILES)}"
+        )
