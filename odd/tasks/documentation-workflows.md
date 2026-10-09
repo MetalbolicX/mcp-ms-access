@@ -1,7 +1,7 @@
 # ODD feature: documentation-workflows (v1)
 
-Status: DOCS CYCLE CLOSED — spec agreed and committed on branch `docs/documentation-workflows`;
-source implementation NOT authorized yet.
+Status: IMPLEMENTATION IN PROGRESS on `feat/documentation-workflows` (from docs tip 287a186);
+delivery strategy: `feature-branch-chain` (user-selected 2026-10-08); docs slice = PR candidate 1.
 
 ## Goal
 
@@ -76,10 +76,46 @@ is a later v2 phase, out of scope here.
 - Scope proof: `git status` must show only `docs/specs/documentation-workflows.md`,
   `README.md`, `odd/tasks/documentation-workflows.md`.
 
+## Implementation tasks (authorized 2026-10-08; test-first; one work-unit commit each)
+
+Slices for the chain: S1 = T5+T6+T7 (offline core: evidence, render, save); S2 = T8
+(inspection service); S3 = T9+T10 (frontends, pins, spec sync). Runtime qualification
+(T11) is operator-gated and separately authorized.
+
+- [ ] T5: Evidence model `access.documentation.evidence/1` — typed package (source, run,
+  backend, coverage, warnings) + per-fact states `observed|unavailable|failed|excluded`
+  with provenance; serialization round-trip. Route: delegated writer, test-first.
+  Surfaces: `src/ms_access_mcp/application/documentation.py`,
+  `src/ms_access_mcp/models/__init__.py`, `tests/unit/test_documentation_evidence.py`.
+- [ ] T6: Deterministic renderer `access.documentation.report/1` — evidence → Markdown
+  (Mermaid erDiagram, dictionary, relationship catalogue, query catalogue, coverage,
+  labelled interpretations section); escaping, stable identifiers, no invented
+  cardinality, unknowns visible. Synthetic-evidence tests only. Route: delegated writer.
+- [ ] T7: Save service — separate doc-write permission (proposed `--allow-doc-write` /
+  `ACCESS_MCP_ALLOW_DOC_WRITE`), required confirm, explicit overwrite + destination
+  fingerprint, parent-dir path guard, atomic write, stale/partial rejection.
+  Route: delegated writer, test-first with tmp paths.
+- [ ] T8: Inspect service — offline DAO extraction with honest failure semantics (PKs from
+  indexes; no blank-SQL/empty-list collapse → `failed` states), bounded protected
+  session closed before return, credential-ref only. Unit tests with fakes +
+  conformance guard; real-DB integration deferred to T11. Route: delegated writer.
+- [ ] T9: Frontends — analysis-profile MCP tools `documentation_inspect/render/save`, CLI
+  `documentation` group, prompts `document_database`/`generate_er_documentation`;
+  intentional updates to test_tool_schemas / test_cli_surface / test_mcp_prompts /
+  tool_budget. Route: delegated writer.
+- [ ] T10: Spec sync — flip implemented sections' proposal status in
+  `docs/specs/documentation-workflows.md`; README row update. Route: inline or writer.
+- [ ] T11: Runtime qualification — operator-gated real-Access checks (engine read-only,
+  no execution, linked-source isolation, format/runtime matrix). NOT scheduled here.
+
+## Checks (implementation)
+
+- Test-first per task with RED/GREEN evidence recorded; focused pytest per unit;
+  `python scripts/qualify.py` green before each work-unit commit.
+- `git status` scope proof per task; Conventional Commits; commit identities recorded here.
+
 ## Delivery
 
-- Forecast: ~350 authored changed lines (spec ~280, README ~5, this doc). Under the ~400
-  budget; strategy `ask-on-risk` (default), no chaining menu expected.
-- Delivered as one work-unit commit on `docs/documentation-workflows` (branched from
-  main b824a9c); commit identity recorded in the Engram mirror. Push/PR/merge remain
-  user decisions.
+- Docs slice committed: 287a186 on `docs/documentation-workflows` (PR candidate 1).
+- Forecast S1 ~700-900 authored lines across three work units — chain applies; slice
+  boundaries recorded per commit as they land.
