@@ -1,11 +1,13 @@
 # Proposed feature: Access documentation workflows (v1)
 
-> **IMPLEMENTED (unit level) — RUNTIME NOT QUALIFIED.** Contracts, services, MCP tools,
+> **IMPLEMENTED — PARTIALLY RUNTIME-QUALIFIED (ACE/DAO, fixture scope).** Contracts,
+> services, MCP tools,
 > CLI commands, and prompts below are implemented and covered by unit tests on branch
 > `feat/documentation-workflows`. No real Access database has been inspected by this
 > feature: engine-level read-only protection, non-execution, linked-source isolation, and
-> the format/runtime matrix remain **NOT QUALIFIED** (see §7.2). Until then, treat every
-> runtime claim here as design.
+> the format/runtime matrix — see §7.2 for the exact qualified scope. Claims outside
+> that scope (linked-table isolation, VBA/macro non-execution, engine-level read-only
+> protection, ODBC) remain **NOT QUALIFIED**.
 >
 > **Status:** Definition accepted; runtime implementation not authorized. Related: [Architecture](../01-architecture.md), [Contracts](../02-contracts.md), [Safety and configuration](../03-safety-and-configuration.md), [Feature task](../../odd/tasks/documentation-workflows.md).
 
@@ -247,7 +249,7 @@ Support is declared per format/runtime, never inferred from suffix. Every cell b
 |---|---|---|
 | Jet 3 (`.mdb`) | DAO / Access runtime combination to be specified and tested | **NOT QUALIFIED** |
 | Jet 4 (`.mdb`) | DAO / Access runtime combination to be specified and tested | **NOT QUALIFIED** |
-| ACE (`.accdb`) | DAO / Access runtime combination to be specified and tested | **NOT QUALIFIED** |
+| ACE (`.accdb`) | DAO backend, Northwind 8-table closed fixture, Windows/ACE, 2026-10-08 | **PARTIALLY QUALIFIED**: schema/relationship/query fidelity, integrity (sha unchanged), no lock residue, non-execution (scope: nothing executable in fixture), render/save E2E incl. permission/confirm/overwrite/fingerprint gates, cardinality honesty — all PASS with independent verification. NOT COVERED by this fixture: linked-table isolation, VBA/macro non-execution, engine-level read-only (observed no mutation, but the DAO handle still opens read_only=False), filtered inspection, ODBC. |
 
 Qualification records engine version/bitness, host requirements, passive/read-only evidence, QueryDefs SQL availability, relationship/index fidelity, fixture results, and failure behavior. No qualification means unsupported/unknown coverage, never implied support.
 

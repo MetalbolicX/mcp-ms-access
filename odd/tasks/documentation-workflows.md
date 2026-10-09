@@ -109,8 +109,23 @@ Slices for the chain: S1 = T5+T6+T7 (offline core: evidence, render, save); S2 =
 - [x] T10: Spec sync — inline (small mechanical status flips from verified facts): spec
   banner + section statuses now "IMPLEMENTED (unit level) — RUNTIME NOT QUALIFIED",
   qualification matrix cells stay NOT QUALIFIED; README row updated. Route: inline.
-- [ ] T11: Runtime qualification — operator-gated real-Access checks (engine read-only,
-  no execution, linked-source isolation, format/runtime matrix). NOT scheduled here.
+- [x] T11: Runtime qualification — EXECUTED 2026-10-08 against db/northwind.accdb
+  (ACE/DAO, closed fixture, sha f7140e9a… unchanged across every check). Results:
+  Q1 integrity PASS; Q2 no lock residue PASS; Q3 schema fidelity PASS vs independent DAO
+  reference (8/8 tables; fixture reality: Products and OrderDetails carry NO PK — evidence
+  honestly observed-empty); Q4 relationships PASS after fixes; Q5 queries PASS (0 observed);
+  Q6 render+save E2E PASS after envelope fix (permission deny exit 1, --yes exit 2,
+  overwrite guard, stale-fingerprint rejection, correct-fingerprint overwrite success,
+  on-disk sha == report sha); Q7 read-only PASS-with-caveat (bytes+mtime untouched;
+  dao.py:135 still opens read_only=False — engine-level protection remains unqualified);
+  Q8 non-execution PASS-with-scope (no queries/macros/modules exist in fixture).
+  Qualification found and fixed three defects: CLI envelope seam (282e0b2), child-side
+  cardinality derivation (fae04b8), evidence parent/child inversion + Access relation
+  auto-indexes Unique=True defeating uniqueness gates (71152e7; probe-verified).
+  Final real-DB render: all four edges `}o--||` child-first; catalogue parent/child
+  correct; auto-indexes still listed. NOT COVERED by this fixture: linked-table isolation,
+  VBA/macro non-execution, ODBC backend, filtered inspection. Independent verifier PASS
+  on 282e0b2 and 71152e7 E2E; fae04b8 verifier FAIL led to the 71152e7 root-cause fix.
 
 ## Checks (implementation)
 
