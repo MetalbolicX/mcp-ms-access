@@ -82,11 +82,11 @@ Slices for the chain: S1 = T5+T6+T7 (offline core: evidence, render, save); S2 =
 (inspection service); S3 = T9+T10 (frontends, pins, spec sync). Runtime qualification
 (T11) is operator-gated and separately authorized.
 
-- [ ] T5: Evidence model `access.documentation.evidence/1` — typed package (source, run,
-  backend, coverage, warnings) + per-fact states `observed|unavailable|failed|excluded`
-  with provenance; serialization round-trip. Route: delegated writer, test-first.
-  Surfaces: `src/ms_access_mcp/application/documentation.py`,
-  `src/ms_access_mcp/models/__init__.py`, `tests/unit/test_documentation_evidence.py`.
+- [x] T5: Evidence model `access.documentation.evidence/1` — delivered in commit 0447f09
+  (application/documentation.py + 5 focused tests; RED ModuleNotFoundError → GREEN;
+  qualify exit 0, 1678 passed/3 skipped). Native assess: medium, large writer,
+  self-verification stands; reviewDue (slice budget) deferred to PR-slice boundary.
+  Parent spot-check: focused tests 5 passed. Route: delegated writer, test-first.
 - [ ] T6: Deterministic renderer `access.documentation.report/1` — evidence → Markdown
   (Mermaid erDiagram, dictionary, relationship catalogue, query catalogue, coverage,
   labelled interpretations section); escaping, stable identifiers, no invented
