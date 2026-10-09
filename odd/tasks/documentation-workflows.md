@@ -92,10 +92,10 @@ Slices for the chain: S1 = T5+T6+T7 (offline core: evidence, render, save); S2 =
   qualify exit 0 1687/3; orchestrator RED replay: import collection error without module).
   Native assess: medium, large writer, self-verification stands; reviewDue deferred.
   Incident note: worker shells lack `python`; repo interpreter is .venv/Scripts/python.exe.
-- [ ] T7: Save service — separate doc-write permission (proposed `--allow-doc-write` /
-  `ACCESS_MCP_ALLOW_DOC_WRITE`), required confirm, explicit overwrite + destination
-  fingerprint, parent-dir path guard, atomic write, stale/partial rejection.
-  Route: delegated writer, test-first with tmp paths.
+- [x] T7: Save service — delivered in commit 39e584d (application/documentation_save.py
+  + 16 tests; RED import → GREEN; qualify exit 0, 1703 passed/3 skipped; parent spot-check
+  16 passed). Native assess: medium, large writer, self-verification stands; reviewDue
+  false (under budget).
 - [ ] T8: Inspect service — offline DAO extraction with honest failure semantics (PKs from
   indexes; no blank-SQL/empty-list collapse → `failed` states), bounded protected
   session closed before return, credential-ref only. Unit tests with fakes +
