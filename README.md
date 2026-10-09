@@ -23,6 +23,7 @@ Engineering reference (as-built) lives under `docs/`:
 | [Architecture](docs/01-architecture.md) | Layers, COM lifecycle, sessions, tool surface by profile |
 | [Contracts](docs/02-contracts.md) | Result envelope, error hierarchy, authorization gates, limits |
 | [Safety and configuration](docs/03-safety-and-configuration.md) | Environment variables, backend selection, crash-resilience model |
+| [Access documentation workflows (proposed; not implemented)](docs/specs/documentation-workflows.md) | v1 design for deterministic database documentation workflows |
 
 Operational how-to stays in this README. The crash-recovery specification is
 `docs/specs/crash-recovery.md`; implementation history is in `plans/`.
