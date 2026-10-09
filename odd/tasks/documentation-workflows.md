@@ -87,10 +87,11 @@ Slices for the chain: S1 = T5+T6+T7 (offline core: evidence, render, save); S2 =
   qualify exit 0, 1678 passed/3 skipped). Native assess: medium, large writer,
   self-verification stands; reviewDue (slice budget) deferred to PR-slice boundary.
   Parent spot-check: focused tests 5 passed. Route: delegated writer, test-first.
-- [ ] T6: Deterministic renderer `access.documentation.report/1` — evidence → Markdown
-  (Mermaid erDiagram, dictionary, relationship catalogue, query catalogue, coverage,
-  labelled interpretations section); escaping, stable identifiers, no invented
-  cardinality, unknowns visible. Synthetic-evidence tests only. Route: delegated writer.
+- [x] T6: Deterministic renderer `access.documentation.report/1` — delivered in commit
+  5774c33 (application/documentation_render.py + 9 tests; writer GREEN 14 combined,
+  qualify exit 0 1687/3; orchestrator RED replay: import collection error without module).
+  Native assess: medium, large writer, self-verification stands; reviewDue deferred.
+  Incident note: worker shells lack `python`; repo interpreter is .venv/Scripts/python.exe.
 - [ ] T7: Save service — separate doc-write permission (proposed `--allow-doc-write` /
   `ACCESS_MCP_ALLOW_DOC_WRITE`), required confirm, explicit overwrite + destination
   fingerprint, parent-dir path guard, atomic write, stale/partial rejection.
