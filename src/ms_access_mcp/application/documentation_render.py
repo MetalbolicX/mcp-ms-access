@@ -7,7 +7,10 @@ its parent columns exactly match an observed primary/unique index; the child end
 one-to-one (``||``) only when its columns match an observed primary/unique index,
 and otherwise is many (``}o``). Relationships without proven parent uniqueness are
 omitted from the diagram and remain visible in the catalogue. No cardinality is
-inferred from names or relationship flags.
+inferred from relationship flags. Relationship auto-indexes (an index whose name
+matches a relationship on that table's same child columns) remain listed as
+observed but cannot justify uniqueness at either diagram endpoint, even when DAO
+reports Unique=True. Independent primary/unique keys still justify uniqueness.
 """
 
 from __future__ import annotations
@@ -273,7 +276,19 @@ def _matches_unique(evidence: EvidenceDoc, table_name: str, columns: list[str]) 
         return False
     if table.primary_key.state == "observed" and list(table.primary_key.value) == columns:
         return True
-    return any(index.is_unique and index.columns == columns for index in table.indexes)
+    # DAO can report Unique=True for relationship-created FK indexes; that
+    # observation is not proof that the child values are unique.
+    auto_indexes = {
+        (relation.name, tuple(relation.child_columns))
+        for relation in evidence.relationships
+        if relation.child_table == table_name
+    }
+    return any(
+        index.is_unique
+        and index.columns == columns
+        and (index.name, tuple(index.columns)) not in auto_indexes
+        for index in table.indexes
+    )
 
 
 def _cell(value: str) -> str:

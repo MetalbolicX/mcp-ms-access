@@ -253,8 +253,8 @@ def _query_evidence(query: QueryInfo) -> QueryEvidence:
 def _relationship_evidence(relationship: RelationshipInfo) -> RelationshipEvidence:
     return RelationshipEvidence(
         name=relationship.name,
-        parent_table=relationship.table,
-        child_table=relationship.foreign_table,
+        parent_table=relationship.foreign_table,
+        child_table=relationship.table,
         parent_columns=list(relationship.foreign_columns),
         child_columns=list(relationship.columns),
         attributes=FactStatus.unavailable(

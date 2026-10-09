@@ -104,6 +104,45 @@ def test_composite_child_cardinality_requires_full_unique_key_match(complete: bo
     assert f'  t2 {endpoint}--|| t1 : "pair"' in render_document(evidence).markdown.splitlines()
 
 
+@pytest.mark.parametrize("independent_key", [False, True])
+def test_relationship_auto_index_is_not_child_uniqueness(independent_key: bool) -> None:
+    evidence = make_evidence()
+    child = evidence.tables[1]
+    child.indexes = [IndexEvidence("pair", ["parent_id"], is_unique=True)]
+    if independent_key:
+        child.indexes.append(IndexEvidence("Independent", ["parent_id"], is_unique=True))
+    markdown = render_document(evidence).markdown
+    endpoint = "||" if independent_key else "}o"
+    assert f'  t2 {endpoint}--|| t1 : "pair"' in markdown.splitlines()
+    assert "| pair | parent_id | True | False | False |" in markdown
+
+
+def test_relationship_auto_index_cannot_justify_parent_eligibility() -> None:
+    evidence = make_evidence()
+    parent = evidence.tables[0]
+    parent.primary_key = FactStatus.observed([], provenance("table", "Parent", "primary_key"))
+    parent.indexes = [IndexEvidence("reverse", ["id"], is_unique=True)]
+    evidence.relationships.append(RelationshipEvidence(
+        name="reverse", parent_table="Child", child_table="Parent",
+        parent_columns=["parent_id"], child_columns=["id"],
+    ))
+    markdown = render_document(evidence).markdown
+    assert ': "pair"' not in markdown
+    assert "| pair | Parent → Child |" in markdown
+
+
+def test_relationship_named_index_on_other_columns_remains_unique() -> None:
+    evidence = make_evidence()
+    evidence.tables[1].indexes = [IndexEvidence("pair", ["parent_id"], is_unique=True)]
+    evidence.relationships[0].child_columns = ["other"]
+    evidence.tables[1].fields.append(field("other", "Child"))
+    evidence.relationships.append(RelationshipEvidence(
+        name="other_relation", parent_table="Parent", child_table="Child",
+        parent_columns=["id"], child_columns=["parent_id"],
+    ))
+    assert '  t2 ||--|| t1 : "other_relation"' in render_document(evidence).markdown.splitlines()
+
+
 def test_composite_relationship_pairs_render_in_aligned_order() -> None:
     evidence = make_evidence()
     rel = evidence.relationships[0]

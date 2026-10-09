@@ -145,6 +145,8 @@ def test_composite_relationship_pairs_are_preserved_and_attributes_unavailable()
     )]))
     relationship = document.relationships[0]
     assert list(zip(relationship.parent_columns, relationship.child_columns, strict=True)) == [("p1", "c1"), ("p2", "c2")]
+    assert relationship.parent_table == "Parent"
+    assert relationship.child_table == "Child"
     assert relationship.attributes.state == "unavailable"
     assert relationship.attributes.reason
 
