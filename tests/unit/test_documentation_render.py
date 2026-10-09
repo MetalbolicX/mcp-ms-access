@@ -74,6 +74,36 @@ def make_evidence(*, unusual: bool = False, justified: bool = True, failed_sql: 
     )
 
 
+@pytest.mark.parametrize("child_key", ["none", "unrelated_pk", "nonunique", "unique", "pk"])
+def test_child_cardinality_uses_only_matching_unique_keys(child_key: str) -> None:
+    evidence = make_evidence()
+    child = evidence.tables[1]
+    if child_key in ("unique", "nonunique"):
+        child.indexes = [IndexEvidence("FK", ["parent_id"], is_unique=child_key == "unique")]
+    elif child_key == "pk":
+        child.primary_key = FactStatus.observed(["parent_id"], provenance("table", "Child", "primary_key"))
+    elif child_key == "unrelated_pk":
+        child.fields.append(field("id", "Child"))
+        child.primary_key = FactStatus.observed(["id"], provenance("table", "Child", "primary_key"))
+    endpoint = "||" if child_key in ("unique", "pk") else "}o"
+    assert f'  t2 {endpoint}--|| t1 : "pair"' in render_document(evidence).markdown.splitlines()
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_composite_child_cardinality_requires_full_unique_key_match(complete: bool) -> None:
+    evidence = make_evidence()
+    relation = evidence.relationships[0]
+    relation.parent_columns = ["tenant", "id"]
+    relation.child_columns = ["tenant_id", "parent_id"]
+    evidence.tables[0].fields.append(field("tenant", "Parent"))
+    evidence.tables[0].primary_key = FactStatus.observed(["tenant", "id"], provenance("table", "Parent", "primary_key"))
+    evidence.tables[1].fields.append(field("tenant_id", "Child"))
+    columns = ["tenant_id", "parent_id"] if complete else ["tenant_id"]
+    evidence.tables[1].indexes = [IndexEvidence("FK", columns, is_unique=True)]
+    endpoint = "||" if complete else "}o"
+    assert f'  t2 {endpoint}--|| t1 : "pair"' in render_document(evidence).markdown.splitlines()
+
+
 def test_composite_relationship_pairs_render_in_aligned_order() -> None:
     evidence = make_evidence()
     rel = evidence.relationships[0]
@@ -107,7 +137,8 @@ def test_unsupported_cardinality_relationship_is_catalogued_but_not_diagrammed()
     report = render_document(make_evidence(justified=False))
     assert "cardinality not derivable from evidence" in report.markdown
     diagram = report.markdown.split("```mermaid", 1)[1].split("```", 1)[0]
-    assert "  t1 ||--" not in diagram
+    assert ': "pair"' not in diagram
+    assert "| pair | Parent → Child |" in report.markdown
 
 
 def test_database_and_er_reports_have_expected_section_sets() -> None:

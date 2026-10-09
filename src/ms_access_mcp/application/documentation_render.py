@@ -180,7 +180,7 @@ def _diagram(evidence: EvidenceDoc) -> str:
             continue
         parent_end = "||"
         child_end = "||" if _matches_unique(evidence, relation.child_table, relation.child_columns) else "}o"
-        lines.append(f"  {aliases[relation.parent_table]} {parent_end}--{child_end} {aliases[relation.child_table]} : \"{_mermaid_label(relation.name)}\"")
+        lines.append(f"  {aliases[relation.child_table]} {child_end}--{parent_end} {aliases[relation.parent_table]} : \"{_mermaid_label(relation.name)}\"")
     lines.extend(("```", "", "| Alias | Table |", "|---|---|"))
     for name, alias in aliases.items():
         lines.append(f"| {alias} | {_cell(name)} |")
