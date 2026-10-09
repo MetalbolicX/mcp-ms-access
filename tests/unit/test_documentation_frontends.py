@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ms_access_mcp.application.documentation import (
     Coverage,
     EvidenceDoc,
@@ -104,6 +106,61 @@ def test_documentation_cli_surface_has_required_arguments():
     assert set(subcommands) == {"inspect", "render", "save"}
     save_flags = {flag for item in subcommands["save"]._actions for flag in item.option_strings}
     assert {"--allow-doc-write", "--yes", "--overwrite", "--expected-fingerprint"} <= save_flags
+
+
+@pytest.mark.parametrize("wrapped", [True, False], ids=["envelope", "bare"])
+def test_documentation_cli_render_accepts_evidence_file(wrapped, tmp_path, capsys):
+    from ms_access_mcp.cli import build_parser
+
+    evidence = _minimal_evidence()
+    payload = {"success": True, "data": evidence, "rowcount": None} if wrapped else evidence
+    path = tmp_path / "evidence.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    args = build_parser().parse_args(["documentation", "render", "--evidence", str(path), "--json"])
+
+    assert args.func(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["success"] is True
+    assert "# Access database documentation" in result["data"]["markdown"]
+
+
+@pytest.mark.parametrize("wrapped", [True, False], ids=["envelope", "bare"])
+def test_documentation_cli_save_accepts_report_file(wrapped, tmp_path, capsys, monkeypatch):
+    from ms_access_mcp.application.documentation_render import render_document
+    from ms_access_mcp.cli import build_parser
+
+    monkeypatch.setenv("ACCESS_MCP_ALLOWED_DIRS", str(tmp_path))
+    report = render_document(EvidenceDoc.from_dict(_minimal_evidence())).to_dict()
+    payload = {"success": True, "data": report, "rowcount": None} if wrapped else report
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    destination = tmp_path / "report.md"
+    args = build_parser().parse_args([
+        "documentation", "save", "--report", str(path), "--output-path", str(destination),
+        "--allow-doc-write", "--yes", "--json",
+    ])
+
+    assert args.func(args) == 0
+    assert json.loads(capsys.readouterr().out)["success"] is True
+    assert destination.read_text(encoding="utf-8") == report["markdown"]
+
+
+@pytest.mark.parametrize("action", ["render", "save"])
+def test_documentation_cli_surfaces_failed_envelope(action, tmp_path, capsys):
+    from ms_access_mcp.cli import build_parser
+
+    path = tmp_path / "failed.json"
+    path.write_text(json.dumps({"success": False, "error": "Inspection failed upstream"}), encoding="utf-8")
+    flags = ["--evidence", str(path)] if action == "render" else [
+        "--report", str(path), "--output-path", str(tmp_path / "report.md"), "--allow-doc-write", "--yes",
+    ]
+    args = build_parser().parse_args(["documentation", action, *flags, "--json"])
+
+    assert args.func(args) != 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["success"] is False
+    assert result["error"] == "Inspection failed upstream"
+    assert not (tmp_path / "report.md").exists()
 
 
 def test_documentation_prompts_render_deterministically_and_use_real_tools():

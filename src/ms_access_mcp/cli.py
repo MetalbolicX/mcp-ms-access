@@ -1826,6 +1826,16 @@ def _build_maintenance_parser(sub: argparse._SubParsersAction) -> None:
     _add_global_flags(m_recover)
 
 
+def _unwrap_cli_envelope(payload: Any) -> Any:
+    """Accept saved CLI output without relaxing document schema validation."""
+    if isinstance(payload, dict):
+        if payload.get("success") is False:
+            raise ValueError(str(payload.get("error", "CLI operation failed")))
+        if payload.get("success") and isinstance(payload.get("data"), dict):
+            return payload["data"]
+    return payload
+
+
 def _cmd_documentation(args: argparse.Namespace) -> int:
     """Run inspect/render/save documentation operations."""
     from .errors import err, ok
@@ -1866,7 +1876,7 @@ def _cmd_documentation(args: argparse.Namespace) -> int:
             database.close_database()
     elif args.documentation_action == "render":
         try:
-            evidence = EvidenceDoc.from_dict(json.loads(Path(args.evidence).read_text(encoding="utf-8")))
+            evidence = EvidenceDoc.from_dict(_unwrap_cli_envelope(json.loads(Path(args.evidence).read_text(encoding="utf-8"))))
             result = ok(data=render_document(evidence, kind=args.kind, language=args.language).to_dict())
         except Exception as exc:
             result = err(str(exc))
@@ -1875,7 +1885,7 @@ def _cmd_documentation(args: argparse.Namespace) -> int:
             print("Error: documentation save requires --yes", file=sys.stderr)
             return 2
         try:
-            report = ReportDoc.from_dict(json.loads(Path(args.report).read_text(encoding="utf-8")))
+            report = ReportDoc.from_dict(_unwrap_cli_envelope(json.loads(Path(args.report).read_text(encoding="utf-8"))))
             allowed = args.allow_doc_write or os.environ.get("ACCESS_MCP_ALLOW_DOC_WRITE", "").casefold() in {"1", "true"}
             saved = DocumentationSaveService(DocumentationWritePolicy(allowed=allowed)).save(
                 report.markdown,
