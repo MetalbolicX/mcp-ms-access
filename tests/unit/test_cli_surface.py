@@ -50,6 +50,7 @@ class TestCLISurface:
             "db",
             "ddl",
             "delete",
+            "documentation",
             "doctor",
             "export",
             "indexes",
@@ -87,6 +88,15 @@ class TestCLISurface:
             if getattr(a, "dest", None) == "command"
         )
         choices = main_subparsers.choices
+
+        # Family: documentation
+        assert "documentation" in choices
+        documentation_sub = choices["documentation"]
+        documentation_actions = next(
+            a for a in documentation_sub._actions
+            if getattr(a, "dest", None) == "documentation_action"
+        )
+        assert sorted(documentation_actions.choices.keys()) == ["inspect", "render", "save"]
 
         # Family: db
         assert "db" in choices

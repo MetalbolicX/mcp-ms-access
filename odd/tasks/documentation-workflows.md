@@ -96,10 +96,12 @@ Slices for the chain: S1 = T5+T6+T7 (offline core: evidence, render, save); S2 =
   + 16 tests; RED import → GREEN; qualify exit 0, 1703 passed/3 skipped; parent spot-check
   16 passed). Native assess: medium, large writer, self-verification stands; reviewDue
   false (under budget).
-- [ ] T8: Inspect service — offline DAO extraction with honest failure semantics (PKs from
-  indexes; no blank-SQL/empty-list collapse → `failed` states), bounded protected
-  session closed before return, credential-ref only. Unit tests with fakes +
-  conformance guard; real-DB integration deferred to T11. Route: delegated writer.
+- [x] T8: Inspect service — delivered in commit c66ddb3 (application/documentation_inspect.py
+  + 10 tests incl. fake-signature conformance guard; RED import → GREEN; qualify exit 0,
+  1713 passed/3 skipped; parent spot-check 10 passed). Native assess: medium, large
+  writer, self-verification stands; reviewDue (slice budget) deferred. Known residual:
+  schema_inspector suppresses the original SQL-read exception upstream; service maps blank
+  SQL to a failed fact honestly (Access QueryDef SQL is never legitimately empty).
 - [ ] T9: Frontends — analysis-profile MCP tools `documentation_inspect/render/save`, CLI
   `documentation` group, prompts `document_database`/`generate_er_documentation`;
   intentional updates to test_tool_schemas / test_cli_surface / test_mcp_prompts /
