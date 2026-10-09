@@ -1,12 +1,19 @@
 # Proposed feature: Access documentation workflows (v1)
 
-> **PROPOSED — AGREED, NOT IMPLEMENTED.** Any runtime behavior described here is design, not current behavior. Implementation requires separate authorization.
+> **IMPLEMENTED (unit level) — RUNTIME NOT QUALIFIED.** Contracts, services, MCP tools,
+> CLI commands, and prompts below are implemented and covered by unit tests on branch
+> `feat/documentation-workflows`. No real Access database has been inspected by this
+> feature: engine-level read-only protection, non-execution, linked-source isolation, and
+> the format/runtime matrix remain **NOT QUALIFIED** (see §7.2). Until then, treat every
+> runtime claim here as design.
 >
 > **Status:** Definition accepted; runtime implementation not authorized. Related: [Architecture](../01-architecture.md), [Contracts](../02-contracts.md), [Safety and configuration](../03-safety-and-configuration.md), [Feature task](../../odd/tasks/documentation-workflows.md).
 
 ## 1. Overview and scope
 
-> **Proposal status:** Agreed design; not implemented. No behavior in this section describes a currently available operation.
+> **Implementation status:** Implemented and unit-tested (evidence model, renderer, save
+> and inspect services, analysis-profile tools, CLI group, prompts). Runtime behavior
+> against real databases is not exercised in the unit suite.
 
 This specification defines deterministic, offline workflows that turn eligible Microsoft Access metadata into one Markdown report: schema/data dictionary, saved-query catalogue, relationship catalogue, Mermaid ER diagram, coverage, and limitations.
 
@@ -30,7 +37,9 @@ The v1 sequence is inspect metadata into typed evidence; render that evidence de
 
 ## 2. Agreements — decision log
 
-> **Proposal status:** These eleven agreements are accepted for design; all remain proposed until implementation is separately authorized.
+> **Implementation status:** Agreements 1–11 are accepted and now reflected in implemented
+> code where applicable; agreement 3's protection guarantee and agreement 11's qualified
+> format/runtime claims remain pending runtime qualification.
 
 1. **Scope sequence — v1 is schema, saved queries, and Mermaid ER; v2 may add full application analysis.** This bounds v1 to deterministic metadata rather than executable or interactive objects.
 2. **Source must be closed and offline.** Missing lock files, user assertions, plain copies, and post-copy hashes do not prove quiescence or consistency.
@@ -46,7 +55,9 @@ The v1 sequence is inspect metadata into typed evidence; render that evidence de
 
 ## 3. Contracts
 
-> **Proposal status:** Shapes and semantics below are design targets, not implemented interfaces. Existing envelope conventions are described in [Contracts](../02-contracts.md).
+> **Implementation status:** `documentation_inspect/render/save` are implemented as typed
+> analysis-profile MCP tools and CLI subcommands; evidence/report schemas and envelope
+> semantics are unit-tested. Existing envelope conventions: [Contracts](../02-contracts.md).
 
 ### 3.1 Operation arguments
 
@@ -115,7 +126,10 @@ Register tools through the `analysis` profile. Keep `get_er_diagram` response un
 
 ## 4. Architecture
 
-> **Proposal status:** Target architecture only; no application or backend code implements it. See [as-built layers](../01-architecture.md).
+> **Implementation status:** Application services exist (`application/documentation*.py`):
+> evidence model, renderer, save, inspect with fake-port conformance tests. Backend
+> changes beyond reuse of `schema_inspector` reads are not made; engine-level read-only
+> protection is still unqualified. See [as-built layers](../01-architecture.md).
 
 ### 4.1 Pipeline and placement
 
@@ -152,7 +166,11 @@ These are qualification blockers, not authorization for a backend rewrite. Other
 
 ## 5. Safety
 
-> **Proposal status:** Mandatory safety design, not an implemented guarantee. Existing controls are documented in [Safety and configuration](../03-safety-and-configuration.md).
+> **Implementation status:** The separate documentation-write permission, required
+> confirm, overwrite fingerprint checks, and parent-dir guarding are implemented and
+> unit-tested (deny by default). Engine-level read-only/passive opening and linked-source
+> isolation are NOT yet implemented or qualified — inspect still opens through existing
+> session machinery. Existing controls: [Safety and configuration](../03-safety-and-configuration.md).
 
 ### 5.1 Source acquisition and inspection
 
@@ -174,7 +192,9 @@ Use credential references or existing server-side resolution; never inline passw
 
 ## 6. Engineering and qualification
 
-> **Proposal status:** Test and qualification plan only. This specification has not run tests or runtime qualification.
+> **Implementation status:** Unit-level engineering is in place (focused suites for
+> evidence, renderer, save, inspect, frontends inside the qualify gate). Runtime
+> qualification scenarios below have NOT run against real Access databases.
 
 ### 6.1 Test strategy
 

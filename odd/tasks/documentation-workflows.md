@@ -102,12 +102,13 @@ Slices for the chain: S1 = T5+T6+T7 (offline core: evidence, render, save); S2 =
   writer, self-verification stands; reviewDue (slice budget) deferred. Known residual:
   schema_inspector suppresses the original SQL-read exception upstream; service maps blank
   SQL to a failed fact honestly (Access QueryDef SQL is never legitimately empty).
-- [ ] T9: Frontends — analysis-profile MCP tools `documentation_inspect/render/save`, CLI
-  `documentation` group, prompts `document_database`/`generate_er_documentation`;
-  intentional updates to test_tool_schemas / test_cli_surface / test_mcp_prompts /
-  tool_budget. Route: delegated writer.
-- [ ] T10: Spec sync — flip implemented sections' proposal status in
-  `docs/specs/documentation-workflows.md`; README row update. Route: inline or writer.
+- [x] T9: Frontends — delivered in commit e94428b (analysis tools, prompts, CLI group,
+  pin updates, test_documentation_frontends.py; RED 9 failures → GREEN 15; qualify exit 0,
+  1718 passed/3 skipped; parent spot-check 15 passed). Native assess: medium, large
+  writer, self-verification stands; reviewDue false (under budget).
+- [x] T10: Spec sync — inline (small mechanical status flips from verified facts): spec
+  banner + section statuses now "IMPLEMENTED (unit level) — RUNTIME NOT QUALIFIED",
+  qualification matrix cells stay NOT QUALIFIED; README row updated. Route: inline.
 - [ ] T11: Runtime qualification — operator-gated real-Access checks (engine read-only,
   no execution, linked-source isolation, format/runtime matrix). NOT scheduled here.
 
