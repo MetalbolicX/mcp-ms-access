@@ -125,7 +125,14 @@ def _overview(evidence: EvidenceDoc, *, include_queries: bool) -> str:
 def _dictionary(evidence: EvidenceDoc) -> str:
     lines = ["## Data dictionary"]
     for table in evidence.tables:
-        lines.extend(("", f"### {_inline(table.name)}", "", "| Field | Type | Size | Required | Allow zero length | Default |", "|---|---|---:|---|---|---|") )
+        lines.extend(("", f"### {_inline(table.name)}", ""))
+        if table.kind == "linked":
+            lines.append(
+                f"- Linked table: {_inline(table.name)} → "
+                f"{_inline(_linked_source(table.connect, table.source_table_name))}"
+            )
+            lines.append("")
+        lines.extend(("| Field | Type | Size | Required | Allow zero length | Default |", "|---|---|---:|---|---|---|"))
         for item in table.fields:
             cells = [
                 item.name,
@@ -289,6 +296,18 @@ def _matches_unique(evidence: EvidenceDoc, table_name: str, columns: list[str]) 
         and (index.name, tuple(index.columns)) not in auto_indexes
         for index in table.indexes
     )
+
+
+def _linked_source(connect: str | None, source_table_name: str | None) -> str:
+    """Render a linked table's local source as ``database-file/source-table``."""
+    database = connect or ""
+    match = re.search(r"(?:^|;)database=([^;]*)", database, flags=re.IGNORECASE)
+    if match:
+        database = match.group(1)
+    database = re.split(r"[\\/]", database)[-1]
+    if not database:
+        database = "unknown source"
+    return f"{database}/{source_table_name}" if source_table_name else database
 
 
 def _cell(value: str) -> str:

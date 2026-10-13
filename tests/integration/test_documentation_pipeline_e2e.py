@@ -1,0 +1,693 @@
+"""Opt-in isolated ACE documentation-pipeline qualification suite (T3 phase 1).
+
+This suite builds the synthetic fixtures once in a fresh ``db/fixtures/e2e-<uuid>``
+directory through the public generator CLI, then exercises the documentation pipeline
+through the public CLI in subprocesses:
+
+* ``documentation inspect --db <db> --backend dao --json`` (extractor correctness
+  against the known-ground-truth fixtures);
+* ``documentation render --evidence ... --kind database|er --json``;
+* ``documentation save ...`` gating on rendered report copies.
+
+It is deliberately separate from ``test_documentation_fixtures_e2e.py`` (T2), which
+only proves construction readback through raw DAO. This suite never executes a saved
+query, never uses ``Access.Application``, and never touches ``db/fixtures/documentation``
+or ``db/northwind.accdb``.
+
+``test_finding_*`` tests were the phase-1 reproduction of correctness gaps against
+``docs/specs/documentation-workflows.md``. T3 phase 2 fixed the update-query category
+and linked-table metadata, so those tests now pass; the former field-defaults finding
+test is renamed ``test_inspect_core_field_defaults_are_read_from_dao`` because ACE
+exposes ``Field.DefaultValue`` and the honest state is ``observed``, not ``unavailable``.
+
+Run explicitly on Windows with ACE DAO and pywin32::
+
+    $env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
+    .venv\\Scripts\\python.exe -m pytest tests\\integration\\test_documentation_pipeline_e2e.py -q
+
+Without ``ACCESS_DOCUMENTATION_FIXTURES_TEST=1`` the module skips cleanly.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tests.integration.conftest import _has_ace_dao
+
+ROOT = Path(__file__).resolve().parents[2]
+GENERATOR = ROOT / "scripts" / "generate_documentation_fixtures.py"
+FIXTURE_ROOT = ROOT / "db" / "fixtures"
+MANIFEST_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "documentation_expected.json"
+
+OPT_IN_ENV = "ACCESS_DOCUMENTATION_FIXTURES_TEST"
+ALLOW_DOC_WRITE_ENV = "ACCESS_MCP_ALLOW_DOC_WRITE"
+BUILD_TIMEOUT_SECONDS = 600
+CLI_TIMEOUT_SECONDS = 300
+DB_OPEN_SNAPSHOT = 4  # DAO dbOpenSnapshot
+LEGAL_FACT_STATES = {"observed", "unavailable", "failed", "excluded"}
+
+# A diagrammed Mermaid edge as emitted by the renderer: `tChild }o--|| tParent : "name"`.
+_EDGE_RE = re.compile(r"^  (t\d+) (\}o|\|\|)--(\|\||o\||\}o) (t\d+) : \"(.*)\"$")
+
+pytestmark = [
+    pytest.mark.skipif(os.name != "nt", reason="Windows-only test"),
+    pytest.mark.skipif(not _has_ace_dao(), reason="Requires ACE DAO (DAO.DBEngine.120)"),
+    pytest.mark.skipif(
+        os.environ.get(OPT_IN_ENV) != "1",
+        reason=f"Set {OPT_IN_ENV}=1 to run the isolated ACE documentation-pipeline qualification suite",
+    ),
+    pytest.mark.com_integration,
+]
+
+
+def _venv_python() -> str:
+    """Return the repository virtualenv interpreter, falling back to the current one."""
+    candidate = ROOT / ".venv" / "Scripts" / "python.exe"
+    return str(candidate) if candidate.exists() else sys.executable
+
+
+def _cli_env(fixture_dir: Path, *, allow_doc_write: bool = False) -> dict[str, str]:
+    """Build a deterministic CLI environment for the session fixture directory."""
+    env = {key: value for key, value in os.environ.items() if key != ALLOW_DOC_WRITE_ENV}
+    env["ACCESS_MCP_ALLOWED_DIRS"] = str(fixture_dir)
+    if allow_doc_write:
+        env[ALLOW_DOC_WRITE_ENV] = "1"
+    return env
+
+
+def _run_cli(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Run one public-CLI invocation in a subprocess and capture its streams."""
+    return subprocess.run(
+        [_venv_python(), "-m", "ms_access_mcp.cli", *args],
+        capture_output=True,
+        text=True,
+        timeout=CLI_TIMEOUT_SECONDS,
+        check=False,
+        env=env,
+        cwd=ROOT,
+    )
+
+
+def _clean(value: Any) -> Any:
+    """Strip ACE's trailing NUL padding from a COM string read."""
+    return value.rstrip("\x00") if isinstance(value, str) else value
+
+
+def _iter_collection(collection: Any) -> Iterator[Any]:
+    """Yield each item of a DAO COM collection in index order."""
+    for index in range(collection.Count):
+        yield collection(index)
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _load_manifest() -> dict[str, Any]:
+    return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+
+
+@contextmanager
+def _open_readonly(engine: Any, database: Path) -> Iterator[Any]:
+    """Open a database read-only; this suite never mutates or executes a saved query."""
+    database_handle = engine.OpenDatabase(str(database), False, True)
+    try:
+        yield database_handle
+    finally:
+        database_handle.Close()
+
+
+def _snapshot_rows(db: Any, table_name: str) -> list[dict[str, Any]]:
+    """Read every row of a table through a read-only snapshot recordset."""
+    recordset = db.OpenRecordset(table_name, DB_OPEN_SNAPSHOT)
+    try:
+        field_names = [_clean(recordset.Fields(position).Name) for position in range(recordset.Fields.Count)]
+        rows: list[dict[str, Any]] = []
+        while not recordset.EOF:
+            rows.append({name: recordset.Fields(position).Value for position, name in enumerate(field_names)})
+            recordset.MoveNext()
+        return rows
+    finally:
+        recordset.Close()
+
+
+def _remove_self_created_tree(output_dir: Path, created_fixture_root: bool) -> None:
+    """Delete exactly this fixture's ``e2e-<uuid>`` tree and nothing else."""
+    assert output_dir.parent == FIXTURE_ROOT
+    assert output_dir.name.startswith("e2e-")
+    shutil.rmtree(output_dir, ignore_errors=True)
+    if created_fixture_root:
+        try:
+            FIXTURE_ROOT.rmdir()
+        except OSError:
+            pass
+
+
+def _payload(core_evidence: dict[str, Any]) -> dict[str, Any]:
+    """Return the typed evidence payload nested inside the CLI envelope."""
+    return core_evidence["envelope"]["data"]["data"]
+
+
+def _tables_by_name(core_evidence: dict[str, Any]) -> dict[str, Any]:
+    return {table["name"]: table for table in _payload(core_evidence)["tables"]}
+
+
+def _queries_by_name(core_evidence: dict[str, Any]) -> dict[str, Any]:
+    return {query["name"]: query for query in _payload(core_evidence)["queries"]}
+
+
+def _iter_facts(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Yield every typed fact in the evidence payload, in document order."""
+    for table in payload["tables"]:
+        yield table["primary_key"]
+        for field in table["fields"]:
+            yield from (
+                field["type"],
+                field["size"],
+                field["required"],
+                field["allow_zero_length"],
+                field["default_value"],
+            )
+    for query in payload["queries"]:
+        yield from (query["sql"], query["type"], query["parameters"])
+    for relationship in payload["relationships"]:
+        yield relationship["attributes"]
+
+
+def _mermaid_block(markdown: str) -> str:
+    """Extract and structurally validate the single Mermaid fence in a report."""
+    parts = markdown.split("```mermaid", 1)
+    assert len(parts) == 2, "report must contain one Mermaid fence"
+    block, remainder = parts[1].split("```", 1)
+    lines = [line for line in block.splitlines() if line.strip()]
+    assert lines[0].strip() == "erDiagram"
+    open_nodes = [line for line in lines if line.rstrip().endswith("{")]
+    close_nodes = [line for line in lines if line.strip() == "}"]
+    assert len(open_nodes) == len(close_nodes), "unbalanced Mermaid node blocks"
+    return block
+
+
+@pytest.fixture(scope="session")
+def e2e_build() -> Iterator[dict[str, Any]]:
+    """Build the fixtures once through the public generator CLI into a fresh directory."""
+    output_dir = FIXTURE_ROOT / f"e2e-{uuid.uuid4().hex}"
+    created_fixture_root = not FIXTURE_ROOT.exists()
+    if created_fixture_root:
+        FIXTURE_ROOT.mkdir(parents=True, exist_ok=True)
+    try:
+        completed = subprocess.run(
+            [_venv_python(), str(GENERATOR), "--build", "--output-dir", str(output_dir)],
+            capture_output=True,
+            text=True,
+            timeout=BUILD_TIMEOUT_SECONDS,
+            check=False,
+            cwd=ROOT,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stderr == "", completed.stderr
+        inventory = json.loads((output_dir / "inventory.json").read_text(encoding="utf-8"))
+        yield {"directory": output_dir, "inventory": inventory, "expected": _load_manifest()}
+    finally:
+        _remove_self_created_tree(output_dir, created_fixture_root)
+
+
+@pytest.fixture(scope="session")
+def work_dir(e2e_build: dict[str, Any]) -> Path:
+    """Scratch directory for evidence/report copies, removed with the e2e tree."""
+    path = e2e_build["directory"] / "pipeline-artifacts"
+    path.mkdir()
+    return path
+
+
+@pytest.fixture(scope="session")
+def dao_engine() -> Iterator[Any]:
+    """Dispatch the per-thread DAO engine used for read-only readback and locking."""
+    pythoncom = pytest.importorskip("pythoncom")
+    win32com_client = pytest.importorskip("win32com.client")
+    pythoncom.CoInitialize()
+    try:
+        yield win32com_client.Dispatch("DAO.DBEngine.120")
+    finally:
+        pythoncom.CoUninitialize()
+
+
+@pytest.fixture(scope="session")
+def core_evidence(e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
+    """Inspect core.accdb once through the public CLI and persist its evidence JSON."""
+    directory = e2e_build["directory"]
+    completed = _run_cli(
+        ["documentation", "inspect", "--db", str(directory / "core.accdb"), "--backend", "dao", "--json"],
+        _cli_env(directory),
+    )
+    assert completed.returncode == 0, completed.stderr
+    evidence_path = work_dir / "inspect-core.json"
+    evidence_path.write_text(completed.stdout, encoding="utf-8")
+    # The COM teardown banner on stderr ("Win32 exception occurred releasing IUnknown")
+    # is a pywin32 cleanup artifact: exit status and JSON stdout stay valid.
+    return {"envelope": json.loads(completed.stdout), "path": evidence_path, "stderr": completed.stderr}
+
+
+@pytest.fixture(scope="session")
+def core_reports(core_evidence: dict[str, Any], e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
+    """Render database and ER reports from the persisted core evidence JSON."""
+    env = _cli_env(e2e_build["directory"])
+    reports: dict[str, Any] = {}
+    for kind in ("database", "er"):
+        completed = _run_cli(
+            ["documentation", "render", "--evidence", str(core_evidence["path"]), "--kind", kind, "--json"],
+            env,
+        )
+        assert completed.returncode == 0, completed.stderr
+        report_path = work_dir / f"report-{kind}.json"
+        report_path.write_text(completed.stdout, encoding="utf-8")
+        reports[kind] = {"report": json.loads(completed.stdout)["data"], "path": report_path}
+    return reports
+
+
+@pytest.fixture(scope="session")
+def linked_isolation(e2e_build: dict[str, Any], dao_engine: Any, work_dir: Path) -> dict[str, Any]:
+    """Inspect linked.accdb while sentinel.accdb is held open exclusively.
+
+    Holding the sentinel exclusively elsewhere makes any attempted contact fail loudly,
+    so a successful inspection is positive evidence that the local catalogue was used
+    alone. The lock is released in ``finally`` before the sentinel is hashed again.
+    """
+    directory = e2e_build["directory"]
+    sentinel = directory / "sentinel.accdb"
+    sentinel_before = _sha256(sentinel)
+    handle = dao_engine.OpenDatabase(str(sentinel), True, False)
+    try:
+        completed = _run_cli(
+            ["documentation", "inspect", "--db", str(directory / "linked.accdb"), "--backend", "dao", "--json"],
+            _cli_env(directory),
+        )
+    finally:
+        handle.Close()
+    sentinel_after = _sha256(sentinel)
+    evidence_path = work_dir / "inspect-linked.json"
+    evidence_path.write_text(completed.stdout, encoding="utf-8")
+    envelope = json.loads(completed.stdout) if completed.stdout.strip().startswith("{") else None
+    return {
+        "completed": completed,
+        "envelope": envelope,
+        "path": evidence_path,
+        "sentinel_before": sentinel_before,
+        "sentinel_after": sentinel_after,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 1. inspect core: extractor correctness against the synthetic fixtures
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_core_envelope_and_source_identity(core_evidence: dict[str, Any]) -> None:
+    """The inspect envelope is a success carrying versioned evidence."""
+    envelope = core_evidence["envelope"]
+    assert envelope["success"] is True
+    assert set(envelope) == {"success", "data", "rowcount"}
+    data = envelope["data"]
+    assert data["schema"] == "access.documentation.evidence/1"
+    assert data["status"] == "partial"
+    assert data["run"]["extractor_version"] == "1.0"
+    assert data["source"]["backend_identity"] == "DAO"
+    # FINDING (cosmetic): the CLI knows the inspected path, yet the evidence records the
+    # placeholders below instead of the available source identity/format.
+    assert data["source"]["path"] == "unspecified"
+    assert data["source"]["format"] == "unknown"
+    assert "Traceback" not in core_evidence["stderr"]
+
+
+def test_inspect_core_covers_exactly_manifest_tables_and_queries(
+    core_evidence: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """Evidence covers exactly the eight manifest tables and five saved queries."""
+    expected = e2e_build["expected"]["databases"]["core.accdb"]
+    payload = _payload(core_evidence)
+    table_names = [table["name"] for table in payload["tables"]]
+    query_names = [query["name"] for query in payload["queries"]]
+    assert set(table_names) == set(expected["tables"])
+    assert "Sales Notes" in table_names
+    assert set(query_names) == set(expected["queries"])
+    data = core_evidence["envelope"]["data"]
+    assert set(data["coverage"]["tables"]["inspected"]) == set(expected["tables"])
+    assert set(data["coverage"]["queries"]["inspected"]) == set(expected["queries"])
+    assert data["coverage"]["tables"]["failed"] == {}
+    assert data["run"]["scope"]["tables"] == table_names
+
+
+def test_inspect_core_primary_keys_and_unique_index(core_evidence: dict[str, Any]) -> None:
+    """Index-derived primary keys keep composite order; the real unique index survives."""
+    tables = _tables_by_name(core_evidence)
+    assert tables["OrderLines"]["primary_key"]["state"] == "observed"
+    assert tables["OrderLines"]["primary_key"]["value"] == ["OrderID", "LineNo"]
+    assert tables["Stock"]["primary_key"]["state"] == "observed"
+    assert tables["Stock"]["primary_key"]["value"] == ["ProductID", "WarehouseID"]
+    profiles_indexes = {index["name"]: index for index in tables["CustomerProfiles"]["indexes"]}
+    assert profiles_indexes["CustomersProfiles"]["columns"] == ["CustomerID"]
+    assert profiles_indexes["CustomersProfiles"]["is_unique"] is True
+    assert profiles_indexes["CustomersProfiles"]["is_primary"] is False
+
+
+def test_inspect_core_fact_states_legal_and_capability_gaps_unavailable(
+    core_evidence: dict[str, Any],
+) -> None:
+    """Every fact uses a legal state; unsupported query/relationship metadata is unavailable."""
+    payload = _payload(core_evidence)
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+    # Query parameters and DAO relationship attributes are genuinely unsupported:
+    # they must be unavailable facts with partial coverage, never invented values.
+    assert all(query["parameters"]["state"] == "unavailable" for query in payload["queries"])
+    assert all(relationship["attributes"]["state"] == "unavailable" for relationship in payload["relationships"])
+    data = core_evidence["envelope"]["data"]
+    assert data["status"] == "partial"
+    assert data["coverage"]["queries"]["unsupported"]
+    assert data["coverage"]["relationships"]["unsupported"]
+    assert data["coverage"]["tables"]["failed"] == {}
+    # FINDING (cosmetic): validation rules are not modelled by the evidence schema at all,
+    # so they are neither observed nor honestly marked unavailable. Assert none is fabricated.
+    assert all("validation" not in field for table in payload["tables"] for field in table["fields"])
+
+
+def test_inspect_core_field_defaults_are_read_from_dao(
+    core_evidence: dict[str, Any],
+) -> None:
+    """Field defaults are read from DAO ``Field.DefaultValue`` and reported honestly.
+
+    ACE exposes ``Field.DefaultValue`` (proved by raw read-only DAO readback), so a real
+    default is an ``observed`` stored expression (``Customers.Status`` = ``"Active"``,
+    ``Orders.Status`` = ``"Open"``) and a genuinely defaultless field is ``observed``
+    empty (``''``) -- a known empty, never a fabricated ``null`` and never ``unavailable``.
+    """
+    tables = _tables_by_name(core_evidence)
+    status_default = next(field for field in tables["Customers"]["fields"] if field["name"] == "Status")["default_value"]
+    assert status_default["state"] == "observed" and status_default["value"] == '"Active"'
+    orders_default = next(field for field in tables["Orders"]["fields"] if field["name"] == "Status")["default_value"]
+    assert orders_default["state"] == "observed" and orders_default["value"] == '"Open"'
+    name_default = next(field for field in tables["Customers"]["fields"] if field["name"] == "Name")["default_value"]
+    assert name_default["state"] == "observed" and name_default["value"] == ""
+
+
+def test_finding_inspect_core_update_query_is_miscategorised_as_select(
+    core_evidence: dict[str, Any],
+) -> None:
+    """FINDING (blocking qualification): DAO type 48 (dbUpdate) is reported as ``select``.
+
+    ``qryUpdateOrderStatus`` is an action query in the manifest (DAO type 48) and
+    ``qryDeleteDraftOrders`` is DAO type 32. The catalogue distinguishes delete but maps
+    update onto the default select category, so update and delete are not distinguished.
+    """
+    queries = _queries_by_name(core_evidence)
+    delete_type = queries["qryDeleteDraftOrders"]["type"]
+    assert delete_type["state"] == "observed" and delete_type["value"] == "action"
+    update_type = queries["qryUpdateOrderStatus"]["type"]
+    assert update_type["state"] == "observed" and update_type["value"] == "action", (
+        "Fixture qryUpdateOrderStatus is a DAO type 48 (dbUpdate) action query, but the "
+        f"extractor reported {update_type!r}; update and delete categories are not distinguished."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2. render database + er from the inspect evidence
+# ---------------------------------------------------------------------------
+
+
+def test_render_database_and_er_reports_from_inspect_evidence(core_reports: dict[str, Any]) -> None:
+    """Both report kinds are valid, versioned, and keep the documented section sets."""
+    database = core_reports["database"]["report"]
+    er = core_reports["er"]["report"]
+    for report in (database, er):
+        assert report["schema"] == "access.documentation.report/1"
+        assert report["status"] == "partial"
+        assert report["sha256"] == hashlib.sha256(report["markdown"].encode("utf-8")).hexdigest()
+        assert "## Data dictionary" in report["markdown"]
+        assert "## Relationship catalogue" in report["markdown"]
+        assert "## Mermaid ER diagram" in report["markdown"]
+    assert "## Saved queries" in database["markdown"]
+    assert "qryUpdateOrderStatus" in database["markdown"]
+    assert "## Saved queries" not in er["markdown"]
+    assert "Saved queries:" not in er["markdown"]
+
+
+def test_render_database_is_deterministic(
+    core_reports: dict[str, Any], core_evidence: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """Identical evidence and options produce identical Markdown and fingerprints."""
+    completed = _run_cli(
+        ["documentation", "render", "--evidence", str(core_evidence["path"]), "--kind", "database", "--json"],
+        _cli_env(e2e_build["directory"]),
+    )
+    assert completed.returncode == 0, completed.stderr
+    again = json.loads(completed.stdout)["data"]
+    first = core_reports["database"]["report"]
+    assert again["markdown"] == first["markdown"]
+    assert again["sha256"] == first["sha256"]
+
+
+def test_render_mermaid_aliases_preserve_original_names(
+    core_reports: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """Mermaid uses stable safe aliases while original names stay readable in the report."""
+    markdown = core_reports["database"]["report"]["markdown"]
+    block = _mermaid_block(markdown)
+    expected_tables = sorted(e2e_build["expected"]["databases"]["core.accdb"]["tables"])
+    for index, name in enumerate(expected_tables, 1):
+        assert f"| t{index} | {name} |" in markdown
+    assert sum(1 for line in block.splitlines() if _EDGE_RE.match(line)) == 7
+    # Unsafe originals never leak into the diagram; the readable report keeps them.
+    assert "Sales Notes" not in block
+    assert "R_sum_" in block
+    assert "Résumé" not in block
+    assert "Résumé" in markdown
+    assert "Sales Notes" in markdown
+
+
+def test_render_mermaid_relationship_cardinality_matches_documented_rules(
+    core_reports: dict[str, Any],
+) -> None:
+    """Every diagrammed edge matches the documented parent-uniqueness cardinality rules.
+
+    Documented rules (``documentation_render``/71152e7): a relationship is diagrammed only
+    when its parent columns match an observed primary/unique index; the parent end is
+    ``||`` and the child end is ``||`` only for an independent unique/primary child key,
+    otherwise ``}o``. Relationship auto-indexes cannot justify child uniqueness.
+
+    FINDING (cosmetic): the nullable ``Orders.BillingCustomerID`` FK renders the same as a
+    required FK (``}o--||``). The renderer has no way to express an optional parent because
+    relationship attributes are unavailable and field nullability is not consulted; the
+    documented rules do not cover nullable FKs.
+    """
+    markdown = core_reports["database"]["report"]["markdown"]
+    block = _mermaid_block(markdown)
+    aliases = dict(re.findall(r"^\| (t\d+) \| (.+?) \|$", markdown, re.MULTILINE))
+    assert aliases  # the alias table is present after the diagram
+    by_name = {name: alias for alias, name in aliases.items()}
+    expected_edges = {
+        (by_name["CustomerProfiles"], by_name["Customers"], "||", "relCustomersProfiles"),
+        (by_name["Orders"], by_name["Customers"], "}o", "CustomersOrders"),
+        (by_name["Orders"], by_name["Customers"], "}o", "BillingCustomersOrders"),
+        (by_name["OrderLines"], by_name["Orders"], "}o", "OrdersOrderLines"),
+        (by_name["Stock"], by_name["Products"], "}o", "ProductsStock"),
+        (by_name["Stock"], by_name["Warehouses"], "}o", "WarehousesStock"),
+        (by_name["OrderLines"], by_name["Stock"], "}o", "StockOrderLines"),
+    }
+    actual_edges: set[tuple[str, str, str, str]] = set()
+    for line in block.splitlines():
+        match = _EDGE_RE.match(line)
+        if match:
+            child, child_end, parent_end, parent, label = match.groups()
+            assert parent_end == "||", line
+            actual_edges.add((child, parent, child_end, label))
+    assert actual_edges == expected_edges
+    # The composite FK keeps its aligned, ordered column pairs in the catalogue.
+    assert "ProductID → ProductID; WarehouseID → WarehouseID" in markdown
+
+
+# ---------------------------------------------------------------------------
+# 3. save gating on rendered report copies
+# ---------------------------------------------------------------------------
+
+
+def test_save_gating_contract_on_report_copies(
+    e2e_build: dict[str, Any], work_dir: Path, core_reports: dict[str, Any]
+) -> None:
+    """Permission, confirm, overwrite, fingerprint, and byte-stability of rejections."""
+    directory = e2e_build["directory"]
+    denied_env = _cli_env(directory)
+    granted_env = _cli_env(directory, allow_doc_write=True)
+    database_path = core_reports["database"]["path"]
+    database_markdown = core_reports["database"]["report"]["markdown"]
+    er_path = core_reports["er"]["path"]
+    er_markdown = core_reports["er"]["report"]["markdown"]
+    destination = work_dir / "saved-report.md"
+
+    def save(report_path: Path, *extra: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return _run_cli(
+            [
+                "documentation",
+                "save",
+                "--report",
+                str(report_path),
+                "--output-path",
+                str(destination),
+                *extra,
+                "--json",
+            ],
+            env,
+        )
+
+    # (a) operator permission is required even with confirmation.
+    completed = save(database_path, "--yes", env=denied_env)
+    assert completed.returncode == 1
+    denied = json.loads(completed.stdout)
+    assert denied["success"] is False
+    assert "permission" in denied["error"]
+    assert not destination.exists()
+
+    # (b) the per-call --yes confirmation is required before any save.
+    completed = save(database_path, "--allow-doc-write", env=granted_env)
+    assert completed.returncode == 2
+    assert completed.stderr == "Error: documentation save requires --yes\n"
+    assert not destination.exists()
+
+    # (c) an env grant plus --yes writes exactly the report bytes and reports the fingerprint.
+    completed = save(database_path, "--yes", env=granted_env)
+    assert completed.returncode == 0, completed.stderr
+    saved = json.loads(completed.stdout)["data"]
+    written = destination.read_bytes()
+    assert written == database_markdown.encode("utf-8")
+    assert saved["bytes_written"] == len(database_markdown.encode("utf-8"))
+    assert saved["sha256"] == hashlib.sha256(written).hexdigest()
+    first_sha = saved["sha256"]
+
+    # (d) an existing destination needs explicit overwrite approval.
+    completed = save(database_path, "--allow-doc-write", "--yes", env=denied_env)
+    assert completed.returncode == 1
+    assert "overwrite" in json.loads(completed.stdout)["error"]
+    assert destination.read_bytes() == written
+
+    # (e) overwrite needs the current destination fingerprint.
+    completed = save(database_path, "--allow-doc-write", "--yes", "--overwrite", env=denied_env)
+    assert completed.returncode == 1
+    assert "fingerprint" in json.loads(completed.stdout)["error"]
+    assert destination.read_bytes() == written
+
+    # (f) a stale fingerprint is rejected and leaves the destination byte-identical.
+    completed = save(
+        database_path,
+        "--allow-doc-write",
+        "--yes",
+        "--overwrite",
+        "--expected-fingerprint",
+        hashlib.sha256(b"stale").hexdigest(),
+        env=denied_env,
+    )
+    assert completed.returncode == 1
+    assert "fingerprint" in json.loads(completed.stdout)["error"]
+    assert destination.read_bytes() == written
+
+    # (g) a matching fingerprint overwrites with the new report and reports its fingerprint.
+    assert er_markdown != database_markdown
+    completed = save(
+        er_path,
+        "--allow-doc-write",
+        "--yes",
+        "--overwrite",
+        "--expected-fingerprint",
+        first_sha,
+        env=denied_env,
+    )
+    assert completed.returncode == 0, completed.stderr
+    overwritten = json.loads(completed.stdout)["data"]
+    assert destination.read_bytes() == er_markdown.encode("utf-8")
+    assert overwritten["sha256"] == hashlib.sha256(destination.read_bytes()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# 5. linked isolation via access-observation
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_linked_succeeds_while_sentinel_is_exclusively_locked(
+    linked_isolation: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """A successful linked inspection under an exclusive sentinel lock proves no contact."""
+    completed = linked_isolation["completed"]
+    assert completed.returncode == 0, completed.stderr
+    assert linked_isolation["envelope"] is not None
+    assert linked_isolation["envelope"]["success"] is True
+    # Positive evidence of no contact: the sentinel was locked elsewhere for the whole
+    # inspection, so any attempted resolution/refresh would have failed; the file bytes
+    # are unchanged (hashes prove no observed mutation, not engine-level read-only).
+    assert linked_isolation["sentinel_after"] == linked_isolation["sentinel_before"]
+    assert linked_isolation["sentinel_after"] == e2e_build["inventory"]["sentinel.accdb"]["sha256"]
+    payload = linked_isolation["envelope"]["data"]["data"]
+    names = {table["name"] for table in payload["tables"]}
+    assert names == {"LinkedCustomers", "LocalNotes"}
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+
+def test_finding_inspect_linked_local_link_metadata_absent_from_evidence(
+    linked_isolation: dict[str, Any],
+) -> None:
+    """FINDING (blocking qualification): local linked-table metadata never reaches evidence.
+
+    Spec section 3.2 requires a Table subject to record its kind where available, and the
+    fixture's ``LinkedCustomers`` is an attached table whose local catalogue exposes
+    ``Connect`` (containing ``sentinel.accdb``) and ``SourceTableName``
+    (``SentinelCustomers``). The evidence model has no field for any of these, so the report
+    cannot show that ``LinkedCustomers`` is a link or where it points.
+    """
+    payload = linked_isolation["envelope"]["data"]["data"]
+    linked = next(table for table in payload["tables"] if table["name"] == "LinkedCustomers")
+    assert any(key in linked for key in ("kind", "connect", "source_table", "attributes")), (
+        "Linked-table local catalogue metadata (kind/Connect/SourceTableName) must be "
+        f"represented in evidence; LinkedCustomers carried only {sorted(linked)}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4. non-execution invariants across the whole session (must run last)
+# ---------------------------------------------------------------------------
+
+
+def test_non_execution_invariants_after_inspect_render_save(
+    e2e_build: dict[str, Any],
+    dao_engine: Any,
+    core_evidence: dict[str, Any],
+    core_reports: dict[str, Any],
+) -> None:
+    """After the whole pipeline the fixtures are byte-identical and rows are untouched.
+
+    The hashes prove no *observed* mutation. They do not prove engine-level read-only
+    enforcement: the DAO handle still opens with ``read_only=False`` (the known
+    ``backends/dao.py`` gap) and no assertion here claims that protection.
+    """
+    del core_evidence, core_reports  # requested only to force inspect/render to run first
+    expected = e2e_build["expected"]["databases"]["core.accdb"]
+    directory = e2e_build["directory"]
+    with _open_readonly(dao_engine, directory / "core.accdb") as db:
+        for table_name, spec in expected["tables"].items():
+            assert len(_snapshot_rows(db, table_name)) == spec["rows"], table_name
+        orders = sorted((row["OrderID"], row["Status"]) for row in _snapshot_rows(db, "Orders"))
+        sentinels = [tuple(pair) for pair in expected["sentinels"]["Orders"]]
+        assert orders == sentinels
+    with _open_readonly(dao_engine, directory / "sentinel.accdb") as sentinel:
+        assert len(_snapshot_rows(sentinel, "SentinelCustomers")) == 1
+    with _open_readonly(dao_engine, directory / "linked.accdb") as linked:
+        assert len(_snapshot_rows(linked, "LocalNotes")) == 1
+    for name in ("core.accdb", "sentinel.accdb", "linked.accdb"):
+        assert _sha256(directory / name) == e2e_build["inventory"][name]["sha256"], name

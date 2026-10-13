@@ -73,11 +73,15 @@ class FakeTableDef:
         fields: list[FakeField],
         indexes: list[FakeIndex] | None = None,
         attributes: int = 0,
+        connect: str = "",
+        source_table_name: str = "",
     ) -> None:
         self.Name = name
         self.Fields = FakeFields(fields)
         self.Indexes = FakeIndexes(indexes) if indexes is not None else FakeIndexes([])
         self.Attributes = attributes
+        self.Connect = connect
+        self.SourceTableName = source_table_name
 
 
 class FakeTableDefs:
@@ -161,9 +165,12 @@ class FakeRelations:
 
 
 class FakeQueryDef:
-    def __init__(self, name: str, sql: str = "") -> None:
+    def __init__(self, name: str, sql: str = "", type: int | None = None) -> None:
         self.Name = name
         self.SQL = sql
+        # OMITTED when None so the AttributeError fallback path stays exercised.
+        if type is not None:
+            self.Type = type
 
 
 class FakeQueryDefs:
@@ -318,6 +325,35 @@ class TestGetTables:
         assert [table.name for table in tables] == ["Customers"]
         db.OpenRecordset.assert_not_called()
 
+    def test_field_default_value_is_read_from_dao_and_nul_stripped(self) -> None:
+        """F1: Field.DefaultValue reaches FieldInfo; defaultless is empty, NUL stripped."""
+        tdef = FakeTableDef(
+            "Customers",
+            [
+                FakeField("Status", 10, size=20, default_value='"Active"'),
+                FakeField("Name", 10, size=100, default_value=""),
+                FakeField("Flag", 1, default_value="0\x00"),
+            ],
+        )
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[tdef])))
+        defaults = {field.name: field.default_value for field in insp.get_tables()[0].fields}
+        assert defaults == {"Status": '"Active"', "Name": "", "Flag": "0"}
+
+    def test_field_metadata_is_preserved_alongside_the_default(self) -> None:
+        """PRESERVE: reading DefaultValue must not disturb the other field facts."""
+        tdef = FakeTableDef(
+            "Customers",
+            [FakeField("Name", 10, size=100, required=True, allow_zero_length=False, default_value='"x"')],
+        )
+        field = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[tdef]))).get_tables()[0].fields[0]
+        assert (field.type, field.size, field.required, field.allow_zero_length, field.default_value) == (
+            "Text",
+            100,
+            True,
+            False,
+            '"x"',
+        )
+
 
 class TestGetSystemTables:
     def test_returns_msys_tables_with_zero_record_count(self) -> None:
@@ -339,6 +375,68 @@ class TestGetQueries:
         assert len(rels) == 2
         assert rels[0].name == "qry1"
         assert rels[1].name == "qry2"
+
+    def test_maps_dao_update_type_48_to_action_category(self) -> None:
+        """F2: DAO type 48 (dbUpdate) is an action query, not a select."""
+        qdefs = [FakeQueryDef("qryUpdateOrderStatus", "UPDATE [Orders] SET [Status]='Closed'", type=48)]
+        db = FakeDb(tdefs=[], qdefs=qdefs)
+        insp = SchemaInspector(FakeDispatcher(db=db))
+        queries = insp.get_queries()
+        assert [(query.name, query.type) for query in queries] == [("qryUpdateOrderStatus", "action")]
+
+    def test_previously_held_query_type_mappings_still_hold(self) -> None:
+        """PRESERVE: the pre-existing 0/32/80 categories must not change."""
+        qdefs = [
+            FakeQueryDef("qryOpenOrders", "SELECT 1", type=0),
+            FakeQueryDef("qryDeleteDraftOrders", "DELETE FROM [Orders]", type=32),
+            FakeQueryDef("qryMakeTable", "SELECT 1 INTO [T2]", type=80),
+        ]
+        db = FakeDb(tdefs=[], qdefs=qdefs)
+        insp = SchemaInspector(FakeDispatcher(db=db))
+        assert {query.name: query.type for query in insp.get_queries()} == {
+            "qryOpenOrders": "select",
+            "qryDeleteDraftOrders": "action",
+            "qryMakeTable": "ddl",
+        }
+
+
+class TestGetLinkedTableMetadata:
+    def test_attached_table_returns_local_catalogue_metadata(self) -> None:
+        tdef = FakeTableDef(
+            "LinkedCustomers",
+            [FakeField("CustomerID", 4)],
+            attributes=0x40000000,
+            connect=";DATABASE=C:\\fixtures\\sentinel.accdb",
+            source_table_name="SentinelCustomers",
+        )
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[tdef])))
+        assert insp.get_table_link_metadata("LinkedCustomers") == {
+            "connect": ";DATABASE=C:\\fixtures\\sentinel.accdb",
+            "source_table_name": "SentinelCustomers",
+        }
+
+    def test_local_table_returns_none(self) -> None:
+        tdef = FakeTableDef("LocalNotes", [FakeField("NotesID", 4)])
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[tdef])))
+        assert insp.get_table_link_metadata("LocalNotes") is None
+
+    def test_trailing_nul_padding_is_stripped_from_com_strings(self) -> None:
+        tdef = FakeTableDef(
+            "LinkedCustomers",
+            [FakeField("CustomerID", 4)],
+            attributes=0x40000000,
+            connect=";DATABASE=C:\\fixtures\\sentinel.accdb\x00",
+            source_table_name="SentinelCustomers\x00",
+        )
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[tdef])))
+        assert insp.get_table_link_metadata("LinkedCustomers") == {
+            "connect": ";DATABASE=C:\\fixtures\\sentinel.accdb",
+            "source_table_name": "SentinelCustomers",
+        }
+
+    def test_disconnected_returns_none(self) -> None:
+        insp = SchemaInspector(FakeDispatcher(db=None, connected=False))
+        assert insp.get_table_link_metadata("LinkedCustomers") is None
 
 
 class TestGetIndexes:

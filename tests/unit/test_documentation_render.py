@@ -157,6 +157,23 @@ def test_composite_relationship_pairs_render_in_aligned_order() -> None:
     assert "ALIGNED" in report.markdown
 
 
+def test_linked_table_renders_local_link_source_in_database_report() -> None:
+    evidence = make_evidence()
+    linked = evidence.tables[1]
+    linked.kind = "linked"
+    linked.connect = ";DATABASE=D:\\fixtures\\sentinel.accdb"
+    linked.source_table_name = "SentinelCustomers"
+    markdown = render_document(evidence, kind="database").markdown
+    assert f"- Linked table: {linked.name} → sentinel.accdb/SentinelCustomers" in markdown
+    er = render_document(evidence, kind="er").markdown
+    assert f"- Linked table: {linked.name} → sentinel.accdb/SentinelCustomers" in er
+
+
+def test_local_tables_render_no_link_line() -> None:
+    markdown = render_document(make_evidence()).markdown
+    assert "Linked table:" not in markdown
+
+
 def test_unusual_names_are_aliased_in_mermaid_and_pipes_escaped_in_tables() -> None:
     report = render_document(make_evidence(unusual=True))
     assert "t1" in report.markdown and "t2" in report.markdown

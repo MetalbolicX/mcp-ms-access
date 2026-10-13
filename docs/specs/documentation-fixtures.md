@@ -1,8 +1,8 @@
 # Synthetic documentation fixtures
 
-Status: generator, expected manifest, and the opt-in raw-readback integration suite
-implemented; documentation-pipeline qualification still pending. This suite does not
-qualify engine-level read-only protection or startup-code non-execution.
+Status: generator, expected manifest, the opt-in raw-readback integration suite, and
+the opt-in documentation-pipeline qualification suite are implemented. Neither suite
+qualifies engine-level read-only protection or startup-code non-execution.
 
 ## Generate
 
@@ -116,6 +116,52 @@ Link creation intentionally contacts the local sentinel during construction.
 Hash equality or lack of lock files cannot establish that later inspection never
 contacts it. That claim needs access-observation evidence during the inspection
 window, which is outside this initial suite's proof.
+
+The opt-in suite `tests/integration/test_documentation_pipeline_e2e.py` qualifies the
+documentation pipeline against the same synthetic fixtures through the public CLI
+(`documentation inspect|render|save`) in subprocesses. It proves: index-derived
+composite primary keys (`OrderLines`, `Stock`) and the genuine unique
+`CustomerProfiles.CustomersProfiles` index, exactly the eight manifest tables and five
+saved queries, legal evidence states with query-parameter and relationship-attribute
+capabilities reported as `unavailable` with partial coverage, deterministic
+database/ER rendering with safe Mermaid aliases and original names preserved, ER-only
+output excluding the query catalogue, the child-side `}o--||` cardinality rule
+(including the unique-index-backed one-to-one `relCustomersProfiles` and the composite
+`StockOrderLines` FK), save gating (operator permission, per-call confirm, overwrite
+approval, expected/stale fingerprint, byte-identical rejected saves), and linked
+inspection succeeding while `sentinel.accdb` is held open exclusively elsewhere
+(access-observation evidence that inspection did not contact the linked source).
+
+All three blocking qualification findings from that suite are resolved in T3 phase 2:
+
+1. **Resolved.** Field defaults are read from DAO `Field.DefaultValue` (`Customers.Status = "Active"`,
+   `Orders.Status = "Open"`, defaultless fields `''`) and reported as `observed` stored
+   expressions; the former `unavailable` expectation was replaced because ACE exposes the
+   capability (`documentation-workflows.md` §3.2). Acceptance test
+   `test_inspect_core_field_defaults_are_read_from_dao`; unit
+   `TestGetTables::test_field_default_value_is_read_from_dao_and_nul_stripped` plus its
+   preserve case.
+2. **Resolved.** DAO type 48 (`dbUpdate`) now maps to `action` (`_DAO_QUERY_CATEGORY`:
+   32/48/64 → `action`, 80/96 → `ddl`; 0/32/80 preserved), so `qryUpdateOrderStatus` and
+   `qryDeleteDraftOrders` are distinguished. Unit coverage:
+   `test_maps_dao_update_type_48_to_action_category` plus the `0/32/80` preserve case.
+3. **Resolved.** `SchemaInspector.get_table_link_metadata` reads the LOCAL catalogue only
+   (`Attributes & 0x40000000`, `Connect`, `SourceTableName`; trailing NUL stripped), the
+   inspection port surfaces it, `TableEvidence` gains additive optional
+   `kind`/`connect`/`source_table_name`, and the data dictionary renders
+   `- Linked table: LinkedCustomers → sentinel.accdb/SentinelCustomers`. No `RefreshLink`,
+   no linked-record access, no target contact.
+
+The three cosmetic gaps stay open intentionally: nullable-FK cardinality rendering
+(`Orders.BillingCustomerID` still diagrams `}o--||`), the pywin32 `IUnknown` teardown
+stderr banner, and the `source.path`/`source.format` placeholders.
+
+Still unproven by any fixture suite: startup/macro/VBA non-execution (no executable
+fixture exists), engine-level read-only enforcement (fixture hashes prove no observed
+mutation only; the DAO handle still opens with `read_only=False`), and the ODBC
+backend. Linked-source isolation is now observed for this fixture while the sentinel is
+exclusively locked, but it is scoped to that observation and not to engine-level
+enforcement.
 
 No startup macro or executable VBA fixture is generated or run here. Startup
 execution remains separately authorized. An unchanged source hash establishes

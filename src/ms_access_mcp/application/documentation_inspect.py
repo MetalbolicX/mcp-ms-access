@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from ..backends.schema_inspector import SchemaInspector
 from ..errors import AccessMcpError
-from ..models import IndexInfo, QueryInfo, RelationshipInfo, TableInfo
+from ..models import FieldInfo, IndexInfo, QueryInfo, RelationshipInfo, TableInfo
 from .documentation import (
     Coverage,
     EvidenceDoc,
@@ -30,6 +30,8 @@ class InspectionPort(Protocol):
     """Read-only inspection surface over an already-open database session."""
 
     def list_tables(self) -> list[TableInfo]: ...
+
+    def get_table_link_metadata(self, table_name: str) -> dict[str, Any] | None: ...
 
     def get_indexes(self, table_name: str) -> list[IndexInfo]: ...
 
@@ -62,6 +64,9 @@ class DaoInspectionPort:
 
     def list_tables(self) -> list[TableInfo]:
         return self._inspector.get_tables()
+
+    def get_table_link_metadata(self, table_name: str) -> dict[str, Any] | None:
+        return self._inspector.get_table_link_metadata(table_name)
 
     def get_indexes(self, table_name: str) -> list[IndexInfo]:
         return self._inspector.get_indexes(table_name)
@@ -131,11 +136,12 @@ class DocumentationInspectService:
             coverage.tables.inspected.append(table.name)
             try:
                 indexes = port.get_indexes(table.name)
-                table_evidence.append(_table_evidence(table, indexes))
+                link_metadata = port.get_table_link_metadata(table.name)
+                table_evidence.append(_table_evidence(table, indexes, link_metadata))
             except Exception as error:
                 reason = _reason(error)
                 coverage.tables.failed[table.name] = reason
-                table_evidence.append(_table_evidence(table, None, reason))
+                table_evidence.append(_table_evidence(table, None, failure=reason))
 
         relationship_evidence: list[RelationshipEvidence] = []
         try:
@@ -207,7 +213,12 @@ def _provenance(kind: str, name: str, prop: str) -> FactProvenance:
     return FactProvenance(kind, name or "unnamed", prop)
 
 
-def _table_evidence(table: TableInfo, indexes: list[IndexInfo] | None, failure: str | None = None) -> TableEvidence:
+def _table_evidence(
+    table: TableInfo,
+    indexes: list[IndexInfo] | None,
+    link_metadata: dict[str, Any] | None = None,
+    failure: str | None = None,
+) -> TableEvidence:
     fields = [
         FieldEvidence(
             name=field.name,
@@ -215,7 +226,7 @@ def _table_evidence(table: TableInfo, indexes: list[IndexInfo] | None, failure: 
             size=FactStatus.observed(field.size, _provenance("field", field.name, "size")),
             required=FactStatus.observed(field.required, _provenance("field", field.name, "required")),
             allow_zero_length=FactStatus.observed(field.allow_zero_length, _provenance("field", field.name, "allow_zero_length")),
-            default_value=FactStatus.observed(field.default_value, _provenance("field", field.name, "default_value")),
+            default_value=_field_default_fact(field),
         )
         for field in table.fields
     ]
@@ -229,7 +240,28 @@ def _table_evidence(table: TableInfo, indexes: list[IndexInfo] | None, failure: 
             IndexEvidence(item.name, list(item.columns), item.is_unique, item.is_primary, item.ignore_nulls)
             for item in indexes
         ]
-    return TableEvidence(table.name, fields, primary_key, index_evidence)
+    kind = "linked" if link_metadata else "local"
+    connect = link_metadata.get("connect") if link_metadata else None
+    source_table_name = link_metadata.get("source_table_name") if link_metadata else None
+    return TableEvidence(
+        name=table.name,
+        fields=fields,
+        primary_key=primary_key,
+        indexes=index_evidence,
+        kind=kind,
+        connect=connect,
+        source_table_name=source_table_name,
+    )
+
+
+def _field_default_fact(field: FieldInfo) -> FactStatus[Any]:
+    """Map a field default without fabricating `observed null` for ports that expose none."""
+    provenance = _provenance("field", field.name, "default_value")
+    if field.default_value is None:
+        return FactStatus.unavailable(
+            "Field default value was not exposed by the engine or runtime", provenance
+        )
+    return FactStatus.observed(field.default_value, provenance)
 
 
 def _query_evidence(query: QueryInfo) -> QueryEvidence:

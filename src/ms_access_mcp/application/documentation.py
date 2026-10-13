@@ -159,10 +159,17 @@ class TableEvidence:
     fields: list[FieldEvidence]
     primary_key: FactStatus[list[str]]
     indexes: list[IndexEvidence] = field(default_factory=list)
+    kind: str = "local"
+    connect: str | None = None
+    source_table_name: str | None = None
 
     def validate(self) -> None:
         if not self.name:
             raise ValueError("Table name must be non-empty")
+        if self.kind not in ("local", "linked"):
+            raise ValueError(f"Unknown table kind: {self.kind}")
+        if self.kind == "local" and (self.connect is not None or self.source_table_name is not None):
+            raise ValueError("Local tables must not carry link metadata")
         self.primary_key.validate()
         for item in self.fields:
             item.validate()
@@ -171,11 +178,11 @@ class TableEvidence:
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
-        return {"name": self.name, "fields": [item.to_dict() for item in self.fields], "primary_key": self.primary_key.to_dict(), "indexes": [item.to_dict() for item in self.indexes]}
+        return {"name": self.name, "fields": [item.to_dict() for item in self.fields], "primary_key": self.primary_key.to_dict(), "indexes": [item.to_dict() for item in self.indexes], "kind": self.kind, "connect": self.connect, "source_table_name": self.source_table_name}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TableEvidence:
-        return cls(name=data["name"], fields=[FieldEvidence.from_dict(item) for item in data["fields"]], primary_key=FactStatus.from_dict(data["primary_key"]), indexes=[IndexEvidence.from_dict(item) for item in data["indexes"]])
+        return cls(name=data["name"], fields=[FieldEvidence.from_dict(item) for item in data["fields"]], primary_key=FactStatus.from_dict(data["primary_key"]), indexes=[IndexEvidence.from_dict(item) for item in data["indexes"]], kind=data.get("kind", "local"), connect=data.get("connect"), source_table_name=data.get("source_table_name"))
 
 
 @dataclass

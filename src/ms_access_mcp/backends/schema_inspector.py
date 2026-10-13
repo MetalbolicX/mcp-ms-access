@@ -54,6 +54,29 @@ def _access_type_name(type_code: int) -> str:
     return _ACCESS_TYPE_MAP.get(type_code, f"Unknown({type_code})")
 
 
+# DAO TableDef.Attributes bit set on an attached (linked) table.
+_DAO_ATTACHED_TABLE = 0x40000000
+
+
+def _com_string(value: Any) -> str:
+    """Normalize a COM string read, stripping ACE's trailing NUL padding."""
+    if value is None:
+        return ""
+    return str(value).rstrip("\x00")
+
+
+# DAO QueryDef.Type codes → evidence query categories. Codes absent from this map
+# (dbQSelect 0, dbQCrosstab 16, dbQSQLPassThrough 112, dbQSetOperation 128, ...)
+# keep the historical default category "select".
+_DAO_QUERY_CATEGORY: dict[int, str] = {
+    32: "action",  # dbQDelete
+    48: "action",  # dbQUpdate
+    64: "action",  # dbQAppend
+    80: "ddl",  # dbQMakeTable (historical category retained)
+    96: "ddl",  # dbQDDL
+}
+
+
 class SchemaInspector:
     """DAO schema read operations via ComDispatcher."""
 
@@ -85,6 +108,7 @@ class SchemaInspector:
                             size=fld.Size,
                             required=bool(fld.Required),
                             allow_zero_length=bool(fld.AllowZeroLength),
+                            default_value=_com_string(fld.DefaultValue),
                         )
                     )
                 tables.append(TableInfo(name=name, fields=fields))
@@ -138,15 +162,36 @@ class SchemaInspector:
                     pass
                 qtype = "select"
                 try:
-                    t = qdef.Type
-                    if t == 32:
-                        qtype = "action"
-                    elif t == 80:
-                        qtype = "ddl"
+                    qtype = _DAO_QUERY_CATEGORY.get(int(qdef.Type), "select")
                 except Exception:
                     pass
                 queries.append(QueryInfo(name=name, sql=sql, type=qtype))
             return queries
+
+        return self._dispatcher.call(_do)
+
+    def get_table_link_metadata(self, table_name: str) -> dict[str, Any] | None:
+        """Return local link metadata for an attached table, or None when it is local.
+
+        Reads only the local catalogue (``Attributes``, ``Connect``,
+        ``SourceTableName``); the linked source is never resolved, opened, refreshed,
+        or contacted.
+        """
+        if not self._dispatcher.is_connected():
+            return None
+
+        def _do() -> dict[str, Any] | None:
+            db = self._dispatcher.current_db
+            try:
+                tdef = db.TableDefs[table_name]
+            except Exception:
+                return None
+            if not (tdef.Attributes & _DAO_ATTACHED_TABLE):
+                return None
+            return {
+                "connect": _com_string(getattr(tdef, "Connect", "")),
+                "source_table_name": _com_string(getattr(tdef, "SourceTableName", "")),
+            }
 
         return self._dispatcher.call(_do)
 

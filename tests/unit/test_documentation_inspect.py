@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
@@ -20,12 +21,21 @@ class FakePort:
     indexes: dict[str, list[IndexInfo] | Exception]
     relationships: list[RelationshipInfo] | Exception
     queries: list[QueryInfo] | Exception
+    link_metadata: dict[str, dict[str, Any] | Exception] | None = None
     closed: bool = False
 
     def list_tables(self) -> list[TableInfo]:
         if isinstance(self.tables, Exception):
             raise self.tables
         return self.tables
+
+    def get_table_link_metadata(self, table_name: str) -> dict[str, Any] | None:
+        if self.link_metadata is None:
+            return None
+        result = self.link_metadata.get(table_name)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     def get_indexes(self, table_name: str) -> list[IndexInfo]:
         result = self.indexes.get(table_name, [])
@@ -53,12 +63,14 @@ def port(
     indexes: dict[str, list[IndexInfo] | Exception] | None = None,
     relationships: list[RelationshipInfo] | Exception | None = None,
     queries: list[QueryInfo] | Exception | None = None,
+    link_metadata: dict[str, dict[str, Any] | Exception] | None = None,
 ) -> FakePort:
     return FakePort(
         tables=[] if tables is None else tables,
         indexes={} if indexes is None else indexes,
         relationships=[] if relationships is None else relationships,
         queries=[] if queries is None else queries,
+        link_metadata={} if link_metadata is None else link_metadata,
     )
 
 
@@ -67,13 +79,72 @@ def inspect_with(fake: FakePort, tables: list[str] | None = None, queries: list[
 
 
 def test_fake_port_signatures_match_production_port() -> None:
-    for method_name in ("list_tables", "get_indexes", "get_relationships", "get_queries", "close"):
+    for method_name in (
+        "list_tables",
+        "get_table_link_metadata",
+        "get_indexes",
+        "get_relationships",
+        "get_queries",
+        "close",
+    ):
         assert inspect.signature(getattr(FakePort, method_name)) == inspect.signature(
             getattr(DaoInspectionPort, method_name)
         )
         assert inspect.signature(getattr(FakePort, method_name)) == inspect.signature(
             getattr(InspectionPort, method_name)
         )
+
+
+def test_field_defaults_map_to_observed_facts_without_gaps() -> None:
+    """F1: FieldInfo defaults become observed facts; a real default is never null/unavailable."""
+    document = inspect_with(
+        port(
+            tables=[
+                TableInfo(
+                    "T",
+                    fields=[
+                        FieldInfo("Status", "Text", default_value='"Active"'),
+                        FieldInfo("Name", "Text", default_value=""),
+                    ],
+                )
+            ],
+            indexes={"T": []},
+        )
+    )
+    defaults = {item.name: item.default_value for item in document.tables[0].fields}
+    assert defaults["Status"].state == "observed" and defaults["Status"].value == '"Active"'
+    assert defaults["Name"].state == "observed" and defaults["Name"].value == ""
+    # Readable defaults are real capability, so they must not force partial coverage.
+    assert document.status == "complete"
+
+
+def test_field_default_none_maps_to_unavailable_while_real_defaults_stay_observed() -> None:
+    """A port that does not expose a default must not fabricate `observed null` at the seam."""
+    document = inspect_with(
+        port(
+            tables=[
+                TableInfo(
+                    "T",
+                    fields=[
+                        FieldInfo("NotExposed", "Text", default_value=None),
+                        FieldInfo("Status", "Text", default_value='"Active"'),
+                    ],
+                )
+            ],
+            indexes={"T": []},
+        )
+    )
+    defaults = {item.name: item.default_value for item in document.tables[0].fields}
+    missing = defaults["NotExposed"]
+    assert missing.state == "unavailable"
+    assert missing.reason and missing.reason.strip()
+    assert missing.provenance.object_kind == "field"
+    assert missing.provenance.object_name == "NotExposed"
+    assert missing.provenance.property == "default_value"
+    real = defaults["Status"]
+    assert real.state == "observed" and real.value == '"Active"'
+    # An unexposed default is a real gap, so it must not let the document report complete.
+    assert document.status == "partial"
 
 
 def test_unknown_requested_names_raise_and_list_names() -> None:
@@ -167,6 +238,41 @@ def test_coverage_counts_include_inspected_excluded_unsupported_and_failed() -> 
     assert len(document.coverage.tables.excluded) == 1
     assert len(document.coverage.tables.unsupported) == 0
     assert len(document.coverage.tables.failed) == 1
+
+
+def test_linked_table_local_catalogue_metadata_reaches_evidence() -> None:
+    fake = port(
+        tables=[
+            TableInfo("LinkedCustomers", fields=[FieldInfo("CustomerID", "Long Integer")]),
+            TableInfo("LocalNotes", fields=[FieldInfo("NotesID", "Long Integer")]),
+        ],
+        indexes={"LinkedCustomers": [], "LocalNotes": []},
+        link_metadata={
+            "LinkedCustomers": {
+                "connect": ";DATABASE=C:\\fixtures\\sentinel.accdb",
+                "source_table_name": "SentinelCustomers",
+            }
+        },
+    )
+    linked, local = inspect_with(fake).tables
+    assert linked.kind == "linked"
+    assert linked.connect == ";DATABASE=C:\\fixtures\\sentinel.accdb"
+    assert linked.source_table_name == "SentinelCustomers"
+    assert linked.to_dict()["kind"] == "linked"
+    assert local.kind == "local"
+    assert local.connect is None and local.source_table_name is None
+
+
+def test_link_metadata_read_failure_marks_the_table_failed() -> None:
+    fake = port(
+        tables=[TableInfo("LinkedCustomers")],
+        indexes={"LinkedCustomers": []},
+        link_metadata={"LinkedCustomers": RuntimeError("link metadata read failed")},
+    )
+    document = inspect_with(fake)
+    assert document.tables[0].name == "LinkedCustomers"
+    assert "link metadata read failed" in document.coverage.tables.failed["LinkedCustomers"]
+    assert document.status == "partial"
 
 
 def test_port_close_runs_even_when_enumeration_raises() -> None:

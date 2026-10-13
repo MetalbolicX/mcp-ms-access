@@ -98,6 +98,32 @@ def test_blank_query_sql_is_not_observed_empty_but_failed_sql_retains_reason() -
         QueryEvidence(name="Q", sql=FactStatus.observed("", provenance()), type=FactStatus.observed("select", provenance("query", "Q", "type"))).validate()
 
 
+def test_table_link_metadata_defaults_local_and_round_trips_when_linked() -> None:
+    evidence = make_document()
+    local = evidence.tables[0]
+    assert (local.kind, local.connect, local.source_table_name) == ("local", None, None)
+    assert local.to_dict()["kind"] == "local"
+    local.kind = "linked"
+    local.connect = ";DATABASE=C:\\fixtures\\sentinel.accdb"
+    local.source_table_name = "SentinelCustomers"
+    restored = EvidenceDoc.from_dict(evidence.to_dict())
+    assert restored == evidence
+    assert restored.tables[0].kind == "linked"
+    assert restored.tables[0].connect == ";DATABASE=C:\\fixtures\\sentinel.accdb"
+    assert restored.tables[0].source_table_name == "SentinelCustomers"
+
+
+def test_unknown_table_kind_and_local_link_metadata_are_rejected() -> None:
+    evidence = make_document()
+    evidence.tables[0].kind = "external"
+    with pytest.raises(ValueError, match="table kind"):
+        evidence.validate()
+    evidence.tables[0].kind = "local"
+    evidence.tables[0].connect = ";DATABASE=x"
+    with pytest.raises(ValueError, match="Local tables"):
+        evidence.validate()
+
+
 def test_status_is_complete_without_gaps_and_partial_with_non_excluded_gap() -> None:
     evidence = make_document()
     assert evidence.status == "complete"
