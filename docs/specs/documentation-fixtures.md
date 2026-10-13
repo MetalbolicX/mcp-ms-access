@@ -1,8 +1,8 @@
 # Synthetic documentation fixtures
 
-Status: generator and expected manifest implemented; ACE build and integration
-qualification still pending. This suite does not qualify engine-level read-only
-protection or startup-code non-execution.
+Status: generator, expected manifest, and the opt-in raw-readback integration suite
+implemented; documentation-pipeline qualification still pending. This suite does not
+qualify engine-level read-only protection or startup-code non-execution.
 
 ## Generate
 
@@ -84,22 +84,33 @@ DAO readback of a field `ValidationRule` can carry a trailing NUL character; the
 expected manifest records the authored rule (`>=0`), so runtime comparison should
 normalize that readback rather than treat the NUL as a property of the fixture.
 
-Runtime qualification is not implemented yet. A later task adds an opt-in integration
-file, `tests/integration/test_documentation_fixtures_e2e.py` (not present on this
-branch), which will create independent fixture directories under `db/fixtures/`, use
-raw read-only DAO as a reference, and exercise the documentation CLI on those
-disposable databases:
+The opt-in suite `tests/integration/test_documentation_fixtures_e2e.py` proves that a
+freshly built fixture set matches the committed manifest using raw, read-only DAO
+construction readback. It builds once per session through the public generator CLI into
+a fresh self-created `db/fixtures/e2e-<uuid>/` directory, asserts the build exited 0
+with empty stderr, and then removes exactly that `e2e-<uuid>` tree (creating
+`db/fixtures/` itself only when it is absent, and removing it again only if empty). It
+verifies tables, primary keys, unique indexes, relation orientation, query definitions
+and parameters, row counts, stored defaults, the validation rule, and the
+sentinel/linked databases against `documentation_expected.json`. Linked tables are
+read as metadata only (`Connect`, `SourceTableName`, and the `0x40000000` attached
+marker); the suite never opens linked records, never refreshes links, and never
+executes a saved query. It touches neither `db/fixtures/documentation/` nor
+`db/northwind.accdb`; the sentinel hash is compared with the build inventory before and
+after the session.
+
+Run it explicitly on Windows with ACE DAO and pywin32:
 
 ```powershell
 $env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
-.venv\Scripts\python.exe -m pytest tests\integration\test_documentation_fixtures_e2e.py -q --basetemp=db\fixtures\pytest-documentation
+.venv\Scripts\python.exe -m pytest tests\integration\test_documentation_fixtures_e2e.py -q
 ```
 
-Do not use a basetemp containing valuable files: pytest owns that scratch directory.
-That file must skip unless the explicit environment opt-in is present on Windows, and
-it must never use or modify Northwind. It will verify fixture construction separately
-from extractor correctness; failures are qualification findings, not permission
-to weaken the expected manifest.
+Without `ACCESS_DOCUMENTATION_FIXTURES_TEST=1` (and off Windows or without ACE) the
+module skips cleanly instead of failing. This suite verifies fixture construction
+separately from extractor correctness: it does not exercise extraction, inspection,
+rendering, or saving. Failures are qualification findings, not permission to weaken the
+expected manifest.
 
 Link creation intentionally contacts the local sentinel during construction.
 Hash equality or lack of lock files cannot establish that later inspection never
