@@ -54,6 +54,7 @@ class ComDispatcher:
         self._current_db: Any | None = None
         self._ado_conn: Any | None = None
         self._db_path: str | None = None
+        self._db_password: str = ""
         self._is_healthy: bool = True
         self._access_pid: int | None = None  # captured at connect for post-shutdown liveness kill
 
@@ -158,10 +159,27 @@ class ComDispatcher:
                 self._current_db = None
             self._current_db = engine.OpenDatabase(db_path, False, read_only, connect_str)
             self._db_path = db_path
+            self._db_password = password
             self._is_healthy = True
             return self._current_db
 
         return self.call(_do)
+
+    def reopen_dao_database_read_only(self) -> Any:
+        """Reopen the dispatcher's current database with engine-level ``ReadOnly=True``.
+
+        Reuses the path and password recorded by the last successful
+        ``open_dao_database`` call, so encrypted databases keep their credentials.
+        Refuses when there is no live connection: ``close_dao_database`` retains the
+        recorded path, so gating on ``_db_path`` alone would silently resurrect a
+        fresh handle after close.
+        Only the documentation-inspection path calls this; every other tool keeps
+        its existing (read-write) open semantics.
+        """
+        if self._db_path is None or not self.is_connected():
+            msg = "ComDispatcher has no live database connection to reopen read-only"
+            raise RuntimeError(msg)
+        return self.open_dao_database(self._db_path, password=self._db_password, read_only=True)
 
     def close_dao_database(self) -> None:
         """Close the DAO Database currently held by the dispatcher.

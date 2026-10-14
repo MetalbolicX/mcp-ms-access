@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import logging
 import os
 import shutil
@@ -15,6 +16,10 @@ from typing import Any
 
 from .application.automation import AutomationUseCases
 from .application.database import DatabaseUseCases, Err
+from .application.documentation import EvidenceDoc
+from .application.documentation_inspect import DocumentationInspectService, OdbcInspectionPort, open_inspection_port
+from .application.documentation_render import ReportDoc, render_document
+from .application.documentation_save import DocumentationSaveService, DocumentationWritePolicy
 from .application.maintenance import MaintenanceUseCases
 from .application.protocols import AutomationUseCasesProtocol, MaintenanceUseCasesProtocol, VersioningUseCasesProtocol
 from .application.versioning import VersioningUseCases
@@ -1821,6 +1826,127 @@ def _build_maintenance_parser(sub: argparse._SubParsersAction) -> None:
     _add_global_flags(m_recover)
 
 
+def _unwrap_cli_envelope(payload: Any) -> Any:
+    """Accept saved CLI output without relaxing document schema validation."""
+    if isinstance(payload, dict):
+        if payload.get("success") is False:
+            raise ValueError(str(payload.get("error", "CLI operation failed")))
+        if payload.get("success") and isinstance(payload.get("data"), dict):
+            return payload["data"]
+    return payload
+
+
+def _inspect_open_session(database: Any, *, tables: Any, queries: Any) -> Any:
+    """Inspect an open session through its DAO or ODBC inspection port.
+
+    The DAO path reopens engine-level read-only before reading; the ODBC path reuses
+    the adapter's already-open connection (ODBC exposes no read-only reopen) and
+    reports ODBC-invisible metadata as `unavailable` instead of fabricating it.
+    """
+    adapter = getattr(database, "_adapter", None)
+    dispatcher = getattr(adapter, "_dispatcher", None)
+    if dispatcher is not None and dispatcher.is_connected():
+        port = open_inspection_port(dispatcher)
+
+        def leave_session_open() -> None:
+            return None
+
+        port.close = leave_session_open
+        return dispatcher.call(
+            lambda: DocumentationInspectService().inspect(port, tables=tables, queries=queries)
+        )
+    connection = getattr(adapter, "connection", None)
+    if connection is not None:
+        return DocumentationInspectService().inspect(
+            OdbcInspectionPort(connection), tables=tables, queries=queries
+        )
+    raise ValueError("Documentation inspection requires a connected DAO or ODBC backend")
+
+
+def _cmd_documentation(args: argparse.Namespace) -> int:
+    """Run inspect/render/save documentation operations."""
+    from .errors import err, ok
+
+    if args.documentation_action == "inspect":
+        if not args.db:
+            print("Error: --db required", file=sys.stderr)
+            return 2
+        database = DatabaseUseCases(backend=args.backend, readonly=True, allowed_dirs=cli_allowed_dirs())
+        try:
+            opened = database.open_database(args.db)
+            if isinstance(opened, Err):
+                result = opened
+            else:
+                try:
+                    evidence = _inspect_open_session(database, tables=args.tables, queries=args.queries)
+                    payload = evidence.to_dict()
+                    payload["status"] = evidence.status
+                    result = ok(data=payload)
+                except Exception as exc:
+                    result = err(str(exc))
+        finally:
+            database.close_database()
+    elif args.documentation_action == "render":
+        try:
+            evidence = EvidenceDoc.from_dict(_unwrap_cli_envelope(json.loads(Path(args.evidence).read_text(encoding="utf-8"))))
+            result = ok(data=render_document(evidence, kind=args.kind, language=args.language).to_dict())
+        except Exception as exc:
+            result = err(str(exc))
+    else:
+        if not args.yes:
+            print("Error: documentation save requires --yes", file=sys.stderr)
+            return 2
+        try:
+            report = ReportDoc.from_dict(_unwrap_cli_envelope(json.loads(Path(args.report).read_text(encoding="utf-8"))))
+            allowed = args.allow_doc_write or os.environ.get("ACCESS_MCP_ALLOW_DOC_WRITE", "").casefold() in {"1", "true"}
+            saved = DocumentationSaveService(DocumentationWritePolicy(allowed=allowed)).save(
+                report.markdown,
+                args.output_path,
+                confirm=True,
+                overwrite=args.overwrite,
+                expected_fingerprint=args.expected_fingerprint,
+            )
+            result = ok(data=saved.__dict__)
+        except Exception as exc:
+            result = err(str(exc))
+    return format_result(result, args.json)
+
+
+def _build_documentation_parser(sub: argparse._SubParsersAction) -> None:
+    """Add inspect, render, and guarded save documentation commands."""
+    parser = sub.add_parser("documentation", help="Inspect and render database documentation")
+    actions = parser.add_subparsers(dest="documentation_action")
+
+    inspect = actions.add_parser("inspect", help="Inspect metadata into evidence")
+    inspect.add_argument("--db", required=True, help="Closed, offline Access database path")
+    inspect.add_argument("--backend", choices=["auto", "dao", "odbc"], default="auto", help="Backend to use")
+    inspect.add_argument("--json", action="store_true", help="JSON output")
+    inspect.add_argument("--tables", action="append", help="Table to inspect (repeatable)")
+    inspect.add_argument("--queries", action="append", help="Saved query to inspect (repeatable)")
+    inspect.set_defaults(func=_cmd_documentation)
+
+    render = actions.add_parser("render", help="Render evidence JSON to a Markdown report")
+    render.add_argument("--evidence", required=True, help="Path to evidence JSON")
+    render.add_argument("--kind", choices=["database", "er"], default="database")
+    render.add_argument("--language", default="en")
+    render.add_argument("--db", help="Database path (not used by offline rendering)")
+    render.add_argument("--backend", choices=["auto", "dao", "odbc"], default="auto", help="Backend (not used by offline rendering)")
+    render.add_argument("--json", action="store_true", help="JSON output")
+    render.set_defaults(func=_cmd_documentation)
+
+    save = actions.add_parser("save", help="Save a rendered report JSON")
+    save.add_argument("--report", required=True, help="Path to rendered report JSON")
+    save.add_argument("--output-path", required=True, help="Markdown destination")
+    save.add_argument("--allow-doc-write", action="store_true", help="Grant documentation-write permission for this invocation")
+    save.add_argument("--yes", action="store_true", help="Confirm the documentation file write")
+    save.add_argument("--overwrite", action="store_true", help="Approve replacing an existing report")
+    save.add_argument("--expected-fingerprint", help="Expected current destination SHA-256")
+    save.add_argument("--db", help="Database path (not used when saving a report)")
+    save.add_argument("--backend", choices=["auto", "dao", "odbc"], default="auto", help="Backend (not used when saving a report)")
+    save.add_argument("--json", action="store_true", help="JSON output")
+    save.set_defaults(func=_cmd_documentation)
+
+
 # =============================================================================
 # Parser Orchestrator
 # =============================================================================
@@ -1837,6 +1963,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     _build_doctor_parser(subparsers)
+    _build_documentation_parser(subparsers)
     _build_configure_parser(subparsers)
     _build_credentials_parser(subparsers)
     _build_db_parser(subparsers)

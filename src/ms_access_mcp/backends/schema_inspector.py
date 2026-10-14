@@ -5,6 +5,7 @@ Ported behaviors from oracle src/ms_access_mcp/adapters/schema_inspector.py.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,48 @@ def _access_type_name(type_code: int) -> str:
     return _ACCESS_TYPE_MAP.get(type_code, f"Unknown({type_code})")
 
 
+# DAO TableDef.Attributes bit set on an attached (linked) table.
+_DAO_ATTACHED_TABLE = 0x40000000
+
+
+def _com_string(value: Any) -> str:
+    """Normalize a COM string read, stripping ACE's trailing NUL padding."""
+    if value is None:
+        return ""
+    return str(value).rstrip("\x00")
+
+
+@dataclass(frozen=True)
+class QueryParameterInfo:
+    """One declared saved-query parameter read from a producer's parameter surface.
+
+    ``type`` and ``type_name`` use the producing port's own taxonomy: the DAO port
+    reports the DAO field-type code (``4`` = ``dbLong``) with the reused DAO type name
+    (``Long Integer``), and the ODBC port reports the ODBC SQL data type code with its
+    ODBC type name (``INTEGER``); no second taxonomy is invented for DAO.
+    """
+
+    name: str
+    type: int
+    type_name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable evidence value for this parameter."""
+        return {"name": self.name, "type": self.type, "type_name": self.type_name}
+
+
+# DAO QueryDef.Type codes → evidence query categories. Codes absent from this map
+# (dbQSelect 0, dbQCrosstab 16, dbQSQLPassThrough 112, dbQSetOperation 128, ...)
+# keep the historical default category "select".
+_DAO_QUERY_CATEGORY: dict[int, str] = {
+    32: "action",  # dbQDelete
+    48: "action",  # dbQUpdate
+    64: "action",  # dbQAppend
+    80: "ddl",  # dbQMakeTable (historical category retained)
+    96: "ddl",  # dbQDDL
+}
+
+
 class SchemaInspector:
     """DAO schema read operations via ComDispatcher."""
 
@@ -85,6 +128,7 @@ class SchemaInspector:
                             size=fld.Size,
                             required=bool(fld.Required),
                             allow_zero_length=bool(fld.AllowZeroLength),
+                            default_value=_com_string(fld.DefaultValue),
                         )
                     )
                 tables.append(TableInfo(name=name, fields=fields))
@@ -138,15 +182,66 @@ class SchemaInspector:
                     pass
                 qtype = "select"
                 try:
-                    t = qdef.Type
-                    if t == 32:
-                        qtype = "action"
-                    elif t == 80:
-                        qtype = "ddl"
+                    qtype = _DAO_QUERY_CATEGORY.get(int(qdef.Type), "select")
                 except Exception:
                     pass
                 queries.append(QueryInfo(name=name, sql=sql, type=qtype))
             return queries
+
+        return self._dispatcher.call(_do)
+
+    def get_query_parameters(self, query_name: str) -> list[QueryParameterInfo] | None:
+        """Return a query's declared parameters, or None when they are not exposed.
+
+        An empty list is a known empty: the QueryDef exposes a parameters collection
+        with zero entries. ``None`` means the producer cannot supply parameter metadata
+        at all (disconnected, or a backend without a QueryDefs-equivalent), so the
+        evidence seam must record ``unavailable`` rather than fabricate an empty list.
+        A failed lookup or a failed per-parameter read propagates so the caller records
+        an explicit ``failed`` fact instead of silently reporting emptiness.
+        """
+        if not self._dispatcher.is_connected():
+            return None
+
+        def _do() -> list[QueryParameterInfo] | None:
+            db = self._dispatcher.current_db
+            qdef = db.QueryDefs[query_name]
+            parameters: list[QueryParameterInfo] = []
+            for parameter in qdef.Parameters:
+                type_code = int(parameter.Type)
+                parameters.append(
+                    QueryParameterInfo(
+                        name=_com_string(parameter.Name),
+                        type=type_code,
+                        type_name=_access_type_name(type_code),
+                    )
+                )
+            return parameters
+
+        return self._dispatcher.call(_do)
+
+    def get_table_link_metadata(self, table_name: str) -> dict[str, Any] | None:
+        """Return local link metadata for an attached table, or None when it is local.
+
+        Reads only the local catalogue (``Attributes``, ``Connect``,
+        ``SourceTableName``); the linked source is never resolved, opened, refreshed,
+        or contacted.
+        """
+        if not self._dispatcher.is_connected():
+            return None
+
+        def _do() -> dict[str, Any] | None:
+            db = self._dispatcher.current_db
+            try:
+                tdef = db.TableDefs[table_name]
+            except Exception:
+                return None
+            if not (tdef.Attributes & _DAO_ATTACHED_TABLE):
+                return None
+            return {
+                "connect": _com_string(getattr(tdef, "Connect", "")),
+                "source_table_name": _com_string(getattr(tdef, "SourceTableName", "")),
+            }
 
         return self._dispatcher.call(_do)
 

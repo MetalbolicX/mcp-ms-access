@@ -14,3 +14,15 @@ build/
 .opencode/
 .pi/
 nul
+# Access databases — never commit binaries, lock files, or in-use open-file artifacts
+*.accdb
+*.mdb
+*.accde
+*.mde
+*.mdw
+*.laccdb
+*.ldb
+*.tmp_*.accdb
+~$*
+# Generated documentation fixtures — local build outputs only (ground truth lives in tests/fixtures)
+db/fixtures/

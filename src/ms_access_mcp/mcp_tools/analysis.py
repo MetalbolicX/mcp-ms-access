@@ -6,13 +6,21 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.analysis import QueryAnalyzerService
-from ..application.database import DatabaseUseCases
+from ..application.database import DatabaseUseCases, Err
+from ..application.documentation import EvidenceDoc
+from ..application.documentation_inspect import (
+    DocumentationInspectService,
+    OdbcInspectionPort,
+    open_inspection_port,
+)
+from ..application.documentation_render import ReportDoc, render_document
+from ..application.documentation_save import DocumentationSaveService, DocumentationWritePolicy
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
 from ._session_registry import SessionOpenError, registry
@@ -158,6 +166,95 @@ def generate_sql(path: str, params: dict[str, Any] | None = None, confirm: bool 
 
 
 # =============================================================================
+# Documentation Tools
+# =============================================================================
+
+
+def documentation_inspect(
+    path: str,
+    tables: list[str] | None = None,
+    queries: list[str] | None = None,
+    connection_ref: str | None = None,
+) -> CallToolResult:
+    """Inspect Access metadata into versioned documentation evidence."""
+    del connection_ref  # Credentials are resolved by the existing path/session policy.
+    try:
+        database = _new_db(readonly=True)
+        opened = database.open_database(path)
+        if isinstance(opened, Err):
+            return to_mcp_result({"success": False, "error": opened.message})
+        adapter = getattr(database, "_adapter", None)
+        dispatcher = getattr(adapter, "_dispatcher", None)
+        if dispatcher is not None and dispatcher.is_connected():
+            port = open_inspection_port(dispatcher)
+
+            def leave_session_open() -> None:
+                return None
+
+            port.close = leave_session_open  # The session owns and closes this handle.
+            evidence = dispatcher.call(
+                lambda: DocumentationInspectService().inspect(port, tables=tables, queries=queries)
+            )
+        else:
+            connection = getattr(adapter, "connection", None)
+            if connection is None:
+                raise ValueError("Documentation inspection requires a connected DAO or ODBC backend")
+            evidence = DocumentationInspectService().inspect(
+                OdbcInspectionPort(connection), tables=tables, queries=queries
+            )
+        data = evidence.to_dict()
+        data["status"] = evidence.status
+        return to_mcp_result({"success": True, "data": data})
+    except Exception as exc:
+        return to_mcp_result({"success": False, "error": str(exc)})
+
+
+def documentation_render(
+    evidence: dict[str, Any],
+    kind: Literal["database", "er"] = "database",
+    language: str = "en",
+    interpretations: list[dict[str, str]] | None = None,
+) -> CallToolResult:
+    """Render documentation evidence deterministically without database I/O."""
+    try:
+        rendered = render_document(
+            EvidenceDoc.from_dict(evidence), kind=kind, language=language, interpretations=interpretations
+        )
+        return to_mcp_result({"success": True, "data": rendered.to_dict()})
+    except Exception as exc:
+        return to_mcp_result({"success": False, "error": str(exc)})
+
+
+def documentation_save(
+    report: dict[str, Any],
+    output_path: str,
+    confirm: bool,
+    overwrite: bool = False,
+    expected_fingerprint: str | None = None,
+) -> CallToolResult:
+    """Save a rendered report under separate operator and per-call authorization."""
+    import os
+
+    allowed = os.environ.get("ACCESS_MCP_ALLOW_DOC_WRITE", "").casefold() in {"1", "true"}
+    if not allowed:
+        return to_mcp_result({"success": False, "error": "Documentation save permission denied: operator doc-write is not enabled."})
+    if not confirm:
+        return to_mcp_result({"success": False, "error": "Documentation save requires explicit confirm=True."})
+    try:
+        document = ReportDoc.from_dict(report)
+        result = DocumentationSaveService(DocumentationWritePolicy(allowed=allowed)).save(
+            document.markdown,
+            output_path,
+            confirm=confirm,
+            overwrite=overwrite,
+            expected_fingerprint=expected_fingerprint,
+        )
+        return to_mcp_result({"success": True, "data": result.__dict__})
+    except Exception as exc:
+        return to_mcp_result({"success": False, "error": str(exc)})
+
+
+# =============================================================================
 # Tool Registry
 # =============================================================================
 
@@ -185,7 +282,13 @@ for _tool_name, (_tool, _description) in tuple(_TOOLS.items()):
     _TOOLS[_tool_name] = (_wrapped_tool, _description)
     globals()[_tool.__name__] = _wrapped_tool
 
+_DOCUMENTATION_TOOLS: ToolRegistry = {
+    "documentation_inspect": (documentation_inspect, "Inspect Access metadata into documentation evidence."),
+    "documentation_render": (documentation_render, "Render documentation evidence as Markdown."),
+    "documentation_save": (documentation_save, "Save a rendered report with explicit authorization."),
+}
+
 
 def register(mcp: FastMCP) -> None:
     """Register all analysis tools with the MCP server."""
-    register_tools(mcp, _TOOLS)
+    register_tools(mcp, {**_TOOLS, **_DOCUMENTATION_TOOLS})

@@ -81,6 +81,15 @@ class OdbcAdapter:
         """Return whether the ODBC connection is open."""
         return self.connected
 
+    @property
+    def connection(self) -> Any:
+        """Return the live ODBC connection for read-only inspection adapters.
+
+        The adapter keeps ownership: callers must not close or mutate the
+        connection, and the handle is only valid while ``connected`` is True.
+        """
+        return self._conn
+
     def compact_repair(self, path: str, mode: str) -> dict[str, Any]:
         """Reject compact and repair because ODBC does not provide DAO support."""
         msg = (

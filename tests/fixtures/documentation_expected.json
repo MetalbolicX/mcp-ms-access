@@ -1,0 +1,459 @@
+{
+  "schema": "access.documentation.fixtures/1",
+  "format": "ACE",
+  "startup_execution": "authorized-isolated-control-only",
+  "databases": {
+    "core.accdb": {
+      "tables": {
+        "Customers": {
+          "fields": {
+            "CustomerID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Name": {
+              "type": "TEXT(50)",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Status": {
+              "type": "TEXT(20)",
+              "required": false,
+              "default": "\"Active\"",
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "CustomerID"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        },
+        "CustomerProfiles": {
+          "fields": {
+            "ProfileID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "CustomerID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Notes": {
+              "type": "TEXT(50)",
+              "required": false,
+              "default": null,
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "ProfileID"
+          ],
+          "unique_indexes": {
+            "CustomersProfiles": [
+              "CustomerID"
+            ]
+          },
+          "rows": 1
+        },
+        "Orders": {
+          "fields": {
+            "OrderID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "CustomerID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "BillingCustomerID": {
+              "type": "LONG",
+              "required": false,
+              "default": null,
+              "validation": null
+            },
+            "Status": {
+              "type": "TEXT(20)",
+              "required": false,
+              "default": "\"Open\"",
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "OrderID"
+          ],
+          "unique_indexes": {},
+          "rows": 2
+        },
+        "OrderLines": {
+          "fields": {
+            "OrderID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "LineNo": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "ProductID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "WarehouseID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Quantity": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "OrderID",
+            "LineNo"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        },
+        "Products": {
+          "fields": {
+            "ProductID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Name": {
+              "type": "TEXT(50)",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "UnitPrice": {
+              "type": "CURRENCY",
+              "required": false,
+              "default": null,
+              "validation": ">=0"
+            }
+          },
+          "primary_key": [
+            "ProductID"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        },
+        "Warehouses": {
+          "fields": {
+            "WarehouseID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Name": {
+              "type": "TEXT(50)",
+              "required": false,
+              "default": null,
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "WarehouseID"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        },
+        "Stock": {
+          "fields": {
+            "ProductID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "WarehouseID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Quantity": {
+              "type": "LONG",
+              "required": false,
+              "default": null,
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "ProductID",
+            "WarehouseID"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        },
+        "Sales Notes": {
+          "fields": {
+            "NotesID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Order": {
+              "type": "TEXT(50)",
+              "required": false,
+              "default": null,
+              "validation": null
+            },
+            "R\u00e9sum\u00e9": {
+              "type": "TEXT(50)",
+              "required": false,
+              "default": null,
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "NotesID"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        }
+      },
+      "relationships": {
+        "relCustomersProfiles": {
+          "parent_table": "Customers",
+          "child_table": "CustomerProfiles",
+          "parent_columns": [
+            "CustomerID"
+          ],
+          "child_columns": [
+            "CustomerID"
+          ]
+        },
+        "CustomersOrders": {
+          "parent_table": "Customers",
+          "child_table": "Orders",
+          "parent_columns": [
+            "CustomerID"
+          ],
+          "child_columns": [
+            "CustomerID"
+          ]
+        },
+        "BillingCustomersOrders": {
+          "parent_table": "Customers",
+          "child_table": "Orders",
+          "parent_columns": [
+            "CustomerID"
+          ],
+          "child_columns": [
+            "BillingCustomerID"
+          ]
+        },
+        "OrdersOrderLines": {
+          "parent_table": "Orders",
+          "child_table": "OrderLines",
+          "parent_columns": [
+            "OrderID"
+          ],
+          "child_columns": [
+            "OrderID"
+          ]
+        },
+        "ProductsStock": {
+          "parent_table": "Products",
+          "child_table": "Stock",
+          "parent_columns": [
+            "ProductID"
+          ],
+          "child_columns": [
+            "ProductID"
+          ]
+        },
+        "WarehousesStock": {
+          "parent_table": "Warehouses",
+          "child_table": "Stock",
+          "parent_columns": [
+            "WarehouseID"
+          ],
+          "child_columns": [
+            "WarehouseID"
+          ]
+        },
+        "StockOrderLines": {
+          "parent_table": "Stock",
+          "child_table": "OrderLines",
+          "parent_columns": [
+            "ProductID",
+            "WarehouseID"
+          ],
+          "child_columns": [
+            "ProductID",
+            "WarehouseID"
+          ]
+        }
+      },
+      "queries": {
+        "qryOpenOrders": {
+          "category": "select",
+          "dao_type": 0,
+          "parameters": {},
+          "sql": "SELECT * FROM [Orders] WHERE [Status] = 'Open';"
+        },
+        "qryOrdersByCustomer": {
+          "category": "select",
+          "dao_type": 0,
+          "parameters": {
+            "[pCustomerID]": 4
+          },
+          "sql": "PARAMETERS [pCustomerID] Long; SELECT * FROM [Orders] WHERE [CustomerID] = [pCustomerID];"
+        },
+        "qryOrderSummary": {
+          "category": "select",
+          "dao_type": 0,
+          "parameters": {},
+          "sql": "SELECT [CustomerID], Count(*) AS [OrderCount] FROM [Orders] GROUP BY [CustomerID];"
+        },
+        "qryUpdateOrderStatus": {
+          "category": "action",
+          "dao_type": 48,
+          "parameters": {},
+          "sql": "UPDATE [Orders] SET [Status] = 'Closed' WHERE [OrderID] = 1;"
+        },
+        "qryDeleteDraftOrders": {
+          "category": "action",
+          "dao_type": 32,
+          "parameters": {},
+          "sql": "DELETE FROM [Orders] WHERE [Status] = 'Draft';"
+        }
+      },
+      "sentinels": {
+        "Orders": [
+          [
+            1,
+            "Open"
+          ],
+          [
+            2,
+            "Draft"
+          ]
+        ]
+      }
+    },
+    "sentinel.accdb": {
+      "tables": {
+        "SentinelCustomers": {
+          "fields": {
+            "CustomerID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Name": {
+              "type": "TEXT(50)",
+              "required": false,
+              "default": null,
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "CustomerID"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        }
+      },
+      "relationships": {},
+      "queries": {}
+    },
+    "linked.accdb": {
+      "tables": {
+        "LocalNotes": {
+          "fields": {
+            "NotesID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Note": {
+              "type": "TEXT(50)",
+              "required": false,
+              "default": null,
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "NotesID"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        }
+      },
+      "relationships": {},
+      "queries": {},
+      "linked_tables": {
+        "LinkedCustomers": {
+          "source_database": "sentinel.accdb",
+          "source_table": "SentinelCustomers"
+        }
+      }
+    },
+    "startup.accdb": {
+      "tables": {
+        "StartupNotes": {
+          "fields": {
+            "NoteID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Note": {
+              "type": "TEXT(50)",
+              "required": false,
+              "default": null,
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "NoteID"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        }
+      },
+      "relationships": {},
+      "queries": {},
+      "startup": {
+        "module": "StartupMarkerModule",
+        "macro": "AutoExec",
+        "control_name": "StartupControl",
+        "marker_filename": "startup_executed.marker",
+        "execution_policy": "authorized-isolated-control-only"
+      }
+    }
+  }
+}
