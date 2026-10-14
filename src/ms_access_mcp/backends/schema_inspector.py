@@ -5,6 +5,7 @@ Ported behaviors from oracle src/ms_access_mcp/adapters/schema_inspector.py.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,23 @@ def _com_string(value: Any) -> str:
     if value is None:
         return ""
     return str(value).rstrip("\x00")
+
+
+@dataclass(frozen=True)
+class QueryParameterInfo:
+    """One declared saved-query parameter read from DAO ``QueryDef.Parameters``.
+
+    ``type`` is the DAO field-type code (``4`` = ``dbLong``); ``type_name`` reuses the
+    existing DAO field-type taxonomy rather than introducing a second one.
+    """
+
+    name: str
+    type: int
+    type_name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable evidence value for this parameter."""
+        return {"name": self.name, "type": self.type, "type_name": self.type_name}
 
 
 # DAO QueryDef.Type codes → evidence query categories. Codes absent from this map
@@ -167,6 +185,36 @@ class SchemaInspector:
                     pass
                 queries.append(QueryInfo(name=name, sql=sql, type=qtype))
             return queries
+
+        return self._dispatcher.call(_do)
+
+    def get_query_parameters(self, query_name: str) -> list[QueryParameterInfo] | None:
+        """Return a query's declared parameters, or None when they are not exposed.
+
+        An empty list is a known empty: the QueryDef exposes a parameters collection
+        with zero entries. ``None`` means the producer cannot supply parameter metadata
+        at all (disconnected, or a backend without a QueryDefs-equivalent), so the
+        evidence seam must record ``unavailable`` rather than fabricate an empty list.
+        A failed lookup or a failed per-parameter read propagates so the caller records
+        an explicit ``failed`` fact instead of silently reporting emptiness.
+        """
+        if not self._dispatcher.is_connected():
+            return None
+
+        def _do() -> list[QueryParameterInfo] | None:
+            db = self._dispatcher.current_db
+            qdef = db.QueryDefs[query_name]
+            parameters: list[QueryParameterInfo] = []
+            for parameter in qdef.Parameters:
+                type_code = int(parameter.Type)
+                parameters.append(
+                    QueryParameterInfo(
+                        name=_com_string(parameter.Name),
+                        type=type_code,
+                        type_name=_access_type_name(type_code),
+                    )
+                )
+            return parameters
 
         return self._dispatcher.call(_do)
 

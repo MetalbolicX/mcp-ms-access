@@ -200,7 +200,13 @@ def _diagram(evidence: EvidenceDoc) -> str:
 def _queries(evidence: EvidenceDoc) -> str:
     lines = ["## Saved queries"]
     for query in evidence.queries:
-        lines.extend(("", f"### {_inline(query.name)}", f"- Type: {_fact_cell(query.type)}", "- SQL (source text; not executed):"))
+        lines.extend((
+            "",
+            f"### {_inline(query.name)}",
+            f"- Type: {_fact_cell(query.type)}",
+            f"- Parameters: {_parameters_cell(query.parameters)}",
+            "- SQL (source text; not executed):",
+        ))
         if query.sql.state == "observed":
             lines.extend(("", "```sql", query.sql.value, "```"))
         else:
@@ -271,6 +277,23 @@ def _fact_cell(fact: FactStatus[Any]) -> str:
         value = fact.value
         return "observed empty" if value == [] else "observed null" if value is None else str(value)
     return f"{fact.state}: {fact.reason}"
+
+
+def _parameters_cell(fact: FactStatus[Any]) -> str:
+    """Render a query's declared parameters as ``name (DAO type name)`` entries.
+
+    Non-observed facts keep the standard ``state: reason`` form; an observed empty
+    list stays a visible known empty, never fabricated parameter names.
+    """
+    if fact.state != "observed":
+        return _fact_cell(fact)
+    parameters = fact.value
+    if not parameters:
+        return "observed empty"
+    return "; ".join(
+        f"{_inline(str(parameter['name']))} ({_inline(str(parameter['type_name']))})"
+        for parameter in parameters
+    )
 
 
 def _relationship_cardinality(evidence: EvidenceDoc, relation: RelationshipEvidence) -> bool:

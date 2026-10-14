@@ -164,13 +164,38 @@ class FakeRelations:
         pass
 
 
+class FakeQueryParameter:
+    def __init__(self, name: str, type: int) -> None:
+        self.Name = name
+        self.Type = type
+
+
+class FakeQueryParameters:
+    def __init__(self, parameters: list[FakeQueryParameter]) -> None:
+        self._parameters = parameters
+
+    def __iter__(self):
+        return iter(self._parameters)
+
+    @property
+    def Count(self) -> int:
+        return len(self._parameters)
+
+
 class FakeQueryDef:
-    def __init__(self, name: str, sql: str = "", type: int | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        sql: str = "",
+        type: int | None = None,
+        parameters: list[FakeQueryParameter] | None = None,
+    ) -> None:
         self.Name = name
         self.SQL = sql
         # OMITTED when None so the AttributeError fallback path stays exercised.
         if type is not None:
             self.Type = type
+        self.Parameters = FakeQueryParameters([] if parameters is None else parameters)
 
 
 class FakeQueryDefs:
@@ -179,6 +204,9 @@ class FakeQueryDefs:
 
     def __iter__(self):
         return iter(self._qdefs)
+
+    def __getitem__(self, name: str) -> FakeQueryDef:
+        return next(qdef for qdef in self._qdefs if qdef.Name == name)
 
 
 class FakeRecordset:
@@ -398,6 +426,39 @@ class TestGetQueries:
             "qryDeleteDraftOrders": "action",
             "qryMakeTable": "ddl",
         }
+
+    def test_query_parameters_are_read_with_name_type_and_dao_type_name(self) -> None:
+        """T1: DAO QueryDef.Parameters reach the inspector with names and DAO type codes."""
+        qdef = FakeQueryDef(
+            "qryOrdersByCustomer",
+            "PARAMETERS [pCustomerID] Long; SELECT 1",
+            type=0,
+            parameters=[FakeQueryParameter("[pCustomerID]", 4)],
+        )
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[], qdefs=[qdef])))
+        read = insp.get_query_parameters("qryOrdersByCustomer")
+        assert read is not None
+        assert [(item.name, item.type, item.type_name) for item in read] == [
+            ("[pCustomerID]", 4, "Long Integer")
+        ]
+
+    def test_query_parameter_names_are_nul_stripped(self) -> None:
+        """ACE pads a COM string read with a trailing NUL; the name must be normalized."""
+        qdef = FakeQueryDef("q", parameters=[FakeQueryParameter("[pCustomerID]\x00", 4)])
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[], qdefs=[qdef])))
+        read = insp.get_query_parameters("q")
+        assert read is not None and [item.name for item in read] == ["[pCustomerID]"]
+
+    def test_zero_parameter_query_reads_a_known_empty_collection(self) -> None:
+        """A DAO-exposed zero-parameter query is observed empty, not unavailable."""
+        qdef = FakeQueryDef("qryOpenOrders", "SELECT 1", parameters=[])
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[], qdefs=[qdef])))
+        assert insp.get_query_parameters("qryOpenOrders") == []
+
+    def test_query_parameters_disconnected_returns_none(self) -> None:
+        """A producer that cannot supply parameters returns None so the seam maps unavailable."""
+        insp = SchemaInspector(FakeDispatcher(db=None, connected=False))
+        assert insp.get_query_parameters("qryOpenOrders") is None
 
 
 class TestGetLinkedTableMetadata:

@@ -123,9 +123,13 @@ documentation pipeline against the same synthetic fixtures through the public CL
 (`documentation inspect|render|save`) in subprocesses. It proves: index-derived
 composite primary keys (`OrderLines`, `Stock`) and the genuine unique
 `CustomerProfiles.CustomersProfiles` index, exactly the eight manifest tables and five
-saved queries, legal evidence states with query-parameter and relationship-attribute
-capabilities reported as `unavailable` with partial coverage, deterministic
-database/ER rendering with safe Mermaid aliases and original names preserved, ER-only
+saved queries, legal evidence states (relationship-attribute capabilities stay
+`unavailable` with partial coverage), saved-query parameter metadata read from DAO
+`QueryDef.Parameters` (`qryOrdersByCustomer` → `observed` `[pCustomerID]` type `4`
+with the reused DAO type name `Long Integer`; parameterless queries `observed` empty,
+never `unavailable` or fabricated; a non-exposing port maps to `unavailable` at the
+seam) and rendered in the catalogue as `- Parameters: [pCustomerID] (Long Integer)`,
+deterministic database/ER rendering with safe Mermaid aliases and original names preserved, ER-only
 output excluding the query catalogue, the child-side `}o--||` cardinality rule
 (including the unique-index-backed one-to-one `relCustomersProfiles` and the composite
 `StockOrderLines` FK), save gating (operator permission, per-call confirm, overwrite

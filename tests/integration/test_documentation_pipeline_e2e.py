@@ -365,21 +365,60 @@ def test_inspect_core_primary_keys_and_unique_index(core_evidence: dict[str, Any
 def test_inspect_core_fact_states_legal_and_capability_gaps_unavailable(
     core_evidence: dict[str, Any],
 ) -> None:
-    """Every fact uses a legal state; unsupported query/relationship metadata is unavailable."""
+    """Every fact uses a legal state; the remaining unsupported capability is unavailable.
+
+    Query-parameter metadata is now a supported capability (proved end-to-end by
+    ``test_inspect_core_query_parameters_are_read_from_dao``), so
+    ``coverage.queries.unsupported`` is empty here. DAO relationship attributes remain
+    genuinely unavailable, which is why the document still reports ``partial``.
+    """
     payload = _payload(core_evidence)
     assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
-    # Query parameters and DAO relationship attributes are genuinely unsupported:
-    # they must be unavailable facts with partial coverage, never invented values.
-    assert all(query["parameters"]["state"] == "unavailable" for query in payload["queries"])
     assert all(relationship["attributes"]["state"] == "unavailable" for relationship in payload["relationships"])
     data = core_evidence["envelope"]["data"]
     assert data["status"] == "partial"
-    assert data["coverage"]["queries"]["unsupported"]
+    assert data["coverage"]["queries"]["unsupported"] == {}
     assert data["coverage"]["relationships"]["unsupported"]
     assert data["coverage"]["tables"]["failed"] == {}
     # FINDING (cosmetic): validation rules are not modelled by the evidence schema at all,
     # so they are neither observed nor honestly marked unavailable. Assert none is fabricated.
     assert all("validation" not in field for table in payload["tables"] for field in table["fields"])
+
+
+def test_inspect_core_query_parameters_are_read_from_dao(
+    core_evidence: dict[str, Any], core_reports: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """T1: DAO ``QueryDef.Parameters`` reach evidence honestly and render in the catalogue.
+
+    The committed manifest declares the engine-reported bracketed name ``[pCustomerID]``
+    with DAO type ``4`` (dbLong) for ``qryOrdersByCustomer`` and no parameters for the
+    other four queries. A parameterless query is a known empty (``observed`` empty list),
+    which is a different thing from a producer that cannot expose parameters
+    (``unavailable``). DAO exposes the parameters collection, so every query here is a
+    known empty or a known list, never ``unavailable`` and never a fabricated value.
+    """
+    expected_queries = e2e_build["expected"]["databases"]["core.accdb"]["queries"]
+    queries = _queries_by_name(core_evidence)
+    by_customer = queries["qryOrdersByCustomer"]["parameters"]
+    assert by_customer["state"] == "observed"
+    assert [(item["name"], item["type"]) for item in by_customer["value"]] == [("[pCustomerID]", 4)]
+    assert by_customer["value"][0]["type_name"] == "Long Integer"
+    assert by_customer["provenance"] == {
+        "object_kind": "query",
+        "object_name": "qryOrdersByCustomer",
+        "property": "parameters",
+    }
+    # Every query agrees with the committed engine-readback manifest.
+    assert expected_queries["qryOrdersByCustomer"]["parameters"] == {"[pCustomerID]": 4}
+    assert expected_queries["qryOpenOrders"]["parameters"] == {}
+    for name, spec in expected_queries.items():
+        parameters = queries[name]["parameters"]
+        assert parameters["state"] == "observed", name
+        assert {item["name"]: item["type"] for item in parameters["value"]} == spec["parameters"], name
+    assert queries["qryOpenOrders"]["parameters"]["value"] == []
+    # The database query catalogue renders the declared parameter with its DAO type name.
+    markdown = core_reports["database"]["report"]["markdown"]
+    assert "- Parameters: [pCustomerID] (Long Integer)" in markdown
 
 
 def test_inspect_core_field_defaults_are_read_from_dao(

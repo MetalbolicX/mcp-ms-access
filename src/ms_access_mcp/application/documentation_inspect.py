@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import uuid4
 
-from ..backends.schema_inspector import SchemaInspector
+from ..backends.schema_inspector import QueryParameterInfo, SchemaInspector
 from ..errors import AccessMcpError
 from ..models import FieldInfo, IndexInfo, QueryInfo, RelationshipInfo, TableInfo
 from .documentation import (
@@ -38,6 +38,8 @@ class InspectionPort(Protocol):
     def get_relationships(self) -> list[RelationshipInfo]: ...
 
     def get_queries(self) -> list[QueryInfo]: ...
+
+    def get_query_parameters(self, query_name: str) -> list[QueryParameterInfo] | None: ...
 
     def close(self) -> None: ...
 
@@ -76,6 +78,9 @@ class DaoInspectionPort:
 
     def get_queries(self) -> list[QueryInfo]:
         return self._inspector.get_queries()
+
+    def get_query_parameters(self, query_name: str) -> list[QueryParameterInfo] | None:
+        return self._inspector.get_query_parameters(query_name)
 
     def close(self) -> None:
         self._database.Close()
@@ -172,10 +177,19 @@ class DocumentationInspectService:
         query_evidence: list[QueryEvidence] = []
         for query in selected_queries:
             coverage.queries.inspected.append(query.name)
-            evidence = _query_evidence(query)
+            parameter_data: list[QueryParameterInfo] | None = None
+            parameter_failure: str | None = None
+            try:
+                parameter_data = port.get_query_parameters(query.name)
+            except Exception as error:
+                parameter_failure = _reason(error)
+            evidence = _query_evidence(query, parameter_data, parameter_failure)
             if evidence.sql.state == "failed":
                 coverage.queries.failed[query.name] = evidence.sql.reason or "Query SQL read failed"
-            coverage.queries.unsupported[query.name] = "Query parameters are unavailable because extraction is not implemented"
+            if parameter_failure is not None:
+                coverage.queries.failed[query.name] = parameter_failure
+            elif evidence.parameters.state == "unavailable":
+                coverage.queries.unsupported[query.name] = evidence.parameters.reason or "Query parameters are unavailable"
             query_evidence.append(evidence)
 
         document = EvidenceDoc(
@@ -276,7 +290,11 @@ def _field_default_fact(field: FieldInfo) -> FactStatus[Any]:
     return FactStatus.observed(field.default_value, provenance)
 
 
-def _query_evidence(query: QueryInfo) -> QueryEvidence:
+def _query_evidence(
+    query: QueryInfo,
+    parameter_data: list[QueryParameterInfo] | None = None,
+    parameter_failure: str | None = None,
+) -> QueryEvidence:
     provenance_sql = _provenance("query", query.name, "sql")
     sql = query.sql if isinstance(query.sql, str) else ""
     sql_fact = (
@@ -290,8 +308,30 @@ def _query_evidence(query: QueryInfo) -> QueryEvidence:
         name=query.name,
         sql=sql_fact,
         type=FactStatus.observed(mapped_type, _provenance("query", query.name, "type")),
-        parameters=FactStatus.unavailable("Query parameters are not extracted", _provenance("query", query.name, "parameters")),
+        parameters=_query_parameters_fact(query.name, parameter_data, parameter_failure),
     )
+
+
+def _query_parameters_fact(
+    query_name: str,
+    parameter_data: list[QueryParameterInfo] | None,
+    parameter_failure: str | None,
+) -> FactStatus[Any]:
+    """Map producer parameter data at the seam without fabricating emptiness.
+
+    ``None`` means the producer cannot expose parameters, so the fact is
+    ``unavailable`` (never an invented empty/null). An empty list is a known empty
+    (observed), which is a different thing. A per-query read failure is ``failed``.
+    Parameter names and DAO type codes/names pass through unchanged.
+    """
+    provenance = _provenance("query", query_name, "parameters")
+    if parameter_failure is not None:
+        return FactStatus.failed(parameter_failure, provenance)
+    if parameter_data is None:
+        return FactStatus.unavailable(
+            "Query parameters were not exposed by the engine or runtime", provenance
+        )
+    return FactStatus.observed([parameter.to_dict() for parameter in parameter_data], provenance)
 
 
 def _relationship_evidence(relationship: RelationshipInfo) -> RelationshipEvidence:

@@ -124,6 +124,32 @@ def test_unknown_table_kind_and_local_link_metadata_are_rejected() -> None:
         evidence.validate()
 
 
+def test_observed_query_parameters_round_trip_with_name_type_and_type_name() -> None:
+    """T1: an observed parameter list carries name, DAO type code, and DAO type name."""
+    evidence = make_document()
+    evidence.queries[0].parameters = FactStatus.observed(
+        [{"name": "[pCustomerID]", "type": 4, "type_name": "Long Integer"}],
+        provenance("query", "Q", "parameters"),
+    )
+    restored = EvidenceDoc.from_dict(evidence.to_dict())
+    assert restored == evidence
+    assert restored.queries[0].parameters.state == "observed"
+    assert restored.queries[0].parameters.value == [
+        {"name": "[pCustomerID]", "type": 4, "type_name": "Long Integer"}
+    ]
+
+
+def test_observed_query_parameters_require_name_and_integer_type() -> None:
+    """A parameter fact cannot claim a name/type representation it does not carry."""
+    evidence = make_document()
+    evidence.queries[0].parameters = FactStatus.observed(
+        [{"name": "[pCustomerID]", "type": "Long"}],
+        provenance("query", "Q", "parameters"),
+    )
+    with pytest.raises(ValueError, match="parameter"):
+        evidence.validate()
+
+
 def test_status_is_complete_without_gaps_and_partial_with_non_excluded_gap() -> None:
     evidence = make_document()
     assert evidence.status == "complete"

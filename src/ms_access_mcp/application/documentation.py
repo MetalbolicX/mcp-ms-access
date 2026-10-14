@@ -235,6 +235,16 @@ class QueryEvidence:
         self.sql.validate()
         self.type.validate()
         self.parameters.validate()
+        if self.parameters.state == "observed":
+            for parameter in self.parameters.value:
+                if not isinstance(parameter, dict) or not {"name", "type", "type_name"} <= set(parameter):
+                    raise ValueError("Observed query parameters must carry name, type, and type_name")
+                if not isinstance(parameter["name"], str) or not parameter["name"]:
+                    raise ValueError("Query parameter names must be non-empty strings")
+                if not isinstance(parameter["type"], int) or isinstance(parameter["type"], bool):
+                    raise ValueError("Query parameter type must be an integer DAO field-type code")
+                if not isinstance(parameter["type_name"], str) or not parameter["type_name"]:
+                    raise ValueError("Query parameter type_name must be a non-empty string")
         if self.sql.provenance.object_kind != "query" or self.sql.provenance.object_name != self.name or self.sql.provenance.property != "sql":
             raise ValueError("Query SQL provenance must identify this query")
         if self.type.provenance.object_kind != "query" or self.type.provenance.object_name != self.name or self.type.provenance.property != "type":

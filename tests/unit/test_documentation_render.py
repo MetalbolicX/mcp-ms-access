@@ -197,6 +197,33 @@ def test_unsupported_cardinality_relationship_is_catalogued_but_not_diagrammed()
     assert "| pair | Parent → Child |" in report.markdown
 
 
+def test_query_catalogue_renders_observed_parameters_with_names_and_dao_type_names() -> None:
+    """T1: the database query catalogue lists parameters as ``name (DAO type name)``."""
+    evidence = make_evidence()
+    evidence.queries[0].parameters = FactStatus.observed(
+        [
+            {"name": "[pCustomerID]", "type": 4, "type_name": "Long Integer"},
+            {"name": "[pStatus]", "type": 10, "type_name": "Text"},
+        ],
+        provenance("query", "Q", "parameters"),
+    )
+    markdown = render_document(evidence).markdown
+    assert "- Parameters: [pCustomerID] (Long Integer); [pStatus] (Text)" in markdown
+
+
+def test_query_catalogue_marks_zero_parameter_queries_observed_empty() -> None:
+    """A known-empty parameter list renders as observed empty, not as unknown."""
+    evidence = make_evidence()
+    evidence.queries[0].parameters = FactStatus.observed([], provenance("query", "Q", "parameters"))
+    assert "- Parameters: observed empty" in render_document(evidence).markdown
+
+
+def test_unavailable_query_parameters_render_reason_not_fabricated_values() -> None:
+    """PRESERVE: a producer without parameter exposure stays honestly unavailable."""
+    markdown = render_document(make_evidence()).markdown
+    assert "- Parameters: unavailable: Query parameters are not decoded" in markdown
+
+
 def test_database_and_er_reports_have_expected_section_sets() -> None:
     evidence = make_evidence()
     database = render_document(evidence, kind="database").markdown

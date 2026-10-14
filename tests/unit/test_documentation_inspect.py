@@ -11,6 +11,7 @@ from ms_access_mcp.application.documentation_inspect import (
     DocumentationInspectService,
     InspectionPort,
 )
+from ms_access_mcp.backends.schema_inspector import QueryParameterInfo
 from ms_access_mcp.errors import AccessMcpError
 from ms_access_mcp.models import FieldInfo, IndexInfo, QueryInfo, RelationshipInfo, TableInfo
 
@@ -22,6 +23,7 @@ class FakePort:
     relationships: list[RelationshipInfo] | Exception
     queries: list[QueryInfo] | Exception
     link_metadata: dict[str, dict[str, Any] | Exception] | None = None
+    query_parameters: dict[str, list[QueryParameterInfo] | Exception] | None = None
     closed: bool = False
 
     def list_tables(self) -> list[TableInfo]:
@@ -33,6 +35,14 @@ class FakePort:
         if self.link_metadata is None:
             return None
         result = self.link_metadata.get(table_name)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def get_query_parameters(self, query_name: str) -> list[QueryParameterInfo] | None:
+        if self.query_parameters is None:
+            return None
+        result = self.query_parameters.get(query_name)
         if isinstance(result, Exception):
             raise result
         return result
@@ -64,6 +74,7 @@ def port(
     relationships: list[RelationshipInfo] | Exception | None = None,
     queries: list[QueryInfo] | Exception | None = None,
     link_metadata: dict[str, dict[str, Any] | Exception] | None = None,
+    query_parameters: dict[str, list[QueryParameterInfo] | Exception] | None = None,
 ) -> FakePort:
     return FakePort(
         tables=[] if tables is None else tables,
@@ -71,6 +82,7 @@ def port(
         relationships=[] if relationships is None else relationships,
         queries=[] if queries is None else queries,
         link_metadata={} if link_metadata is None else link_metadata,
+        query_parameters=query_parameters,
     )
 
 
@@ -85,6 +97,7 @@ def test_fake_port_signatures_match_production_port() -> None:
         "get_indexes",
         "get_relationships",
         "get_queries",
+        "get_query_parameters",
         "close",
     ):
         assert inspect.signature(getattr(FakePort, method_name)) == inspect.signature(
@@ -208,6 +221,60 @@ def test_query_sql_exception_is_failed_not_blank_and_type_mapping_is_coarse() ->
         "Select": "select", "Action": "action", "DDL": "ddl", "Other": "unknown"
     }
     assert all(query.parameters.state == "unavailable" for query in queries.values())
+
+
+def test_query_parameter_metadata_reaches_evidence_with_name_type_and_dao_type_name() -> None:
+    """T1: a port that exposes parameters produces an observed, closed gap-free fact."""
+    document = inspect_with(
+        port(
+            queries=[QueryInfo("qryOrdersByCustomer", "PARAMETERS [pCustomerID] Long; SELECT 1", "select")],
+            query_parameters={
+                "qryOrdersByCustomer": [QueryParameterInfo("[pCustomerID]", 4, "Long Integer")]
+            },
+        )
+    )
+    parameters = document.queries[0].parameters
+    assert parameters.state == "observed"
+    assert parameters.value == [{"name": "[pCustomerID]", "type": 4, "type_name": "Long Integer"}]
+    assert parameters.provenance.object_kind == "query"
+    assert parameters.provenance.object_name == "qryOrdersByCustomer"
+    assert parameters.provenance.property == "parameters"
+    # Parameters are readable here, so this is not a coverage gap.
+    assert document.coverage.queries.unsupported == {}
+
+
+def test_query_parameters_none_maps_to_unavailable_at_the_seam() -> None:
+    """A port that cannot supply parameters (None) must map to unavailable, never empty/null."""
+    document = inspect_with(port(queries=[QueryInfo("Q", "SELECT 1", "select")], query_parameters=None))
+    parameters = document.queries[0].parameters
+    assert parameters.state == "unavailable"
+    assert parameters.reason and parameters.reason.strip()
+    assert parameters.provenance.property == "parameters"
+    assert document.coverage.queries.unsupported["Q"]
+    assert document.status == "partial"
+
+
+def test_zero_parameter_query_is_observed_empty_not_unavailable() -> None:
+    """A DAO-exposed zero-parameter query is a known empty, a different thing from unknown."""
+    document = inspect_with(port(queries=[QueryInfo("qryOpenOrders", "SELECT 1", "select")], query_parameters={"qryOpenOrders": []}))
+    assert document.queries[0].parameters.state == "observed"
+    assert document.queries[0].parameters.value == []
+    assert document.coverage.queries.unsupported == {}
+
+
+def test_query_parameter_read_failure_is_failed_not_fabricated_empty() -> None:
+    """A failing parameter read is an explicit failed fact, not an empty success."""
+    document = inspect_with(
+        port(
+            queries=[QueryInfo("Q", "SELECT 1", "select")],
+            query_parameters={"Q": RuntimeError("parameter read failed")},
+        )
+    )
+    parameters = document.queries[0].parameters
+    assert parameters.state == "failed"
+    assert "parameter read failed" in (parameters.reason or "")
+    assert document.coverage.queries.failed["Q"]
+    assert document.status == "partial"
 
 
 def test_composite_relationship_pairs_are_preserved_and_attributes_unavailable() -> None:
