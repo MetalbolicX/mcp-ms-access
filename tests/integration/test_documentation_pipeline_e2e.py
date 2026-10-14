@@ -20,6 +20,12 @@ and linked-table metadata, so those tests now pass; the former field-defaults fi
 test is renamed ``test_inspect_core_field_defaults_are_read_from_dao`` because ACE
 exposes ``Field.DefaultValue`` and the honest state is ``observed``, not ``unavailable``.
 
+The suite also qualifies the ODBC inspection path (T2): ``--backend odbc`` reads the
+same built fixture copy through the Access ODBC driver, and
+``test_inspect_core_via_odbc_exposes_odbc_metadata_with_honest_unavailable_gaps``
+asserts the ODBC-visible evidence plus every capability the probe proved invisible as
+an explicit ``unavailable`` fact with a reason.
+
 Run explicitly on Windows with ACE DAO and pywin32::
 
     $env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
@@ -261,6 +267,34 @@ def core_evidence(e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="session")
+def core_odbc_evidence(e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
+    """Inspect core.accdb once through the public CLI with ``--backend odbc``.
+
+    The ODBC path reads the same built fixture copy as the DAO path through the Access
+    ODBC driver. The source is hashed before and after so the inspection's no-write
+    behavior is observed, not assumed; no lock file may be left behind.
+    """
+    directory = e2e_build["directory"]
+    core = directory / "core.accdb"
+    before = _sha256(core)
+    completed = _run_cli(
+        ["documentation", "inspect", "--db", str(core), "--backend", "odbc", "--json"],
+        _cli_env(directory),
+    )
+    after = _sha256(core)
+    evidence_path = work_dir / "inspect-core-odbc.json"
+    evidence_path.write_text(completed.stdout, encoding="utf-8")
+    return {
+        "completed": completed,
+        "envelope": json.loads(completed.stdout) if completed.stdout.strip().startswith("{") else None,
+        "path": evidence_path,
+        "before": before,
+        "after": after,
+        "lock_files": sorted(path.name for path in directory.iterdir() if path.name.startswith("core.accdb.")),
+    }
+
+
+@pytest.fixture(scope="session")
 def core_reports(core_evidence: dict[str, Any], e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
     """Render database and ER reports from the persisted core evidence JSON."""
     env = _cli_env(e2e_build["directory"])
@@ -438,6 +472,123 @@ def test_inspect_core_field_defaults_are_read_from_dao(
     assert orders_default["state"] == "observed" and orders_default["value"] == '"Open"'
     name_default = next(field for field in tables["Customers"]["fields"] if field["name"] == "Name")["default_value"]
     assert name_default["state"] == "observed" and name_default["value"] == ""
+
+
+def test_inspect_core_via_odbc_exposes_odbc_metadata_with_honest_unavailable_gaps(
+    core_odbc_evidence: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """T2: ``--backend odbc`` qualifies the pipeline with honest ODBC-only gaps.
+
+    Probed against the Access ODBC driver on core.accdb, ODBC exposes exactly eight
+    user tables (including ``Sales Notes``), SQLColumns type names/sizes (``INTEGER``,
+    ``VARCHAR``, ``CURRENCY``), SQLStatistics index names/columns/uniqueness, and the
+    three row-returning saved queries as ``VIEW`` rows. It cannot expose the DAO
+    Required/AllowZeroLength properties, the primary-index flag (``SQLPrimaryKeys`` is
+    unsupported IM001), relationships (``SQLForeignKeys`` is unsupported IM001;
+    ``MSysRelationships`` is not readable), saved-query SQL/category, or the target of a
+    linked table. The action queries ``qryUpdateOrderStatus``/``qryDeleteDraftOrders`` are
+    not ``VIEW`` rows and are therefore invisible to ODBC. Every one of those gaps must
+    be an explicit ``unavailable`` fact with a reason, while ODBC-visible facts keep the
+    driver's own values (an honest observed value, never the DAO equivalent).
+    """
+    completed = core_odbc_evidence["completed"]
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert core_odbc_evidence["envelope"] is not None
+    envelope = core_odbc_evidence["envelope"]
+    assert envelope["success"] is True
+    evidence = envelope["data"]
+    payload = evidence["data"]
+    assert evidence["source"]["backend_identity"] == "ODBC"
+    assert evidence["status"] == "partial"
+
+    expected_tables = set(e2e_build["expected"]["databases"]["core.accdb"]["tables"])
+    assert {table["name"] for table in payload["tables"]} == expected_tables
+    assert "Sales Notes" in {table["name"] for table in payload["tables"]}
+    assert set(evidence["coverage"]["tables"]["inspected"]) == expected_tables
+    assert evidence["coverage"]["tables"]["failed"] == {}
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+    tables = _tables_by_name(core_odbc_evidence)
+    customers = {field["name"]: field for field in tables["Customers"]["fields"]}
+    assert customers["CustomerID"]["type"]["value"] == "INTEGER"
+    assert customers["CustomerID"]["size"]["value"] == 10
+    assert customers["Status"]["type"]["value"] == "VARCHAR"
+    assert customers["Status"]["size"]["value"] == 20
+    # Different fidelity from DAO ``Currency``: the honest ODBC type name is asserted.
+    products = {field["name"]: field for field in tables["Products"]["fields"]}
+    assert products["UnitPrice"]["type"]["value"] == "CURRENCY"
+    notes = {field["name"]: field for field in tables["Sales Notes"]["fields"]}
+    assert notes["Résumé"]["type"]["value"] == "VARCHAR"
+    assert notes["Résumé"]["size"]["value"] == 50
+
+    # ODBC-visible type/size stay observed; every ODBC-invisible field property is unavailable.
+    for table in payload["tables"]:
+        assert table["primary_key"]["state"] == "unavailable"
+        assert table["primary_key"]["reason"].strip()
+        assert evidence["coverage"]["tables"]["unsupported"][table["name"]].strip()
+        for field in table["fields"]:
+            assert field["type"]["state"] == "observed"
+            assert field["size"]["state"] == "observed"
+            for prop in ("required", "allow_zero_length", "default_value"):
+                assert field[prop]["state"] == "unavailable", (table["name"], field["name"], prop)
+                assert field[prop]["reason"].strip()
+
+    # SQLStatistics index facts survive (names/columns/uniqueness, composite order);
+    # the primary flag does not, so no index claims to be primary.
+    customer_indexes = {index["name"]: index for index in tables["Customers"]["indexes"]}
+    assert customer_indexes["PK_Customers"]["columns"] == ["CustomerID"]
+    assert customer_indexes["PK_Customers"]["is_unique"] is True
+    assert customer_indexes["PK_Customers"]["is_primary"] is False
+    order_line_indexes = {index["name"]: index for index in tables["OrderLines"]["indexes"]}
+    assert order_line_indexes["PK_OrderLines"]["columns"] == ["OrderID", "LineNo"]
+    profile_indexes = {index["name"]: index for index in tables["CustomerProfiles"]["indexes"]}
+    assert profile_indexes["CustomersProfiles"]["is_unique"] is True
+    assert profile_indexes["CustomersProfiles"]["is_primary"] is False
+    assert profile_indexes["relCustomersProfiles"]["is_unique"] is False
+    assert all(index["is_primary"] is False for table in payload["tables"] for index in table["indexes"])
+
+    assert payload["relationships"] == []
+    assert "SQLForeignKeys" in evidence["coverage"]["relationships"]["unsupported"]["relationships"]
+    assert evidence["coverage"]["relationships"]["failed"] == {}
+
+    queries = _queries_by_name(core_odbc_evidence)
+    assert set(queries) == {"qryOpenOrders", "qryOrdersByCustomer", "qryOrderSummary"}
+    assert "qryUpdateOrderStatus" not in queries and "qryDeleteDraftOrders" not in queries
+    for query in queries.values():
+        assert query["sql"]["state"] == "unavailable"
+        assert query["sql"]["reason"].strip()
+        assert query["type"]["state"] == "unavailable"
+        assert query["type"]["reason"].strip()
+    parameterized = queries["qryOrdersByCustomer"]["parameters"]
+    assert parameterized["state"] == "observed"
+    assert [(item["name"], item["type"], item["type_name"]) for item in parameterized["value"]] == [
+        ("[pCustomerID]", 4, "INTEGER")
+    ]
+    for name in ("qryOpenOrders", "qryOrderSummary"):
+        assert queries[name]["parameters"]["state"] == "observed"
+        assert queries[name]["parameters"]["value"] == []
+    assert evidence["coverage"]["queries"]["failed"] == {}
+
+    # No observed mutation and no lock residue from the ODBC open.
+    assert core_odbc_evidence["after"] == core_odbc_evidence["before"]
+    assert core_odbc_evidence["after"] == e2e_build["inventory"]["core.accdb"]["sha256"]
+    assert core_odbc_evidence["lock_files"] == []
+
+    # Rendering is offline and accepts ODBC-produced evidence unchanged.
+    rendered = _run_cli(
+        ["documentation", "render", "--evidence", str(core_odbc_evidence["path"]), "--kind", "database", "--json"],
+        _cli_env(e2e_build["directory"]),
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    report = json.loads(rendered.stdout)["data"]
+    assert report["schema"] == "access.documentation.report/1"
+    assert report["sha256"] == hashlib.sha256(report["markdown"].encode("utf-8")).hexdigest()
+    assert "## Data dictionary" in report["markdown"]
+    assert "## Saved queries" in report["markdown"]
+    assert "- Backend: ODBC" in report["markdown"]
+    assert "- Parameters: [pCustomerID] (INTEGER)" in report["markdown"]
+    assert _sha256(e2e_build["directory"] / "core.accdb") == core_odbc_evidence["before"]
 
 
 def test_finding_inspect_core_update_query_is_miscategorised_as_select(
@@ -677,6 +828,72 @@ def test_inspect_linked_succeeds_while_sentinel_is_exclusively_locked(
     names = {table["name"] for table in payload["tables"]}
     assert names == {"LinkedCustomers", "LocalNotes"}
     assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+
+def test_inspect_linked_via_odbc_reports_unreachable_source_as_failed_table(
+    e2e_build: dict[str, Any], dao_engine: Any
+) -> None:
+    """B1: an unreachable linked source is a failed table, never an observed-empty schema.
+
+    The Access ODBC driver returns zero SQLColumns rows (no exception) for a linked table
+    whose source is unreachable, which bypassed the port's exception -> failed path and
+    fabricated an empty field/index fact. Holding the session's ``sentinel.accdb`` open
+    exclusively via DAO reproduces that state for the session's ``linked.accdb`` (whose
+    ``Connect`` points at that sentinel by absolute path; no relinking). Inspection still
+    exits 0 with a success envelope, but ``LinkedCustomers`` must appear in
+    ``coverage.tables.failed`` with the zero-columns reason instead of a fabricated empty
+    field/index list. The sentinel sha256 is compared before and after to show any catalog
+    contact was read-only, and the lock is released in a ``finally``. This uses only the
+    session's self-built fixture tree.
+    """
+    directory = e2e_build["directory"]
+    sentinel = directory / "sentinel.accdb"
+    sentinel_before = _sha256(sentinel)
+    handle = dao_engine.OpenDatabase(str(sentinel), True, False)
+    try:
+        completed = _run_cli(
+            [
+                "documentation",
+                "inspect",
+                "--db",
+                str(directory / "linked.accdb"),
+                "--backend",
+                "odbc",
+                "--json",
+            ],
+            _cli_env(directory),
+        )
+    finally:
+        handle.Close()
+    sentinel_after = _sha256(sentinel)
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+    envelope = json.loads(completed.stdout)
+    assert envelope["success"] is True
+    evidence = envelope["data"]
+    payload = evidence["data"]
+    assert evidence["source"]["backend_identity"] == "ODBC"
+
+    # The unreachable linked source is a failed read, not an observed-empty schema.
+    failed = evidence["coverage"]["tables"]["failed"]
+    assert "LinkedCustomers" in failed
+    assert "no columns" in failed["LinkedCustomers"]
+    linked = next(table for table in payload["tables"] if table["name"] == "LinkedCustomers")
+    assert linked["fields"] == []
+    assert linked["indexes"] == []
+    assert linked["primary_key"]["state"] == "failed"
+    assert linked["primary_key"]["reason"] == failed["LinkedCustomers"]
+
+    # A local table in the same database still reads its real columns normally.
+    local = next(table for table in payload["tables"] if table["name"] == "LocalNotes")
+    assert local["fields"], "LocalNotes must expose its real columns"
+    assert "LocalNotes" not in failed
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+    # Any catalog contact with the sentinel was read-only.
+    assert sentinel_after == sentinel_before
+    assert sentinel_after == e2e_build["inventory"]["sentinel.accdb"]["sha256"]
 
 
 def test_finding_inspect_linked_local_link_metadata_absent_from_evidence(

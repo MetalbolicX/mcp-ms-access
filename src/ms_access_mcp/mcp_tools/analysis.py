@@ -14,7 +14,11 @@ from mcp.types import CallToolResult
 from ..application.analysis import QueryAnalyzerService
 from ..application.database import DatabaseUseCases, Err
 from ..application.documentation import EvidenceDoc
-from ..application.documentation_inspect import DocumentationInspectService, open_inspection_port
+from ..application.documentation_inspect import (
+    DocumentationInspectService,
+    OdbcInspectionPort,
+    open_inspection_port,
+)
 from ..application.documentation_render import ReportDoc, render_document
 from ..application.documentation_save import DocumentationSaveService, DocumentationWritePolicy
 from ..safety import allowed_dirs_from_env
@@ -181,17 +185,23 @@ def documentation_inspect(
             return to_mcp_result({"success": False, "error": opened.message})
         adapter = getattr(database, "_adapter", None)
         dispatcher = getattr(adapter, "_dispatcher", None)
-        if dispatcher is None or not dispatcher.is_connected():
-            raise ValueError("Documentation inspection requires a connected DAO backend")
-        port = open_inspection_port(dispatcher)
+        if dispatcher is not None and dispatcher.is_connected():
+            port = open_inspection_port(dispatcher)
 
-        def leave_session_open() -> None:
-            return None
+            def leave_session_open() -> None:
+                return None
 
-        port.close = leave_session_open  # The session owns and closes this handle.
-        evidence = dispatcher.call(
-            lambda: DocumentationInspectService().inspect(port, tables=tables, queries=queries)
-        )
+            port.close = leave_session_open  # The session owns and closes this handle.
+            evidence = dispatcher.call(
+                lambda: DocumentationInspectService().inspect(port, tables=tables, queries=queries)
+            )
+        else:
+            connection = getattr(adapter, "connection", None)
+            if connection is None:
+                raise ValueError("Documentation inspection requires a connected DAO or ODBC backend")
+            evidence = DocumentationInspectService().inspect(
+                OdbcInspectionPort(connection), tables=tables, queries=queries
+            )
         data = evidence.to_dict()
         data["status"] = evidence.status
         return to_mcp_result({"success": True, "data": data})

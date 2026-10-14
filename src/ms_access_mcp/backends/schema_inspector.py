@@ -68,10 +68,12 @@ def _com_string(value: Any) -> str:
 
 @dataclass(frozen=True)
 class QueryParameterInfo:
-    """One declared saved-query parameter read from DAO ``QueryDef.Parameters``.
+    """One declared saved-query parameter read from a producer's parameter surface.
 
-    ``type`` is the DAO field-type code (``4`` = ``dbLong``); ``type_name`` reuses the
-    existing DAO field-type taxonomy rather than introducing a second one.
+    ``type`` and ``type_name`` use the producing port's own taxonomy: the DAO port
+    reports the DAO field-type code (``4`` = ``dbLong``) with the reused DAO type name
+    (``Long Integer``), and the ODBC port reports the ODBC SQL data type code with its
+    ODBC type name (``INTEGER``); no second taxonomy is invented for DAO.
     """
 
     name: str

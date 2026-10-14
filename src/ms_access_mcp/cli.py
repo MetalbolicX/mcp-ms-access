@@ -17,7 +17,7 @@ from typing import Any
 from .application.automation import AutomationUseCases
 from .application.database import DatabaseUseCases, Err
 from .application.documentation import EvidenceDoc
-from .application.documentation_inspect import DocumentationInspectService, open_inspection_port
+from .application.documentation_inspect import DocumentationInspectService, OdbcInspectionPort, open_inspection_port
 from .application.documentation_render import ReportDoc, render_document
 from .application.documentation_save import DocumentationSaveService, DocumentationWritePolicy
 from .application.maintenance import MaintenanceUseCases
@@ -1836,6 +1836,33 @@ def _unwrap_cli_envelope(payload: Any) -> Any:
     return payload
 
 
+def _inspect_open_session(database: Any, *, tables: Any, queries: Any) -> Any:
+    """Inspect an open session through its DAO or ODBC inspection port.
+
+    The DAO path reopens engine-level read-only before reading; the ODBC path reuses
+    the adapter's already-open connection (ODBC exposes no read-only reopen) and
+    reports ODBC-invisible metadata as `unavailable` instead of fabricating it.
+    """
+    adapter = getattr(database, "_adapter", None)
+    dispatcher = getattr(adapter, "_dispatcher", None)
+    if dispatcher is not None and dispatcher.is_connected():
+        port = open_inspection_port(dispatcher)
+
+        def leave_session_open() -> None:
+            return None
+
+        port.close = leave_session_open
+        return dispatcher.call(
+            lambda: DocumentationInspectService().inspect(port, tables=tables, queries=queries)
+        )
+    connection = getattr(adapter, "connection", None)
+    if connection is not None:
+        return DocumentationInspectService().inspect(
+            OdbcInspectionPort(connection), tables=tables, queries=queries
+        )
+    raise ValueError("Documentation inspection requires a connected DAO or ODBC backend")
+
+
 def _cmd_documentation(args: argparse.Namespace) -> int:
     """Run inspect/render/save documentation operations."""
     from .errors import err, ok
@@ -1850,28 +1877,13 @@ def _cmd_documentation(args: argparse.Namespace) -> int:
             if isinstance(opened, Err):
                 result = opened
             else:
-                adapter = getattr(database, "_adapter", None)
-                dispatcher = getattr(adapter, "_dispatcher", None)
-                if dispatcher is None or not dispatcher.is_connected():
-                    result = err("Documentation inspection requires a connected DAO backend")
-                else:
-                    try:
-                        port = open_inspection_port(dispatcher)
-
-                        def leave_session_open() -> None:
-                            return None
-
-                        port.close = leave_session_open
-                        evidence = dispatcher.call(
-                            lambda: DocumentationInspectService().inspect(
-                                port, tables=args.tables, queries=args.queries
-                            )
-                        )
-                        payload = evidence.to_dict()
-                        payload["status"] = evidence.status
-                        result = ok(data=payload)
-                    except Exception as exc:
-                        result = err(str(exc))
+                try:
+                    evidence = _inspect_open_session(database, tables=args.tables, queries=args.queries)
+                    payload = evidence.to_dict()
+                    payload["status"] = evidence.status
+                    result = ok(data=payload)
+                except Exception as exc:
+                    result = err(str(exc))
         finally:
             database.close_database()
     elif args.documentation_action == "render":

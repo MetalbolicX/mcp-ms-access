@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -9,6 +9,7 @@ import pytest
 from ms_access_mcp.application.documentation_inspect import (
     DaoInspectionPort,
     DocumentationInspectService,
+    InspectionCapabilities,
     InspectionPort,
 )
 from ms_access_mcp.backends.schema_inspector import QueryParameterInfo
@@ -24,7 +25,11 @@ class FakePort:
     queries: list[QueryInfo] | Exception
     link_metadata: dict[str, dict[str, Any] | Exception] | None = None
     query_parameters: dict[str, list[QueryParameterInfo] | Exception] | None = None
+    caps: InspectionCapabilities = field(default_factory=InspectionCapabilities)
     closed: bool = False
+
+    def capabilities(self) -> InspectionCapabilities:
+        return self.caps
 
     def list_tables(self) -> list[TableInfo]:
         if isinstance(self.tables, Exception):
@@ -75,6 +80,7 @@ def port(
     queries: list[QueryInfo] | Exception | None = None,
     link_metadata: dict[str, dict[str, Any] | Exception] | None = None,
     query_parameters: dict[str, list[QueryParameterInfo] | Exception] | None = None,
+    caps: InspectionCapabilities | None = None,
 ) -> FakePort:
     return FakePort(
         tables=[] if tables is None else tables,
@@ -83,6 +89,7 @@ def port(
         queries=[] if queries is None else queries,
         link_metadata={} if link_metadata is None else link_metadata,
         query_parameters=query_parameters,
+        caps=caps if caps is not None else InspectionCapabilities(),
     )
 
 
@@ -92,6 +99,7 @@ def inspect_with(fake: FakePort, tables: list[str] | None = None, queries: list[
 
 def test_fake_port_signatures_match_production_port() -> None:
     for method_name in (
+        "capabilities",
         "list_tables",
         "get_table_link_metadata",
         "get_indexes",
@@ -275,6 +283,78 @@ def test_query_parameter_read_failure_is_failed_not_fabricated_empty() -> None:
     assert "parameter read failed" in (parameters.reason or "")
     assert document.coverage.queries.failed["Q"]
     assert document.status == "partial"
+
+
+def _reduced_capabilities() -> InspectionCapabilities:
+    """Return an ODBC-like capability set naming every property it cannot observe."""
+    return InspectionCapabilities(
+        backend_identity="ODBC",
+        unavailable={
+            "field_required": "required is not exposed",
+            "field_allow_zero_length": "allow-zero-length is not exposed",
+            "primary_key": "the primary index is not flagged",
+            "relationships": "relationships are not exposed",
+            "query_sql": "saved-query SQL is not exposed",
+            "query_type": "saved-query category is not exposed",
+        },
+    )
+
+
+def test_reduced_capabilities_map_only_their_dependent_facts_to_unavailable() -> None:
+    """T2: an ODBC-like port records its gaps as `unavailable`, never as fabricated values."""
+    fake = port(
+        tables=[
+            TableInfo(
+                "T",
+                fields=[
+                    FieldInfo(
+                        "id",
+                        "INTEGER",
+                        size=10,
+                        required=True,
+                        allow_zero_length=False,
+                        default_value="0",
+                    )
+                ],
+            )
+        ],
+        indexes={"T": [IndexInfo("PK_T", ["id"], is_unique=True, is_primary=True)]},
+        # A read here would be a bug: the capability gap must short-circuit it.
+        relationships=RuntimeError("relationships must not be read when unavailable"),
+        queries=[QueryInfo("Q", "SELECT 1", "select")],
+        query_parameters={"Q": [QueryParameterInfo("[p]", 4, "INTEGER")]},
+        caps=_reduced_capabilities(),
+    )
+    document = inspect_with(fake)
+    assert document.source.backend_identity == "ODBC"
+    field = document.tables[0].fields[0]
+    assert field.type.state == "observed" and field.type.value == "INTEGER"
+    assert field.size.state == "observed" and field.size.value == 10
+    assert field.required.state == "unavailable" and field.required.reason == "required is not exposed"
+    assert field.allow_zero_length.state == "unavailable"
+    assert field.allow_zero_length.reason == "allow-zero-length is not exposed"
+    # An exposed default is still observed: the capability only gates its own fact.
+    assert field.default_value.state == "observed" and field.default_value.value == "0"
+    assert document.tables[0].primary_key.state == "unavailable"
+    assert document.tables[0].primary_key.reason == "the primary index is not flagged"
+    assert document.coverage.tables.unsupported["T"] == "the primary index is not flagged"
+    assert document.relationships == []
+    assert document.coverage.relationships.unsupported["relationships"] == "relationships are not exposed"
+    assert document.coverage.relationships.failed == {}
+    assert document.queries[0].sql.state == "unavailable"
+    assert document.queries[0].sql.reason == "saved-query SQL is not exposed"
+    assert document.queries[0].type.state == "unavailable"
+    assert document.queries[0].type.reason == "saved-query category is not exposed"
+    assert document.queries[0].parameters.state == "observed"
+    assert document.status == "partial"
+
+
+def test_capability_reason_ignores_blank_reasons_and_unknown_capabilities() -> None:
+    capabilities = InspectionCapabilities(backend_identity="ODBC", unavailable={"primary_key": "   "})
+    assert capabilities.reason("primary_key") is None
+    assert capabilities.reason("field_size") is None
+    assert InspectionCapabilities().backend_identity == "DAO"
+    assert InspectionCapabilities().reason("primary_key") is None
 
 
 def test_composite_relationship_pairs_are_preserved_and_attributes_unavailable() -> None:

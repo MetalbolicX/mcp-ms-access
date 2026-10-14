@@ -2,7 +2,8 @@
 
 Status: generator, expected manifest, the opt-in raw-readback integration suite, and
 the opt-in documentation-pipeline qualification suite are implemented. The pipeline
-suite qualifies engine-level read-only protection for the inspection open; startup-code
+suite qualifies engine-level read-only protection for the DAO inspection open and
+exercises the ODBC inspection path with behavioral no-write evidence; startup-code
 non-execution remains unqualified.
 
 ## Generate
@@ -144,6 +145,29 @@ refuses an `UPDATE` (`Operation must use an updateable query.`) with `core.accdb
 sha256 unchanged while `documentation inspect` still exits 0 with complete metadata
 readback.
 
+The same suite now exercises the ODBC inspection path end-to-end
+(`test_inspect_core_via_odbc_exposes_odbc_metadata_with_honest_unavailable_gaps`):
+`documentation inspect --db <built core.accdb> --backend odbc --json` runs the Access ODBC
+driver over the same built fixture copy, and the resulting evidence renders offline. It
+asserts the ODBC-visible facts with the driver's own values (eight user tables including
+`Sales Notes`; `INTEGER`/`VARCHAR`/`CURRENCY` type names and sizes; SQLStatistics index
+names, columns, and uniqueness including composite `PK_OrderLines` order; the three
+row-returning saved queries as `VIEW` rows) and every probed invisible capability as an
+explicit `unavailable` fact with a reason (field `required`/`allow_zero_length`, primary
+key, relationships, saved-query SQL/category, linked-table target). Query parameters are
+`observed` through `SQLProcedureColumns` (`[pCustomerID]`, ODBC type `4` = `INTEGER`;
+parameterless queries report a known empty, not `unavailable`). The test also asserts the
+source copy's sha256 is unchanged and that no `core.accdb.*` lock file remains. The ODBC
+path has no engine-level read-only reopen, so those hashes are behavioral no-write
+evidence only; the engine-level read-only qualification above stays DAO-scoped. ODBC
+catalog reads on a linked table contact the linked source read-only, so isolation is not
+guaranteed over ODBC; a separate lock-probe regression
+(`test_inspect_linked_via_odbc_reports_unreachable_source_as_failed_table`) holds the
+session sentinel exclusively and confirms that a linked table whose source is unreachable
+(which makes the driver return zero columns) surfaces as a `failed` table in
+`coverage.tables.failed` -- never an observed-empty field/index fact -- with the sentinel
+sha256 unchanged.
+
 All three blocking qualification findings from that suite are resolved in T3 phase 2:
 
 1. **Resolved.** Field defaults are read from DAO `Field.DefaultValue` (`Customers.Status = "Active"`,
@@ -168,9 +192,12 @@ The three cosmetic gaps stay open intentionally: nullable-FK cardinality renderi
 (`Orders.BillingCustomerID` still diagrams `}o--||`), the pywin32 `IUnknown` teardown
 stderr banner, and the `source.path`/`source.format` placeholders.
 
-Engine-level read-only enforcement is now qualified for the inspection open (see the
-proof above). Still unproven by any fixture suite: startup/macro/VBA non-execution (no
-executable fixture exists) and the ODBC backend. Linked-source isolation is now observed
+Engine-level read-only enforcement is now qualified for the DAO inspection open (see the
+proof above). The ODBC inspection path is now exercised by the pipeline suite with
+behavioral no-write evidence (source hashes unchanged, no lock residue) as well as
+per-capability honest gaps; it has no engine-level read-only claim. Still unproven by any
+fixture suite: startup/macro/VBA non-execution (no executable fixture exists) and
+filtered (`--tables`/`--queries`) inspection. Linked-source isolation is now observed
 for this fixture while the sentinel is exclusively locked, but it is scoped to that
 observation and not to engine-level enforcement.
 
