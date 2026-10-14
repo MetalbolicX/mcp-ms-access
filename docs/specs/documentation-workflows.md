@@ -1,17 +1,27 @@
 # Proposed feature: Access documentation workflows (v1)
 
 > **IMPLEMENTED — PARTIALLY RUNTIME-QUALIFIED (ACE/DAO and ACE/ODBC, fixture scope).**
-> Contracts, services, MCP tools,
-> CLI commands, and prompts below are implemented and covered by unit tests on branch
-> `feat/documentation-workflows`. Engine-level read-only protection (DAO), linked-source
-> isolation, filtered inspection (DAO), startup-code non-execution (DAO and ODBC), and
-> the format/runtime matrix have been exercised at fixture scope — see
-> §7.2 for the exact qualified scope, including the ACE/ODBC inspection row, its
+> Contracts, services, MCP tools, CLI commands, and prompts below are implemented and
+> covered by unit tests on branch `feat/documentation-workflows`. All four original
+> partial-qualification gaps are closed at fixture scope: query parameter metadata, the
+> ODBC inspection path, filtered inspection (DAO), and startup-code non-execution (DAO
+> and ODBC pipeline plus the gated control run). Schema/query extraction, field-default
+> honesty, query categories including update/delete, linked-table metadata rendering,
+> save gating, engine-level read-only inspection open (DAO), linked-source isolation
+> (DAO lock-probe), and the non-execution invariants are also qualified — see §7.2 for
+> the exact per-claim scope and evidence citations, including the ACE/ODBC row, its
 > capability table, the filtered-inspection subsection, and the startup-code
-> non-execution subsection. Claims outside that scope (VBA/macro execution beyond the
-> startup fixture) remain **NOT QUALIFIED**.
+> non-execution subsection.
 >
-> **Status:** Definition accepted; runtime implementation not authorized. Related: [Architecture](../01-architecture.md), [Contracts](../02-contracts.md), [Safety and configuration](../03-safety-and-configuration.md), [Feature task](../../odd/tasks/documentation-workflows.md).
+> **Still NOT QUALIFIED / unclaimed:** legacy Jet 3 and Jet 4 `.mdb` format fixtures;
+> ODBC-attached links (`dbAttachedODBC`, `Attributes` `0x20000000`, are read as local
+> tables); filtered inspection over the ODBC backend; engine-level read-only for ODBC
+> (the claim is DAO-scoped only); VBA/macro execution beyond the `startup.accdb`
+> fixture; and bounded resource limits (§6.3: inspection timeout and
+> evidence/report-size caps remain TBD). The ACE/DAO matrix cell therefore stays
+> **PARTIALLY QUALIFIED**.
+>
+> **Status:** Implemented; runtime qualification matrix in §7.2 (ACE/DAO and ACE/ODBC **PARTIALLY QUALIFIED** at fixture scope). Related: [Architecture](../01-architecture.md), [Contracts](../02-contracts.md), [Safety and configuration](../03-safety-and-configuration.md), [Feature task](../../odd/tasks/documentation-workflows.md).
 
 ## 1. Overview and scope
 
@@ -41,9 +51,11 @@ The v1 sequence is inspect metadata into typed evidence; render that evidence de
 
 ## 2. Agreements — decision log
 
-> **Implementation status:** Agreements 1–11 are accepted and now reflected in implemented
-> code where applicable; agreement 3's protection guarantee and agreement 11's qualified
-> format/runtime claims remain pending runtime qualification.
+> **Implementation status:** Agreements 1–11 are accepted and reflected in implemented
+> code. Agreement 3's engine-level read-only protection is now qualified at fixture scope
+> for the DAO inspection open (§7.2), and agreement 11's format/runtime claims are
+> qualified for ACE (DAO and ODBC) at fixture scope while legacy Jet 3/Jet 4 `.mdb`
+> formats remain unqualified.
 
 1. **Scope sequence — v1 is schema, saved queries, and Mermaid ER; v2 may add full application analysis.** This bounds v1 to deterministic metadata rather than executable or interactive objects.
 2. **Source must be closed and offline.** Missing lock files, user assertions, plain copies, and post-copy hashes do not prove quiescence or consistency.
@@ -72,6 +84,8 @@ These are proposed shared logical arguments. CLI spelling and MCP serialization 
 | `documentation_inspect` | `database` | yes | Source path; apply existing database path policy. |
 |  | `format` | no | Qualified format/runtime hint; never overrides detection. |
 |  | `include_query_sql` | no | Include readable saved-query SQL; default false; SQL may contain secrets. |
+|  | `tables` | no | Repeatable object filter: inspect only the named tables, in request order; omitted inspects every eligible table. Repeat the argument for each name — a comma-joined value is one whole name, and an unknown name is a hard `Err` (CLI exit 1). |
+|  | `queries` | no | Repeatable saved-query filter with the same semantics as `tables`. |
 | `documentation_render` | `evidence` | yes | Validated `access.documentation.evidence/1`; no database connection. |
 |  | `options` | no | Deterministic presentation options, including Mermaid and section selection. |
 | `documentation_save` | `report` | yes | Rendered report with schema/version and content fingerprint. |
@@ -200,8 +214,9 @@ Use credential references or existing server-side resolution; never inline passw
 ## 6. Engineering and qualification
 
 > **Implementation status:** Unit-level engineering is in place (focused suites for
-> evidence, renderer, save, inspect, frontends inside the qualify gate). Runtime
-> qualification scenarios below have NOT run against real Access databases.
+> evidence, renderer, save, inspect, frontends inside the qualify gate), and the runtime
+> qualification scenarios below have been executed at fixture scope against the synthetic
+> ACE fixtures and the Northwind closed fixture — see §7.2 for the qualified matrix.
 
 ### 6.1 Test strategy
 
@@ -229,7 +244,9 @@ Inspection timeout and output/evidence/report-size caps are **TBD — pending qu
 
 ## 7. Acceptance
 
-> **Proposal status:** Criteria for future authorized implementation; no scenario below is claimed to pass today.
+> **Status:** §7.1 lists the acceptance criteria; §7.2 records which format/runtime cells
+> have met them at fixture scope. Criteria not listed as qualified in §7.2 remain
+> unclaimed.
 
 ### 7.1 Scenario acceptance
 
@@ -254,8 +271,8 @@ Support is declared per format/runtime, never inferred from suffix. Every cell b
 |---|---|---|
 | Jet 3 (`.mdb`) | DAO / Access runtime combination to be specified and tested | **NOT QUALIFIED** |
 | Jet 4 (`.mdb`) | DAO / Access runtime combination to be specified and tested | **NOT QUALIFIED** |
-| ACE (`.accdb`) | DAO backend, Northwind 8-table closed fixture, Windows/ACE, 2026-10-08 | **PARTIALLY QUALIFIED**: schema/relationship/query fidelity, integrity (sha unchanged), no lock residue, non-execution (scope: nothing executable in fixture), render/save E2E incl. permission/confirm/overwrite/fingerprint gates, cardinality honesty — all PASS with independent verification. A separate synthetic-fixture pipeline suite (public CLI in subprocesses; `tests/integration/test_documentation_pipeline_e2e.py`) additionally demonstrates composite-PK extraction, relationship-attribute `unavailable` states with partial coverage, deterministic database/ER rendering including the unique-index-backed one-to-one and composite-FK edges, ER query-catalogue exclusion, save gating on synthetic data, and linked inspection succeeding while the sentinel is exclusively locked elsewhere. Since the T3 phase-2 fixes the same suite also demonstrates DAO type 48 (dbUpdate) categorised `action` (32/48/64 → `action`, 80/96 → `ddl`, 0/32/80 preserved) so update and delete are distinguished; field defaults read from DAO `Field.DefaultValue` as `observed` stored expressions (`Customers.Status` = `"Active"`, `Orders.Status` = `"Open"`) with genuinely defaultless fields `observed` empty and never fabricated as `null`; and linked-table local catalogue metadata (`kind=linked`, `Connect`, `SourceTableName`) reaching evidence and rendering as `- Linked table: <name> → <database-file>/<source-table>`. The same suite now also reads saved-query parameter metadata from DAO `QueryDef.Parameters` (`test_inspect_core_query_parameters_are_read_from_dao`): `qryOrdersByCustomer` is an `observed` `[pCustomerID]` with DAO type `4` (dbLong) and the reused DAO type name `Long Integer` (matching the committed manifest `{"[pCustomerID]": 4}`), parameterless queries are `observed` empty (a known empty, never `unavailable` or a fabricated value), and the database query catalogue renders `- Parameters: [pCustomerID] (Long Integer)`. The evidence-mapping seam keeps a producer that cannot expose parameters (`None`, e.g. a non-DAO/ODBC port) as `unavailable`. All three phase-1 blocking findings are resolved, and the inspection open is engine-level read-only: `test_inspect_open_is_engine_read_only_and_refuses_write` proves the production inspection open (`open_inspection_port` → `ComDispatcher.reopen_dao_database_read_only`) refuses an `UPDATE` with the DAO engine error `Operation must use an updateable query.` while `documentation inspect` still exits 0 with complete metadata readback and core.accdb sha256 stays unchanged. The cell stays PARTIALLY QUALIFIED because filtered inspection (`--tables`/`--queries`, DAO backend) and startup-code non-execution are now qualified in the subsections below; the ODBC backend is qualified separately in the row below. NOT COVERED: VBA/macro execution beyond the startup fixture. |
-| ACE (`.accdb`) | ODBC backend (`Microsoft Access Driver (*.mdb, *.accdb)`), synthetic-fixture pipeline suite (`test_inspect_core_via_odbc_exposes_odbc_metadata_with_honest_unavailable_gaps`), Windows, 2026-10-08 | **PARTIALLY QUALIFIED (inspection only)**: `documentation inspect --backend odbc` reads the same built `core.accdb` fixture copy through the Access ODBC driver, produces evidence, and that evidence renders offline (database report). ODBC-visible facts are `observed` with the driver's own values (never the DAO equivalent): eight user tables including `Sales Notes`; SQLColumns type names/sizes (`INTEGER` 10, `VARCHAR`, `CURRENCY` — not DAO `Long Integer`/`Currency`); SQLStatistics index names, columns, and uniqueness including composite `PK_OrderLines` order; three row-returning saved queries as `VIEW` rows. ODBC-invisible properties are `unavailable` with a per-capability reason and are never fabricated: `field_required`/`field_allow_zero_length` (SQLColumns reports `NULLABLE` for every column and has no `AllowZeroLength` equivalent), `primary_key` (`SQLPrimaryKeys` unsupported IM001 and SQLStatistics does not flag the primary index, so reported indexes carry `is_primary=false` and every table records a `coverage.tables.unsupported` reason), `relationships` (`SQLForeignKeys` unsupported IM001; `MSysRelationships` unreadable), `query_sql`/`query_type` (only `VIEW` rows are visible), and a linked table's `Connect`/`SourceTableName` (ODBC reports `SYNONYM` without the target). Declared query parameters are `observed` through `SQLProcedureColumns` (`[pCustomerID]`, ODBC SQL data type `4` = `INTEGER`; parameterless queries report a driver-known empty, distinct from `unavailable`). Action queries (`qryUpdateOrderStatus`, `qryDeleteDraftOrders`) are not `VIEW` rows and are invisible to ODBC, so the ODBC query catalogue covers the three row-returning queries only. The test asserts the source copy's sha256 is unchanged before and after and that no `core.accdb.*` lock file remains; the ODBC open carries **no engine-level read-only claim** (behavioral no-write evidence only) and T4's engine-level read-only qualification stays DAO-scoped. ODBC catalog reads on a linked table **do** contact the linked source read-only, so isolation is **NOT guaranteed** over ODBC (unlike the DAO path's lock-probe-qualified isolation); with the zero-columns fix, a listed table whose source is unreachable now surfaces as a `failed` table (never an observed-empty schema), proved by `test_inspect_linked_via_odbc_reports_unreachable_source_as_failed_table`. NOT COVERED: engine-level read-only for ODBC, filtered inspection, VBA/macro execution beyond the startup fixture. |
+| ACE (`.accdb`) | DAO backend; Northwind 8-table closed fixture (2026-10-08) and the synthetic fixture suite (`core`/`sentinel`/`linked`/`startup`), Windows/ACE | **PARTIALLY QUALIFIED (fixture scope).** Covered, each with its scope and evidence: schema/relationships/saved queries (Northwind 8-table closed fixture, ledger T11 of `odd/tasks/documentation-workflows.md`; synthetic fixture `test_inspect_core_covers_exactly_manifest_tables_and_queries`); index-derived composite PKs and the genuine unique index (`test_inspect_core_primary_keys_and_unique_index`); field-default honesty — DAO `Field.DefaultValue` as `observed` stored expressions, defaultless fields `observed` empty, a `None` producer mapped to `unavailable` at the seam (`test_inspect_core_field_defaults_are_read_from_dao`; unit `test_field_default_value_is_read_from_dao_and_nul_stripped`, `test_field_default_none_maps_to_unavailable_while_real_defaults_stay_observed`); query categories including update/delete (32/48/64 → `action`, 80/96 → `ddl`; unit `test_maps_dao_update_type_48_to_action_category`); saved-query parameter metadata from DAO `QueryDef.Parameters` (`test_inspect_core_query_parameters_are_read_from_dao`: `[pCustomerID]` `observed` type `4`/`Long Integer`, parameterless `observed` empty, a non-exposing port `unavailable`); linked-table local catalogue metadata reaching evidence and rendering as `- Linked table: <name> → <file>/<source-table>` (`test_finding_inspect_linked_local_link_metadata_absent_from_evidence`, now passing); save gating (`test_save_gating_contract_on_report_copies`); engine-level read-only inspection open (`test_inspect_open_is_engine_read_only_and_refuses_write`: the read-only handle refuses `UPDATE` with `Operation must use an updateable query.`); linked-source isolation under an exclusive lock probe (`test_inspect_linked_succeeds_while_sentinel_is_exclusively_locked`); filtered inspection (`test_inspect_filtered_tables_returns_exactly_the_requested_subset`, `test_inspect_filtered_queries_returns_exactly_the_requested_query`, `test_inspect_combined_table_and_query_filters_scope_both_axes`, `test_inspect_unknown_requested_name_is_a_hard_error`); startup-code non-execution (`test_startup_code_is_never_executed_by_the_pipeline[dao]` plus the doubly gated control run `test_control_run_executes_marker_under_isolation` that proves the fixture genuinely executes under isolation); non-execution invariants after inspect → render → save (`test_non_execution_invariants_after_inspect_render_save`); deterministic rendering and Mermaid cardinality rules (`test_render_database_is_deterministic`, `test_render_mermaid_relationship_cardinality_matches_documented_rules`). The cell stays PARTIALLY QUALIFIED because two claims inside the ACE/DAO scope remain unproven. **NOT QUALIFIED (DAO scope):** **ODBC-attached links** — `SchemaInspector.get_table_link_metadata` tests only the ACE attached-table bit `0x40000000`, so a `dbAttachedODBC` link (`Attributes` `0x20000000`) is reported as a local table, and no fixture exercises that link type; and **VBA/macro execution beyond the `startup.accdb` fixture** (only the single control run executes code). Cosmetic gaps intentionally left open, not qualification claims: nullable-FK cardinality rendering, the pywin32 `IUnknown`/`0x80010108` teardown stderr banner, and the `source.path`/`source.format` placeholders. |
+| ACE (`.accdb`) | ODBC backend (`Microsoft Access Driver (*.mdb, *.accdb)`), synthetic-fixture pipeline suite (`test_inspect_core_via_odbc_exposes_odbc_metadata_with_honest_unavailable_gaps`), Windows, 2026-10-08 | **PARTIALLY QUALIFIED (inspection only)**: `documentation inspect --backend odbc` reads the same built `core.accdb` fixture copy through the Access ODBC driver, produces evidence, and that evidence renders offline (database report). ODBC-visible facts are `observed` with the driver's own values (never the DAO equivalent): eight user tables including `Sales Notes`; SQLColumns type names/sizes (`INTEGER` 10, `VARCHAR`, `CURRENCY` — not DAO `Long Integer`/`Currency`); SQLStatistics index names, columns, and uniqueness including composite `PK_OrderLines` order; three row-returning saved queries as `VIEW` rows. ODBC-invisible properties are `unavailable` with a per-capability reason and are never fabricated: `field_required`/`field_allow_zero_length` (SQLColumns reports `NULLABLE` for every column and has no `AllowZeroLength` equivalent), `primary_key` (`SQLPrimaryKeys` unsupported IM001 and SQLStatistics does not flag the primary index, so reported indexes carry `is_primary=false` and every table records a `coverage.tables.unsupported` reason), `relationships` (`SQLForeignKeys` unsupported IM001; `MSysRelationships` unreadable), `query_sql`/`query_type` (only `VIEW` rows are visible), and a linked table's `Connect`/`SourceTableName` (ODBC reports `SYNONYM` without the target). Declared query parameters are `observed` through `SQLProcedureColumns` (`[pCustomerID]`, ODBC SQL data type `4` = `INTEGER`; parameterless queries report a driver-known empty, distinct from `unavailable`). Action queries (`qryUpdateOrderStatus`, `qryDeleteDraftOrders`) are not `VIEW` rows and are invisible to ODBC, so the ODBC query catalogue covers the three row-returning queries only. The test asserts the source copy's sha256 is unchanged before and after and that no `core.accdb.*` lock file remains; the ODBC open carries **no engine-level read-only claim** (behavioral no-write evidence only) and T4's engine-level read-only qualification stays DAO-scoped. ODBC catalog reads on a linked table **do** contact the linked source read-only, so isolation is **NOT guaranteed** over ODBC (unlike the DAO path's lock-probe-qualified isolation); with the zero-columns fix, a listed table whose source is unreachable now surfaces as a `failed` table (never an observed-empty schema), proved by `test_inspect_linked_via_odbc_reports_unreachable_source_as_failed_table`. Startup-code non-execution is qualified for this backend by `test_startup_code_is_never_executed_by_the_pipeline[odbc]`: the full inspect → render → save cycle over `startup.accdb` through the Access ODBC driver exits 0, carries `StartupNotes` in evidence, and leaves the source hash unchanged with no lock residue, no new MSACCESS.EXE process, and no `*marker*` file. NOT COVERED: engine-level read-only for ODBC (DAO-scoped claim only), filtered inspection over ODBC, and VBA/macro execution beyond the startup fixture. |
 
 #### ODBC capability table (Access ODBC driver, `core.accdb` fixture)
 
@@ -307,12 +324,22 @@ example `--tables Customers --tables Orders`). The relationship catalogue is now
 selected subset at the inspection seam (`application/documentation_inspect.py`) with the
 omission recorded in coverage; the renderer itself is unchanged.
 
-Spec-silence findings (reported, not decided here): §3.1's operation-argument table does
-not list `tables`/`queries` at all; filtered-out **tables** are not recorded in
-`coverage.tables.excluded` (only system/temporary objects are), so a scope-filtered table
-leaves no trace in coverage beyond its absence from evidence; and a name that exists but
-is excluded by policy (`MSysObjects`) is rejected with the same `Unknown requested table
-name(s)` message as a nonexistent name.
+Documented filter contract (the actual implemented behavior). `coverage.tables.excluded`
+is reserved for **system/policy** exclusions such as `MSys*` objects and never records a
+table removed by a requested `tables` filter; `coverage.tables.inspected` is the
+filtering signal and is exactly the requested (or, when the filter is omitted, all
+eligible) table list, while a filtered-out table leaves no trace in any
+`coverage.tables` bucket. A requested name that exists but is excluded by policy (for
+example `MSysObjects`) is rejected with the same
+`Unknown requested table name(s): <name>` hard `Err` and exit 1 as a nonexistent name —
+there is no distinct "excluded by policy" error. Duplicate requested names are **not
+de-duplicated**: `--tables Orders --tables Orders` yields the table twice.
+
+Known cosmetic limitation (a follow-up item, not fixed by this documentation-only
+closure): when a filter excludes every relationship, the relationship catalogue renders
+the same `_No relationships observed_` line as when no relationship exists at all, so
+the renderer does not distinguish "none exist" from "none selected". The coverage
+`excluded` entries carry that distinction for clients that need it.
 
 
 #### Startup-code non-execution qualification (DAO and ODBC)
@@ -345,7 +372,9 @@ Access (force-killing only the captured PID if Quit hangs), and asserts the mark
 confined to the scratch directory with no surviving MSACCESS.EXE process and no
 `.laccdb`. Missing either gate skips cleanly. The DAO backend's engine-level read-only
 qualification stays scoped to the inspection open, and the ODBC path still has no
-engine-level read-only claim. Overall matrix status is left for the T5 sync.
+engine-level read-only claim. The matrix is finalized in the §7.2 cells above: ACE/DAO
+stays PARTIALLY QUALIFIED for ODBC-attached links and VBA/macro execution beyond this
+fixture.
 
 Qualification records engine version/bitness, host requirements, passive/read-only evidence, QueryDefs SQL availability, relationship/index fidelity, fixture results, and failure behavior. No qualification means unsupported/unknown coverage, never implied support.
 

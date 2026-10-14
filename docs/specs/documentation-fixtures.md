@@ -19,11 +19,20 @@ From the repository root:
 ```
 
 `--describe` prints the manifest and needs neither ACE nor pywin32. `--build`
-requires Windows with ACE DAO, pywin32, and Microsoft Access: the executable
-`startup.accdb` fixture needs `Access.Application` to load its module and macro, so a
-machine with only the ACE Database Engine driver cannot build it.
+requires Windows with ACE DAO, pywin32, and a Microsoft Access installation
+(`MSACCESS.EXE`): the executable `startup.accdb` fixture needs `Access.Application` to
+load its module and macro, so a machine with only the ACE Database Engine driver
+cannot build it.
 
-The default output is `db/fixtures/documentation/`. For a fresh independent run:
+The default output is `db/fixtures/documentation/`; it holds four databases
+(`core.accdb`, `sentinel.accdb`, `linked.accdb`, `startup.accdb`), the two per-build
+records `expected.json` and `inventory.json`, and two retained provenance sources,
+`startup_module.bas` (raw VBA module source) and `startup_macro.txt` (framed macro
+definition). The provenance files are the `Application.LoadFromText` inputs for the
+startup module and macro; they are intentionally kept beside the built database for
+inspection and rebuild, and they are never executed by the generator or the inspection
+pipeline. The whole directory is a local, git-ignored build output. For a fresh
+independent run:
 
 ```powershell
 .venv\Scripts\python.exe scripts\generate_documentation_fixtures.py --build --output-dir db\fixtures\documentation-run-2
@@ -41,9 +50,11 @@ Database binaries remain git-ignored. The committed ground truth is
 which `--describe` reproduces exactly; both the CLI/manifest equality and the absence
 of writes are enforced by `tests/unit/test_generate_documentation_fixtures.py`.
 Each successful build writes `expected.json` and
-`inventory.json` beside the databases. The inventory records actual hashes, sizes,
-and DAO-canonical query SQL. ACE metadata can vary: structural repeatability does
-not promise byte-identical regeneration.
+`inventory.json` beside the databases (plus the two provenance sources named above).
+The inventory records the actual hashes, sizes, and DAO-canonical query SQL of that
+build. ACE metadata can vary between runs: regeneration yields **structural**, not
+byte-level, identity, and the recorded hashes are per-build observations rather than a
+stability promise.
 
 ## Expected databases
 
