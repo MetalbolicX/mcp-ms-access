@@ -4,8 +4,10 @@ Status: generator, expected manifest, the opt-in raw-readback integration suite,
 the opt-in documentation-pipeline qualification suite are implemented. The pipeline
 suite qualifies engine-level read-only protection for the DAO inspection open, exercises
 the ODBC inspection path with behavioral no-write evidence, and qualifies filtered
-inspection (`--tables`/`--queries`, DAO backend); startup-code non-execution remains
-unqualified.
+inspection (`--tables`/`--queries`, DAO backend). Startup-code non-execution is now
+qualified at fixture scope: the pipeline suite proves the DAO and ODBC backends never
+execute the fixture, and a doubly gated control run proves the same fixture genuinely
+executes when deliberately opened under isolation.
 
 ## Generate
 
@@ -17,7 +19,9 @@ From the repository root:
 ```
 
 `--describe` prints the manifest and needs neither ACE nor pywin32. `--build`
-requires Windows with ACE DAO and pywin32.
+requires Windows with ACE DAO, pywin32, and Microsoft Access: the executable
+`startup.accdb` fixture needs `Access.Application` to load its module and macro, so a
+machine with only the ACE Database Engine driver cannot build it.
 
 The default output is `db/fixtures/documentation/`. For a fresh independent run:
 
@@ -48,6 +52,9 @@ not promise byte-identical regeneration.
 - **sentinel.accdb:** one SentinelCustomers table with one synthetic row.
 - **linked.accdb:** one LocalNotes table with one row, and LinkedCustomers pointing
   to SentinelCustomers in the generated sentinel.accdb.
+- **startup.accdb:** one StartupNotes table with one row, a standard VBA module
+  `StartupMarkerModule`, and a macro renamed to `AutoExec`; it is the only fixture that
+  contains executable code (see the startup-code fixture section below).
 
 Core has explicit primary keys, two composite keys, seven declared relationships
 including the composite Stock-to-OrderLines FK, required and nullable customer
@@ -74,6 +81,68 @@ qryUpdateOrderStatus (DAO type 48), qryDeleteDraftOrders (DAO type 32).
 Orders contains known sentinel statuses `(1, Open)` and `(2, Draft)`; unchanged
 rows help detect accidental action-query execution. Only the builder executes
 reviewed CREATE/INSERT statements on newly created synthetic databases.
+
+## Startup-code fixture (`startup.accdb`)
+
+`startup.accdb` is the executable fixture that closes the startup-code non-execution
+gap. It contains one synthetic table `StartupNotes` (one row), a standard VBA module
+`StartupMarkerModule` with a public `StartupMarker` function, and a macro renamed to
+`AutoExec` that runs `StartupMarker()` through `RunCode`. The manifest records the
+module name, macro name, pre-rename control name, marker filename, and the execution
+policy `authorized-isolated-control-only`.
+
+The `StartupMarker` function writes a harmless one-line text file named
+`startup_executed.marker`, beside the database it runs from:
+`Application.CurrentProject.Path & "\startup_executed.marker"`. No absolute, user,
+home, temporary, or network path appears anywhere in the generated VBA, so a copied
+database writes beside the copy and a database that never runs writes nothing.
+
+### Build-without-executing discipline
+
+The generator creates the table through DAO-only DDL, then opens Access.Application
+*only while no macro named `AutoExec` exists*. It loads the module (raw VBA source; the
+`Version`/`Begin`/`End` wrapper is export framing, not module code) and the macro
+(temporarily named `StartupControl`) from text definitions written beside the database,
+renames the macro to `AutoExec` last with `DoCmd.Rename`, closes the database, and quits
+without reopening. Access.Application is confined to this pre-AutoExec build phase; the
+generator never runs VBA or a macro. `Application.LoadFromText` is used because
+`DoCmd.LoadFromText` is not exposed on the late-bound `DoCmd` object; it is the same
+database operation. After the phase the build asserts that the built database produced
+no marker, no `startup.accdb.laccdb` lock survives, and no MSACCESS.EXE process that
+the build started remains, before it records the hashes and sizes in `inventory.json`.
+
+### DAO observability
+
+DAO exposes construction facts and object *names* only: `db.Containers("Modules")`
+lists `StartupMarkerModule` and `db.Containers("Scripts")` lists `AutoExec` (there is no
+`Macros` container). Neither container exposes the VBA source or the macro actions, so
+DAO readback can assert *that* the module and macro exist, but not what they contain.
+The raw-readback suite therefore proves fixture construction and the absent marker; the
+executable-code proof is the control run.
+
+### Non-execution proof and the control run
+
+The documentation pipeline (DAO inspection through `DAO.DBEngine.120` and ODBC
+inspection through the Access ODBC driver) never launches Access.Application. `AutoExec`
+is only run by the Access application at database startup, so the pipeline cannot
+execute it by construction; the absent marker is the observable confirmation. Two
+pipeline tests run the full `documentation inspect` → `render` → `save` cycle on
+`startup.accdb` (one per backend) and assert exit 0, the `StartupNotes` table in
+evidence, an unchanged source hash, no lock residue, no new MSACCESS.EXE process, and no
+`*marker*` file anywhere under the session tree.
+
+Because "nothing executed" is only meaningful if the fixture *could* execute, the
+control run `tests/integration/test_documentation_startup_control.py` deliberately
+executes it under isolation. It needs both opt-in gates:
+`ACCESS_DOCUMENTATION_FIXTURES_TEST=1` (build/reuse fixtures) and
+`ACCESS_STARTUP_CONTROL_TEST=1` (authorize the deliberate startup execution). It copies
+`startup.accdb` into a scratch subdirectory of the self-created session tree, opens the
+copy with `AutomationSecurity` at the low (macro-enabled) automation level, polls at
+most 30 s for `startup_executed.marker` beside the copy, asserts it exists and contains
+the harmless line, quits Access (force-killing only the captured PID if Quit hangs),
+and asserts no MSACCESS.EXE process survives, no `.laccdb` remains, and the marker
+exists only beside the copy (not beside the session original and nowhere else in the
+session tree or repository).
 
 ## Test and qualification boundaries
 
@@ -217,13 +286,16 @@ half; filtered evidence now renders one coherent `database` report
 `test_inspect_combined_table_and_query_filters_scope_both_axes`). An unknown requested
 name is a hard `Err` with exit 1 and leaves the source bytes untouched
 (`test_inspect_unknown_requested_name_is_a_hard_error`). Still unproven by any fixture
-suite: startup/macro/VBA non-execution (no executable fixture exists), and filtered
-inspection over the ODBC backend.
+suite: VBA/macro execution beyond the startup fixture, and filtered
+inspection over the ODBC backend. The startup fixture's own non-execution is qualified
+above (DAO and ODBC pipeline tests plus the gated control run).
 
-No startup macro or executable VBA fixture is generated or run here. Startup
-execution remains separately authorized. An unchanged source hash alone establishes
-no observed mutation; the inspection open additionally proves engine-level read-only
-refusal, while non-execution remains unproven.
+No startup macro or executable VBA fixture is run by the generator or the inspection
+pipeline. The `startup.accdb` fixture contains executable code and is deliberately run
+only by the doubly gated control test under isolation. An unchanged source hash alone
+establishes no observed mutation; the inspection open additionally proves engine-level
+read-only refusal, and the control run proves the fixture could execute while the
+pipeline tests prove it did not.
 
 See [workflow specification](documentation-workflows.md) and
 [task ledger](../../odd/tasks/documentation-fixtures.md).

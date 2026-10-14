@@ -1,7 +1,7 @@
 {
   "schema": "access.documentation.fixtures/1",
   "format": "ACE",
-  "startup_execution": "not_authorized",
+  "startup_execution": "authorized-isolated-control-only",
   "databases": {
     "core.accdb": {
       "tables": {
@@ -419,6 +419,40 @@
           "source_database": "sentinel.accdb",
           "source_table": "SentinelCustomers"
         }
+      }
+    },
+    "startup.accdb": {
+      "tables": {
+        "StartupNotes": {
+          "fields": {
+            "NoteID": {
+              "type": "LONG",
+              "required": true,
+              "default": null,
+              "validation": null
+            },
+            "Note": {
+              "type": "TEXT(50)",
+              "required": false,
+              "default": null,
+              "validation": null
+            }
+          },
+          "primary_key": [
+            "NoteID"
+          ],
+          "unique_indexes": {},
+          "rows": 1
+        }
+      },
+      "relationships": {},
+      "queries": {},
+      "startup": {
+        "module": "StartupMarkerModule",
+        "macro": "AutoExec",
+        "control_name": "StartupControl",
+        "marker_filename": "startup_executed.marker",
+        "execution_policy": "authorized-isolated-control-only"
       }
     }
   }

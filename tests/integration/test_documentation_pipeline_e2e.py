@@ -129,6 +129,25 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _msaccess_pids() -> set[int]:
+    """Return running MSACCESS.EXE process ids so the pipeline can be checked for leaks."""
+    completed = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE", "/NH"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    pids: set[int] = set()
+    for line in completed.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].upper() == "MSACCESS.EXE" and parts[1].isdigit():
+            pids.add(int(parts[1]))
+    return pids
+
+
+def _marker_files(root: Path) -> list[str]:
+    """Return every ``*marker*`` file under ``root`` as a path relative to it."""
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*") if "marker" in path.name)
+
+
 def _load_manifest() -> dict[str, Any]:
     return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
@@ -1319,3 +1338,81 @@ def test_non_execution_invariants_after_inspect_render_save(
         assert len(_snapshot_rows(linked, "LocalNotes")) == 1
     for name in ("core.accdb", "sentinel.accdb", "linked.accdb"):
         assert _sha256(directory / name) == e2e_build["inventory"][name]["sha256"], name
+
+
+# ---------------------------------------------------------------------------
+# 9. startup-code non-execution through the inspection pipeline
+# ---------------------------------------------------------------------------
+
+
+def _run_startup_cycle(directory: Path, work_dir: Path, backend: str) -> dict[str, Any]:
+    """Run inspect -> render -> save on the startup fixture through the public CLI.
+
+    The whole cycle runs in subprocesses against the DAO or ODBC backend. Neither
+    backend launches ``Access.Application`` (DAO uses ``DAO.DBEngine.120``; ODBC uses
+    the Access ODBC driver), so the embedded AutoExec macro is unreachable by
+    construction; the absent marker is the observable confirmation.
+    """
+    startup = directory / "startup.accdb"
+    before = _sha256(startup)
+    pids_before = _msaccess_pids()
+    inspect = _run_cli(
+        ["documentation", "inspect", "--db", str(startup), "--backend", backend, "--json"],
+        _cli_env(directory),
+    )
+    evidence_path = work_dir / f"startup-{backend}-evidence.json"
+    evidence_path.write_text(inspect.stdout, encoding="utf-8")
+    render = _run_cli(
+        ["documentation", "render", "--evidence", str(evidence_path), "--kind", "database", "--json"],
+        _cli_env(directory),
+    )
+    report_path = work_dir / f"startup-{backend}-report.json"
+    report_path.write_text(render.stdout, encoding="utf-8")
+    destination = work_dir / f"startup-{backend}-report.md"
+    save = _run_cli(
+        ["documentation", "save", "--report", str(report_path), "--output-path", str(destination),
+         "--allow-doc-write", "--yes", "--json"],
+        _cli_env(directory, allow_doc_write=True),
+    )
+    after = _sha256(startup)
+    return {
+        "inspect": inspect,
+        "render": render,
+        "save": save,
+        "destination": destination,
+        "before": before,
+        "after": after,
+        "markers": _marker_files(directory),
+        "new_pids": _msaccess_pids() - pids_before,
+        "locks": sorted(path.name for path in directory.iterdir() if path.name.startswith("startup.accdb.")),
+    }
+
+
+@pytest.mark.parametrize("backend", ["dao", "odbc"])
+def test_startup_code_is_never_executed_by_the_pipeline(
+    e2e_build: dict[str, Any], work_dir: Path, backend: str
+) -> None:
+    """Full inspect+render+save on startup.accdb leaves no marker and no Access process.
+
+    The DAO inspection path uses ``DAO.DBEngine.120`` and the ODBC path the Access ODBC
+    driver; neither launches ``Access.Application``, so the AutoExec macro is
+    unreachable by construction and marker absence is the observable proof. The gated
+    control run (``test_documentation_startup_control.py``) proves the same fixture
+    genuinely executes when deliberately opened, so these results are not vacuous.
+    """
+    directory = e2e_build["directory"]
+    result = _run_startup_cycle(directory, work_dir, backend)
+    assert result["inspect"].returncode == 0, result["inspect"].stderr
+    assert result["render"].returncode == 0, result["render"].stderr
+    assert result["save"].returncode == 0, result["save"].stderr
+    envelope = json.loads(result["inspect"].stdout)
+    assert envelope["success"] is True
+    payload = envelope["data"]["data"]
+    assert [table["name"] for table in payload["tables"]] == ["StartupNotes"]
+    assert result["markers"] == []
+    assert not (directory / "startup_executed.marker").exists()
+    assert result["locks"] == []
+    assert result["before"] == result["after"]
+    assert result["new_pids"] == set()
+    markdown = json.loads(result["render"].stdout)["data"]["markdown"]
+    assert result["destination"].read_bytes() == markdown.encode("utf-8")

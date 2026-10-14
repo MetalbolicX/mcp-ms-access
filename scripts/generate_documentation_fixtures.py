@@ -1,9 +1,14 @@
 """Build local synthetic ACE fixtures; never overwrite existing databases.
 
 Use --describe for the expected structural manifest, or --build to create the
-three databases. No Access.Application, VBA, startup macro, or saved query is
-executed. Linking during construction intentionally accesses the local sentinel;
-that activity is not evidence of inspection-time isolation.
+four databases. Only the startup fixture contains executable VBA and an AutoExec
+macro. The generator keeps strict build-order discipline around it: the table is
+created through DAO-only DDL, Access.Application is opened only while no AutoExec
+exists, the module and macro are loaded from text definitions, the macro is
+renamed to AutoExec last, and the database is never reopened. The generator never
+runs VBA or a macro, and no saved query is executed. Linking during construction
+intentionally accesses the local sentinel; that activity is not evidence of
+inspection-time isolation.
 """
 from __future__ import annotations
 
@@ -12,7 +17,9 @@ import gc
 import hashlib
 import json
 import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +27,42 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = ROOT / "db" / "fixtures"
 DEFAULT_OUTPUT = FIXTURE_ROOT / "documentation"
 # sentinel.accdb must exist first so linked.accdb can append its link to it.
-DATABASE_ORDER = ("sentinel.accdb", "core.accdb", "linked.accdb")
+DATABASE_ORDER = ("sentinel.accdb", "core.accdb", "linked.accdb", "startup.accdb")
 LOCALE = ";LANGID=0x0409;CP=1252;COUNTRY=0"
+# AcObjectType constants for Access.Application.LoadFromText and DoCmd.Rename.
+_AC_MACRO = 4
+_AC_MODULE = 5
+# msoAutomationSecurityForceDisable: the build opens Access only before any AutoExec
+# exists, and this explicit value is a second guard that forbids macros from running at
+# all during that phase.
+_MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
+# Never an absolute, user, home, temporary, or network path: the VBA derives the
+# marker location from the database's own directory, so a copied database writes
+# beside the copy and a session build writes nowhere. This filename is the only
+# path component in the generated VBA.
+STARTUP_MARKER_FILENAME = "startup_executed.marker"
+# Standard modules load as raw VBA source (the ``Version``/``Begin`` wrapper is a
+# SaveAsText export framing, not module code, and would import as a compile error).
+# Macros load in the framed macro text format.
+_STARTUP_MODULE_SOURCE = """Option Compare Database
+Option Explicit
+
+Public Function StartupMarker() As Boolean
+    Dim markerPath As String
+    markerPath = Application.CurrentProject.Path & "\\{marker}"
+    Open markerPath For Output As #1
+    Print #1, "startup fixture executed"
+    Close #1
+    StartupMarker = True
+End Function
+"""
+_STARTUP_MACRO_SOURCE = '''Version =196611
+ColumnsShown =0
+Begin
+    Action ="RunCode"
+    Argument ="StartupMarker()"
+End
+'''
 
 
 def field(kind: str = "LONG", *, required: bool = False,
@@ -88,8 +129,19 @@ def expected_manifest() -> dict[str, Any]:
         "qryDeleteDraftOrders": {"category": "action", "dao_type": 32, "parameters": {},
                                  "sql": "DELETE FROM [Orders] WHERE [Status] = 'Draft';"},
     }
+    startup_tables = {
+        "StartupNotes": table({"NoteID": field(required=True), "Note": field("TEXT(50)")}, ["NoteID"]),
+    }
+    startup_block = {
+        "module": "StartupMarkerModule",
+        "macro": "AutoExec",
+        "control_name": "StartupControl",
+        "marker_filename": STARTUP_MARKER_FILENAME,
+        "execution_policy": "authorized-isolated-control-only",
+    }
     return {
-        "schema": "access.documentation.fixtures/1", "format": "ACE", "startup_execution": "not_authorized",
+        "schema": "access.documentation.fixtures/1", "format": "ACE",
+        "startup_execution": "authorized-isolated-control-only",
         "databases": {
             "core.accdb": {"tables": core_tables, "relationships": relations, "queries": queries,
                            "sentinels": {"Orders": [[1, "Open"], [2, "Draft"]]}},
@@ -100,6 +152,8 @@ def expected_manifest() -> dict[str, Any]:
                 {"NotesID": field(required=True), "Note": field("TEXT(50)")}, ["NotesID"])},
                 "relationships": {}, "queries": {}, "linked_tables": {
                     "LinkedCustomers": {"source_database": "sentinel.accdb", "source_table": "SentinelCustomers"}}},
+            "startup.accdb": {"tables": startup_tables, "relationships": {}, "queries": {},
+                              "startup": startup_block},
         },
     }
 
@@ -174,6 +228,9 @@ def populate(db: Any, name: str, spec: dict[str, Any], output: Path) -> dict[str
             link.SourceTableName = link_spec["source_table"]
             link.Connect = ";DATABASE=" + str(output / link_spec["source_database"])
             db.TableDefs.Append(link)
+    elif name == "startup.accdb":
+        db.Execute(f"INSERT INTO StartupNotes ({quote('NoteID')}, {quote('Note')}) "
+                   "VALUES (1, 'Synthetic startup note')", 128)
     return canonical_sql
 
 
@@ -208,6 +265,102 @@ def validate_destination(output: Path) -> Path:
     return resolved
 
 
+def _msaccess_pids() -> set[int]:
+    """Return every running MSACCESS.EXE process id (empty when the filter matches none).
+
+    A PID is treated as owned only because it was absent from the pre-build baseline; an
+    unrelated MSACCESS.EXE that starts during the build window would be misattributed as
+    owned and force-killed, while instances already running at baseline stay protected.
+    """
+    completed = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE", "/NH"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    pids: set[int] = set()
+    for line in completed.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].upper() == "MSACCESS.EXE" and parts[1].isdigit():
+            pids.add(int(parts[1]))
+    return pids
+
+
+def _wait_for_owned_access_exit(owned: set[int], timeout: float = 30.0) -> set[int]:
+    """Poll until none of the owned MSACCESS.EXE processes remain, or timeout.
+
+    Only baseline-diff ``owned`` PIDs are watched, so no pre-existing instance is affected
+    unless an unrelated MSACCESS.EXE starts during the build window and is misattributed.
+    """
+    deadline = time.monotonic() + timeout
+    remaining = set(owned)
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.5)
+        remaining = _msaccess_pids() & owned
+    return remaining
+
+
+def _ensure_no_owned_access(baseline: set[int]) -> None:
+    """Assert the build started no surviving MSACCESS.EXE; force-kill only owned PIDs.
+
+    Assumes no unrelated MSACCESS.EXE starts during the build window: such a newcomer
+    would be misattributed as owned and force-killed, whereas instances already running
+    at baseline are excluded by the diff.
+    """
+    owned = _msaccess_pids() - baseline
+    remaining = _wait_for_owned_access_exit(owned)
+    for pid in sorted(remaining):
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True,
+                       timeout=30, check=False)
+    remaining = _wait_for_owned_access_exit(remaining, timeout=15.0)
+    if remaining:
+        raise RuntimeError(
+            "Access process(es) started by fixture generation did not exit: "
+            f"{sorted(remaining)}"
+        )
+
+
+def create_startup_code(output: Path, name: str, startup: dict[str, Any]) -> None:
+    """Add the VBA module and AutoExec macro without ever running startup code.
+
+    Build-order discipline: DAO already created the table, so Access.Application opens a
+    database that has no macro named ``AutoExec``. The module and the macro (temporarily
+    named ``control_name``) are loaded from the text definitions written beside the
+    database; only then is the macro renamed to ``AutoExec``. The database is closed and
+    the application is quit without reopening, so startup code cannot run during the
+    build. ``Application.LoadFromText`` is used because ``DoCmd.LoadFromText`` is not
+    exposed on the late-bound ``DoCmd`` object; it is the same database operation.
+    """
+    import win32com.client
+
+    module_path = output / "startup_module.bas"
+    macro_path = output / "startup_macro.txt"
+    module_path.write_text(
+        _STARTUP_MODULE_SOURCE.format(marker=startup["marker_filename"]),
+        encoding="utf-8", newline="\r\n",
+    )
+    macro_path.write_text(_STARTUP_MACRO_SOURCE, encoding="utf-8", newline="\r\n")
+    app: Any = None
+    try:
+        app = win32com.client.Dispatch("Access.Application")
+        app.Visible = False
+        # Second guard on top of the no-AutoExec-at-open ordering: forbid macros from
+        # running at all while the module and macro are loaded and renamed. Those are
+        # database edits, not macro execution, so they still succeed under force-disable.
+        app.AutomationSecurity = _MSO_AUTOMATION_SECURITY_FORCE_DISABLE
+        app.OpenCurrentDatabase(str(output / name))
+        app.LoadFromText(_AC_MODULE, startup["module"], str(module_path))
+        app.LoadFromText(_AC_MACRO, startup["control_name"], str(macro_path))
+        app.DoCmd.Rename(startup["macro"], _AC_MACRO, startup["control_name"])
+        app.CloseCurrentDatabase()
+    finally:
+        if app is not None:
+            # Do not mask a build failure from LoadFromText/Rename with a teardown error.
+            try:
+                app.Quit()
+            except Exception:
+                pass
+        app = None
+
+
 def build(output: Path) -> dict[str, Any]:
     output = validate_destination(output)
     if os.name != "nt":
@@ -219,6 +372,9 @@ def build(output: Path) -> dict[str, Any]:
     pythoncom.CoInitialize()
     engine: Any = None
     try:
+        # Baseline before any Access instance starts, so only processes this build
+        # started are treated as owned and eligible for the post-build assertion.
+        msaccess_baseline = _msaccess_pids()
         engine = win32com.client.Dispatch("DAO.DBEngine.120")
         output.mkdir(parents=True)
         canonical_sql: dict[str, dict[str, str]] = {}
@@ -235,10 +391,19 @@ def build(output: Path) -> dict[str, Any]:
                 # the shared default workspace, which can fail the next create with DAO
                 # 5003045 "Could not use '<path>'; file already in use."
                 gc.collect()
-        # Hash only after the last CreateDatabase. Reading a just-closed ACE file inside
-        # the close-then-create window increased DAO 5003045 failures in scratch runs
-        # (28 of 35 passes with in-loop reads versus 35 of 35 without), so that window
-        # stays free of unrelated file I/O.
+        # Add the executable fixture last, through its own controlled Access phase.
+        create_startup_code(output, "startup.accdb", manifest["databases"]["startup.accdb"]["startup"])
+        _ensure_no_owned_access(msaccess_baseline)
+        marker = output / STARTUP_MARKER_FILENAME
+        if marker.exists():
+            raise RuntimeError(
+                "build-created database executed startup code: marker present at "
+                f"{marker}"
+            )
+        startup_lock = output / "startup.accdb.laccdb"
+        if startup_lock.exists():
+            raise RuntimeError(f"Access lock file remains beside the built database: {startup_lock}")
+        # Hash only after the last create and the startup Access phase.
         inventory: dict[str, Any] = {
             name: {"sha256": hashlib.sha256((output / name).read_bytes()).hexdigest(),
                    "bytes": (output / name).stat().st_size,

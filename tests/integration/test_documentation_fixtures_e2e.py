@@ -7,6 +7,12 @@ each built database against the committed ground truth in
 readback. It does not exercise the documentation extractor, inspection, rendering, or
 saving; those are covered separately.
 
+The startup fixture (``startup.accdb``) is read back for its construction facts: the
+table and row, and the module and macro names as DAO exposes them through the
+``Modules`` and ``Scripts`` containers. DAO exposes the module and macro *names* only;
+it cannot read the VBA source or macro actions, so code non-execution over this suite
+is checked by the absent marker beside the built database, not by inspecting the code.
+
 Run explicitly on Windows with ACE DAO and pywin32:
 
     $env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
@@ -87,6 +93,17 @@ def _open_readonly(engine: Any, database: Path) -> Iterator[Any]:
 
 def _user_table_names(db: Any) -> set[str]:
     return {_clean(table.Name) for table in _iter_collection(db.TableDefs) if not table.Name.startswith("MSys")}
+
+
+def _container_document_names(db: Any, container: str) -> set[str]:
+    """Return the document names in a DAO container, e.g. ``Modules`` or ``Scripts``.
+
+    DAO stores standard modules in ``Modules`` and macros in ``Scripts`` (there is no
+    ``Macros`` container). Only names are exposed; the code body and macro actions are
+    not readable through these documents.
+    """
+    return {_clean(db.Containers(container).Documents(position).Name)
+            for position in range(db.Containers(container).Documents.Count)}
 
 
 def _primary_key(db: Any, table_name: str) -> list[str]:
@@ -287,3 +304,28 @@ def test_sentinel_and_linked_fixtures_match_committed_manifest(
 
     sentinel_hash = hashlib.sha256((directory / "sentinel.accdb").read_bytes()).hexdigest()
     assert sentinel_hash == e2e_build["inventory"]["sentinel.accdb"]["sha256"]
+
+
+def test_startup_fixture_is_observable_and_never_executed(
+    e2e_build: dict[str, Any], dao_engine: Any
+) -> None:
+    """Startup table/row readback plus module and macro names; no marker is produced.
+
+    DAO observability is limited to the object names: ``Modules`` exposes the VBA
+    module name and ``Scripts`` exposes the macro name (there is no ``Macros``
+    container), but neither exposes the VBA source or the macro's actions. Reading the
+    fixture through DAO therefore cannot execute anything, and the absence of the
+    marker beside the built database is the observable non-execution proof for this
+    suite. The deliberate execution proof lives in the gated control run.
+    """
+    startup = _load_manifest()["databases"]["startup.accdb"]
+    spec = startup["startup"]
+    directory = e2e_build["directory"]
+    database = directory / "startup.accdb"
+    with _open_readonly(dao_engine, database) as db:
+        assert _user_table_names(db) == set(startup["tables"])
+        assert len(_snapshot_rows(db, "StartupNotes")) == startup["tables"]["StartupNotes"]["rows"]
+        assert _container_document_names(db, "Modules") == {spec["module"]}
+        assert _container_document_names(db, "Scripts") == {spec["macro"]}
+    assert not (directory / spec["marker_filename"]).exists()
+    assert not (directory / "startup.accdb.laccdb").exists()
