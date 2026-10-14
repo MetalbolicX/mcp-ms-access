@@ -17,7 +17,7 @@ from typing import Any
 from .application.automation import AutomationUseCases
 from .application.database import DatabaseUseCases, Err
 from .application.documentation import EvidenceDoc
-from .application.documentation_inspect import DaoInspectionPort, DocumentationInspectService
+from .application.documentation_inspect import DocumentationInspectService, open_inspection_port
 from .application.documentation_render import ReportDoc, render_document
 from .application.documentation_save import DocumentationSaveService, DocumentationWritePolicy
 from .application.maintenance import MaintenanceUseCases
@@ -1855,13 +1855,13 @@ def _cmd_documentation(args: argparse.Namespace) -> int:
                 if dispatcher is None or not dispatcher.is_connected():
                     result = err("Documentation inspection requires a connected DAO backend")
                 else:
-                    port = DaoInspectionPort(dispatcher.current_db)
-
-                    def leave_session_open() -> None:
-                        return None
-
-                    port.close = leave_session_open
                     try:
+                        port = open_inspection_port(dispatcher)
+
+                        def leave_session_open() -> None:
+                            return None
+
+                        port.close = leave_session_open
                         evidence = dispatcher.call(
                             lambda: DocumentationInspectService().inspect(
                                 port, tables=args.tables, queries=args.queries

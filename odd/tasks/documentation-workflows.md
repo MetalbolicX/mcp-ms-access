@@ -126,6 +126,25 @@ Slices for the chain: S1 = T5+T6+T7 (offline core: evidence, render, save); S2 =
   correct; auto-indexes still listed. NOT COVERED by this fixture: linked-table isolation,
   VBA/macro non-execution, ODBC backend, filtered inspection. Independent verifier PASS
   on 282e0b2 and 71152e7 E2E; fae04b8 verifier FAIL led to the 71152e7 root-cause fix.
+- [x] T12: Engine-level read-only inspection open — delivered (uncommitted). RED
+  `tests/unit/test_dao_adapter.py::test_documentation_inspection_open_requests_engine_read_only`
+  failed against current code: the recording dispatcher showed the only DAO-boundary open
+  call as `('C:\\db\\core.accdb', '', False)` (read_only=False) with no read-only reopen,
+  and `test_reopen_read_only_reuses_recorded_password` failed `AttributeError`. Fix: the
+  documentation-inspect wiring now routes through
+  `application/documentation_inspect.py::open_inspection_port` →
+  `backends/dispatcher.py::ComDispatcher.reopen_dao_database_read_only`, which reopens the
+  same handle with `OpenDatabase(..., read_only=True)` and reuses the recorded password;
+  `backends/dao.py` `DaoAdapter.connect` is unchanged, so every other tool keeps its
+  read-write open (preserve case
+  `test_backend_dao.py::TestLifecycle::test_connect_opens_database` green). GREEN: unit 16
+  passed, exit 0. Qualification:
+  `tests/integration/test_documentation_pipeline_e2e.py::test_inspect_open_is_engine_read_only_and_refuses_write`
+  (public `documentation inspect` on core.accdb exits 0 with complete metadata readback;
+  the production inspection open refuses `UPDATE Orders ...` with DAO `Operation must use
+  an updateable query.`; core.accdb sha256 unchanged) — pipeline 15 passed, construction 4
+  passed, env-unset 19 skipped, `scripts/qualify.py` exit 0 (ruff/pyright OK, unit 1759
+  passed / 3 skipped). Route: delegated writer, test-first. No commits.
 
 ## Checks (implementation)
 
@@ -138,3 +157,46 @@ Slices for the chain: S1 = T5+T6+T7 (offline core: evidence, render, save); S2 =
 - Docs slice committed: 287a186 on `docs/documentation-workflows` (PR candidate 1).
 - Forecast S1 ~700-900 authored lines across three work units — chain applies; slice
   boundaries recorded per commit as they land.
+
+## Log
+
+- T12 (engine-level read-only inspection open): RED showed the inspection path recorded
+  `read_only=False` at the DAO boundary and exposed no read-only reopen; GREEN after
+  routing the wiring through `open_inspection_port` → `reopen_dao_database_read_only`
+  (unit 16 passed, exit 0). Qualification via
+  `test_inspect_open_is_engine_read_only_and_refuses_write`: the read-only handle refuses
+  an `UPDATE` with DAO `Operation must use an updateable query.`, `documentation inspect`
+  still exits 0 with complete metadata readback, and core.accdb sha256 is unchanged.
+  Pipeline 15 passed; construction 4 passed; env-unset 19 skipped; `scripts/qualify.py`
+  exit 0. No commits.
+- T12 verification-finding fix round (B1, N1, N2, N3, N4). B1: the CLI
+  documentation-inspect path now opens the inspection port inside the command's `try`
+  (`src/ms_access_mcp/cli.py`), so a failing read-only reopen returns the formatted `Err`
+  envelope (exit 1) instead of an unhandled traceback; probe
+  `tests/unit/test_cli_documentation.py::test_inspect_reopen_failure_returns_err_envelope_without_raising`
+  and preserve `...::test_inspect_success_still_returns_ok_envelope` pass. N1:
+  `ComDispatcher.reopen_dao_database_read_only` refuses with `RuntimeError` when
+  `_db_path is None or not is_connected()`, so closing the DAO handle cannot resurrect a
+  read-only connection; probe
+  `tests/unit/test_dao_adapter.py::test_reopen_read_only_refuses_when_connection_is_not_live`
+  passes. N2: `AccessAdapter.connect` records the password
+  (`src/ms_access_mcp/backends/access/__init__.py`) so the read-only reopen carries real
+  credentials for encrypted databases, restoring DAO parity; probes
+  `...::test_access_com_connect_records_password_for_read_only_reopen` and preserve
+  `...::test_access_com_connect_keeps_empty_password_for_read_only_reopen` pass. N4:
+  `tests/integration/test_documentation_pipeline_e2e.py::test_inspect_open_is_engine_read_only_and_refuses_write`
+  now pins the DAO engine error code `excepinfo[4] == 5003073` (description `Operation
+  must use an updateable query.`) instead of the loose regex alone. N3: the §0 banner no
+  longer folds non-execution into the fixture-scope claim, so the workflows status
+  matches `docs/specs/documentation-fixtures.md`; the NOT-QUALIFIED list names
+  startup-code non-execution. B1/N1/N2/N4 were already applied by the interrupted round
+  (their RED was captured then, not re-observable now) and were verified by running the
+  probes; N3 was completed this round as a passive documentation edit (no RED applicable).
+  Checks (repo root, `.venv` interpreter): (1) unit
+  `test_dao_adapter.py test_cli_documentation.py test_documentation_inspect.py` = 21
+  passed, exit 0; (2) `ACCESS_DOCUMENTATION_FIXTURES_TEST=1` pipeline = 15 passed, exit 0;
+  (3) construction suite = 4 passed, exit 0; (4) both integration files env-unset = 19
+  skipped, exit 0; (5) `scripts/qualify.py` exit 0 (ruff OK, pyright OK, unit 1764 passed /
+  3 skipped, budget OK); (6) no `db/fixtures/e2e-*` leftovers, no `.laccdb`/`.ldb` under
+  `db/fixtures`, `db/fixtures/documentation` intact, `db/northwind.accdb` sha256
+  `f7140e9af87312f7d53dee9feb56a4bcb8b9a68b707b3400a974e5fde71ac5cb` unchanged. No commits.

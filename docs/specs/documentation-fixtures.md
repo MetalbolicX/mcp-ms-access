@@ -1,8 +1,9 @@
 # Synthetic documentation fixtures
 
 Status: generator, expected manifest, the opt-in raw-readback integration suite, and
-the opt-in documentation-pipeline qualification suite are implemented. Neither suite
-qualifies engine-level read-only protection or startup-code non-execution.
+the opt-in documentation-pipeline qualification suite are implemented. The pipeline
+suite qualifies engine-level read-only protection for the inspection open; startup-code
+non-execution remains unqualified.
 
 ## Generate
 
@@ -130,7 +131,14 @@ output excluding the query catalogue, the child-side `}o--||` cardinality rule
 `StockOrderLines` FK), save gating (operator permission, per-call confirm, overwrite
 approval, expected/stale fingerprint, byte-identical rejected saves), and linked
 inspection succeeding while `sentinel.accdb` is held open exclusively elsewhere
-(access-observation evidence that inspection did not contact the linked source).
+(access-observation evidence that inspection did not contact the linked source). It
+also proves the inspection open is engine-level read-only:
+`test_inspect_open_is_engine_read_only_and_refuses_write` opens through the production
+seam (`documentation_inspect.open_inspection_port` →
+`ComDispatcher.reopen_dao_database_read_only`) and shows the read-only DAO handle
+refuses an `UPDATE` (`Operation must use an updateable query.`) with `core.accdb`
+sha256 unchanged while `documentation inspect` still exits 0 with complete metadata
+readback.
 
 All three blocking qualification findings from that suite are resolved in T3 phase 2:
 
@@ -156,16 +164,16 @@ The three cosmetic gaps stay open intentionally: nullable-FK cardinality renderi
 (`Orders.BillingCustomerID` still diagrams `}o--||`), the pywin32 `IUnknown` teardown
 stderr banner, and the `source.path`/`source.format` placeholders.
 
-Still unproven by any fixture suite: startup/macro/VBA non-execution (no executable
-fixture exists), engine-level read-only enforcement (fixture hashes prove no observed
-mutation only; the DAO handle still opens with `read_only=False`), and the ODBC
-backend. Linked-source isolation is now observed for this fixture while the sentinel is
-exclusively locked, but it is scoped to that observation and not to engine-level
-enforcement.
+Engine-level read-only enforcement is now qualified for the inspection open (see the
+proof above). Still unproven by any fixture suite: startup/macro/VBA non-execution (no
+executable fixture exists) and the ODBC backend. Linked-source isolation is now observed
+for this fixture while the sentinel is exclusively locked, but it is scoped to that
+observation and not to engine-level enforcement.
 
 No startup macro or executable VBA fixture is generated or run here. Startup
-execution remains separately authorized. An unchanged source hash establishes
-no observed mutation, not engine-level read-only enforcement or non-execution.
+execution remains separately authorized. An unchanged source hash alone establishes
+no observed mutation; the inspection open additionally proves engine-level read-only
+refusal, while non-execution remains unproven.
 
 See [workflow specification](documentation-workflows.md) and
 [task ledger](../../odd/tasks/documentation-fixtures.md).

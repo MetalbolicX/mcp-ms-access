@@ -81,6 +81,18 @@ class DaoInspectionPort:
         self._database.Close()
 
 
+def open_inspection_port(dispatcher: Any) -> DaoInspectionPort:
+    """Reopen the dispatcher's database engine-level read-only and wrap it for inspection.
+
+    The documentation-inspection path must never hold a writable handle, so this
+    asks the dispatcher to reopen the already-open database with DAO
+    ``ReadOnly=True`` before metadata is read. Every other tool keeps its existing
+    open semantics; only this path requests the read-only reopen.
+    """
+    dispatcher.reopen_dao_database_read_only()
+    return DaoInspectionPort(dispatcher.current_db)
+
+
 class DocumentationInspectService:
     """Build evidence while preserving extraction gaps as explicit fact states."""
 

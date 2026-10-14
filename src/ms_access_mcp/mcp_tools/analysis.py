@@ -14,7 +14,7 @@ from mcp.types import CallToolResult
 from ..application.analysis import QueryAnalyzerService
 from ..application.database import DatabaseUseCases, Err
 from ..application.documentation import EvidenceDoc
-from ..application.documentation_inspect import DaoInspectionPort, DocumentationInspectService
+from ..application.documentation_inspect import DocumentationInspectService, open_inspection_port
 from ..application.documentation_render import ReportDoc, render_document
 from ..application.documentation_save import DocumentationSaveService, DocumentationWritePolicy
 from ..safety import allowed_dirs_from_env
@@ -183,7 +183,7 @@ def documentation_inspect(
         dispatcher = getattr(adapter, "_dispatcher", None)
         if dispatcher is None or not dispatcher.is_connected():
             raise ValueError("Documentation inspection requires a connected DAO backend")
-        port = DaoInspectionPort(dispatcher.current_db)
+        port = open_inspection_port(dispatcher)
 
         def leave_session_open() -> None:
             return None

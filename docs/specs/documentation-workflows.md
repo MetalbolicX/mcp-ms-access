@@ -3,11 +3,10 @@
 > **IMPLEMENTED — PARTIALLY RUNTIME-QUALIFIED (ACE/DAO, fixture scope).** Contracts,
 > services, MCP tools,
 > CLI commands, and prompts below are implemented and covered by unit tests on branch
-> `feat/documentation-workflows`. No real Access database has been inspected by this
-> feature: engine-level read-only protection, non-execution, linked-source isolation, and
-> the format/runtime matrix — see §7.2 for the exact qualified scope. Claims outside
-> that scope (linked-table isolation, VBA/macro non-execution, engine-level read-only
-> protection, ODBC) remain **NOT QUALIFIED**.
+> `feat/documentation-workflows`. Engine-level read-only protection, linked-source
+> isolation, and the format/runtime matrix have been exercised at fixture scope — see
+> §7.2 for the exact qualified scope. Claims outside that scope (startup-code
+> non-execution, VBA/macro non-execution, ODBC) remain **NOT QUALIFIED**.
 >
 > **Status:** Definition accepted; runtime implementation not authorized. Related: [Architecture](../01-architecture.md), [Contracts](../02-contracts.md), [Safety and configuration](../03-safety-and-configuration.md), [Feature task](../../odd/tasks/documentation-workflows.md).
 
@@ -45,7 +44,7 @@ The v1 sequence is inspect metadata into typed evidence; render that evidence de
 
 1. **Scope sequence — v1 is schema, saved queries, and Mermaid ER; v2 may add full application analysis.** This bounds v1 to deterministic metadata rather than executable or interactive objects.
 2. **Source must be closed and offline.** Missing lock files, user assertions, plain copies, and post-copy hashes do not prove quiescence or consistency.
-3. **Inspection must be qualified, engine-level read-only, and passive.** DAO is the qualification target because it exposes QueryDefs SQL; never automatically fall back to a less capable backend. Existing `readonly=True` is not file read-only (`backends/dao.py:135`, connection uses `read_only=False`).
+3. **Inspection must be qualified, engine-level read-only, and passive.** DAO is the qualification target because it exposes QueryDefs SQL; never automatically fall back to a less capable backend. The inspection path reopens the DAO handle with engine-level `ReadOnly=True` (`application/documentation_inspect.py::open_inspection_port` → `backends/dispatcher.py::ComDispatcher.reopen_dao_database_read_only`); the generic `readonly=True` flag is a policy guard, not by itself the engine guarantee.
 4. **Evidence is versioned and each fact has a state.** Use `access.documentation.evidence/1` and `observed | unavailable | failed | excluded`; empty is not unknown. Derive PKs from indexes, preserve composite relationship pairs, and fix blank-SQL and empty-list error-collapse defects rather than hiding them.
 5. **Rendering is deterministic and offline from evidence.** Produce `access.documentation.report/1`, one Markdown report, preview before save, and no hidden object exports.
 6. **LLM interpretation is optional and client-side only.** Label it, reference evidence IDs, never mutate facts, and treat database text as untrusted evidence, not instructions.
@@ -130,8 +129,9 @@ Register tools through the `analysis` profile. Keep `get_er_diagram` response un
 
 > **Implementation status:** Application services exist (`application/documentation*.py`):
 > evidence model, renderer, save, inspect with fake-port conformance tests. Backend
-> changes beyond reuse of `schema_inspector` reads are not made; engine-level read-only
-> protection is still unqualified. See [as-built layers](../01-architecture.md).
+> wiring adds one read-only reopen for the inspection path (write tools keep their
+> read-write semantics); engine-level read-only protection is qualified at fixture scope
+> (§7.2). See [as-built layers](../01-architecture.md).
 
 ### 4.1 Pipeline and placement
 
@@ -153,7 +153,7 @@ Inspection alone contacts the database engine. Rendering is deterministic and of
 
 ### 4.2 DAO-first qualification and constraints
 
-DAO is the v1 qualification target because saved QueryDefs SQL availability is required. Qualification must establish engine-level passive/read-only behavior per supported format/runtime; missing capability is reported, not silently handled by ODBC or another fallback. DAO connection construction currently uses `read_only=False` (`backends/dao.py:135`), despite readonly policy naming. This is a constraint to resolve and qualify, not evidence safe read-only behavior already exists.
+DAO is the v1 qualification target because saved QueryDefs SQL availability is required. Qualification must establish engine-level passive/read-only behavior per supported format/runtime; missing capability is reported, not silently handled by ODBC or another fallback. The general DAO connection still opens read-write (`backends/dao.py:135`), so write tools keep their semantics; the documentation-inspection path reopens that same handle engine-level read-only before reading metadata (`application/documentation_inspect.py::open_inspection_port` → `backends/dispatcher.py::ComDispatcher.reopen_dao_database_read_only`). This engine-level protection is qualified at fixture scope (§7.2).
 
 Implementation must characterize and fix these known extraction defects before claiming coverage:
 
@@ -170,9 +170,9 @@ These are qualification blockers, not authorization for a backend rewrite. Other
 
 > **Implementation status:** The separate documentation-write permission, required
 > confirm, overwrite fingerprint checks, and parent-dir guarding are implemented and
-> unit-tested (deny by default). Engine-level read-only/passive opening and linked-source
-> isolation are NOT yet implemented or qualified — inspect still opens through existing
-> session machinery. Existing controls: [Safety and configuration](../03-safety-and-configuration.md).
+> unit-tested (deny by default). Engine-level read-only opening is implemented and
+> fixture-qualified (§7.2); linked-source isolation is observed for the fixture while the
+> sentinel is exclusively locked. Existing controls: [Safety and configuration](../03-safety-and-configuration.md).
 
 ### 5.1 Source acquisition and inspection
 
@@ -249,7 +249,7 @@ Support is declared per format/runtime, never inferred from suffix. Every cell b
 |---|---|---|
 | Jet 3 (`.mdb`) | DAO / Access runtime combination to be specified and tested | **NOT QUALIFIED** |
 | Jet 4 (`.mdb`) | DAO / Access runtime combination to be specified and tested | **NOT QUALIFIED** |
-| ACE (`.accdb`) | DAO backend, Northwind 8-table closed fixture, Windows/ACE, 2026-10-08 | **PARTIALLY QUALIFIED**: schema/relationship/query fidelity, integrity (sha unchanged), no lock residue, non-execution (scope: nothing executable in fixture), render/save E2E incl. permission/confirm/overwrite/fingerprint gates, cardinality honesty — all PASS with independent verification. A separate synthetic-fixture pipeline suite (public CLI in subprocesses; `tests/integration/test_documentation_pipeline_e2e.py`) additionally demonstrates composite-PK extraction, query-parameter/relationship-attribute `unavailable` states with partial coverage, deterministic database/ER rendering including the unique-index-backed one-to-one and composite-FK edges, ER query-catalogue exclusion, save gating on synthetic data, and linked inspection succeeding while the sentinel is exclusively locked elsewhere. Since the T3 phase-2 fixes the same suite also demonstrates DAO type 48 (dbUpdate) categorised `action` (32/48/64 → `action`, 80/96 → `ddl`, 0/32/80 preserved) so update and delete are distinguished; field defaults read from DAO `Field.DefaultValue` as `observed` stored expressions (`Customers.Status` = `"Active"`, `Orders.Status` = `"Open"`) with genuinely defaultless fields `observed` empty and never fabricated as `null`; and linked-table local catalogue metadata (`kind=linked`, `Connect`, `SourceTableName`) reaching evidence and rendering as `- Linked table: <name> → <database-file>/<source-table>`. All three phase-1 blocking findings are resolved; the cell stays PARTIALLY QUALIFIED because query parameters, engine-level read-only, ODBC, and startup-code non-execution remain open. NOT COVERED: VBA/macro non-execution, engine-level read-only (observed no mutation, but the DAO handle still opens read_only=False), filtered inspection, ODBC. |
+| ACE (`.accdb`) | DAO backend, Northwind 8-table closed fixture, Windows/ACE, 2026-10-08 | **PARTIALLY QUALIFIED**: schema/relationship/query fidelity, integrity (sha unchanged), no lock residue, non-execution (scope: nothing executable in fixture), render/save E2E incl. permission/confirm/overwrite/fingerprint gates, cardinality honesty — all PASS with independent verification. A separate synthetic-fixture pipeline suite (public CLI in subprocesses; `tests/integration/test_documentation_pipeline_e2e.py`) additionally demonstrates composite-PK extraction, query-parameter/relationship-attribute `unavailable` states with partial coverage, deterministic database/ER rendering including the unique-index-backed one-to-one and composite-FK edges, ER query-catalogue exclusion, save gating on synthetic data, and linked inspection succeeding while the sentinel is exclusively locked elsewhere. Since the T3 phase-2 fixes the same suite also demonstrates DAO type 48 (dbUpdate) categorised `action` (32/48/64 → `action`, 80/96 → `ddl`, 0/32/80 preserved) so update and delete are distinguished; field defaults read from DAO `Field.DefaultValue` as `observed` stored expressions (`Customers.Status` = `"Active"`, `Orders.Status` = `"Open"`) with genuinely defaultless fields `observed` empty and never fabricated as `null`; and linked-table local catalogue metadata (`kind=linked`, `Connect`, `SourceTableName`) reaching evidence and rendering as `- Linked table: <name> → <database-file>/<source-table>`. All three phase-1 blocking findings are resolved, and the inspection open is engine-level read-only: `test_inspect_open_is_engine_read_only_and_refuses_write` proves the production inspection open (`open_inspection_port` → `ComDispatcher.reopen_dao_database_read_only`) refuses an `UPDATE` with the DAO engine error `Operation must use an updateable query.` while `documentation inspect` still exits 0 with complete metadata readback and core.accdb sha256 stays unchanged. The cell stays PARTIALLY QUALIFIED because query parameters, ODBC, filtered inspection, and startup-code non-execution remain open. NOT COVERED: VBA/macro non-execution, filtered inspection, ODBC. |
 
 Qualification records engine version/bitness, host requirements, passive/read-only evidence, QueryDefs SQL availability, relationship/index fidelity, fixture results, and failure behavior. No qualification means unsupported/unknown coverage, never implied support.
 

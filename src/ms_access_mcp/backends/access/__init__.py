@@ -96,6 +96,11 @@ class AccessAdapter:
             self._dispatcher._current_db = app.CurrentDb()
             self._dispatcher._ado_conn = app.CurrentProject.Connection
             self._dispatcher._db_path = target
+            # Record the credential alongside the path so the documentation-inspection
+            # read-only reopen (ComDispatcher.reopen_dao_database_read_only) can reuse
+            # it for encrypted databases. The dispatcher protocol does not declare
+            # this slot, so assign it directly like the bookkeeping above.
+            setattr(self._dispatcher, "_db_password", password)
             ComDispatcher._dismiss_access_dialogs()
 
         try:

@@ -660,6 +660,80 @@ def test_finding_inspect_linked_local_link_metadata_absent_from_evidence(
 
 
 # ---------------------------------------------------------------------------
+# 6. engine-level read-only enforcement of the inspect open (T12)
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_open_is_engine_read_only_and_refuses_write(
+    e2e_build: dict[str, Any], core_evidence: dict[str, Any]
+) -> None:
+    """T12: the inspect connection is engine-level read-only, not merely behavioral.
+
+    (i) the public ``documentation inspect`` CLI still exits 0 with complete metadata
+    readback; (ii) a handle opened through the exact production inspection open seam
+    (``documentation_inspect.open_inspection_port`` over ``ComDispatcher``) refuses an
+    UPDATE at the engine level; (iii) core.accdb is byte-identical afterwards.
+    """
+    del core_evidence  # the public inspect fixture must run first
+    directory = e2e_build["directory"]
+    core = directory / "core.accdb"
+    before = _sha256(core)
+
+    # (i) public inspect still reads complete metadata under the read-only open.
+    completed = _run_cli(
+        ["documentation", "inspect", "--db", str(core), "--backend", "dao", "--json"],
+        _cli_env(directory),
+    )
+    assert completed.returncode == 0, completed.stderr
+    envelope = json.loads(completed.stdout)
+    assert envelope["success"] is True
+    evidence = envelope["data"]
+    payload = evidence["data"]
+    assert evidence["coverage"]["tables"]["failed"] == {}
+    assert {table["name"] for table in payload["tables"]} == set(
+        e2e_build["expected"]["databases"]["core.accdb"]["tables"]
+    )
+
+    # (ii) open the same way the service does and prove the engine refuses a write.
+    from ms_access_mcp.application.documentation_inspect import open_inspection_port
+    from ms_access_mcp.backends.dispatcher import ComDispatcher
+
+    dispatcher = ComDispatcher()
+    dispatcher.start()
+    recorded: list[tuple[str, str, bool]] = []
+    real_open = dispatcher.open_dao_database
+
+    def _recording_open(db_path: str, password: str = "", read_only: bool = False) -> Any:
+        recorded.append((db_path, password, read_only))
+        return real_open(db_path, password=password, read_only=read_only)
+
+    dispatcher.open_dao_database = _recording_open  # type: ignore[method-assign]
+    try:
+        dispatcher.open_dao_database(str(core))  # DatabaseUseCases-equivalent first open
+        open_inspection_port(dispatcher)
+        # Belt: the service's own reopen carried read_only=True.
+        assert recorded[-1] == (str(core), "", True)
+        handle = dispatcher.current_db
+        with pytest.raises(Exception) as excinfo:  # noqa: B017 — DAO raises pywintypes.com_error
+            dispatcher.call(lambda: handle.Execute("UPDATE Orders SET Status = 'Tampered'"))
+        message = str(excinfo.value)
+        assert re.search(r"updateable query", message, re.IGNORECASE), message
+        # Pin the DAO engine error code (5003073 = "Operation must use an updateable
+        # query."), not just the textual pattern: the excepinfo tuple is
+        # (wCode, source, description, helpFile, scode, helpContext).
+        excepinfo = excinfo.value.args[2]
+        assert isinstance(excepinfo, tuple), excinfo.value
+        assert excepinfo[4] == 5003073, excinfo.value
+        assert excepinfo[2] == "Operation must use an updateable query.", excinfo.value
+    finally:
+        dispatcher.close_dao_database()
+        dispatcher.shutdown()
+
+    # (iii) the source file is byte-identical.
+    assert _sha256(core) == before
+
+
+# ---------------------------------------------------------------------------
 # 4. non-execution invariants across the whole session (must run last)
 # ---------------------------------------------------------------------------
 
