@@ -369,6 +369,40 @@ def test_composite_relationship_pairs_are_preserved_and_attributes_unavailable()
     assert relationship.attributes.reason
 
 
+def test_relationship_outside_the_requested_table_subset_is_excluded_not_kept() -> None:
+    """A table subset scopes the relationship catalogue to endpoints it selected.
+
+    ``tables=None`` selects every table and every relationship stays inspected (the
+    PRESERVE half of this test). With an explicit subset, a relationship whose parent or
+    child table was not selected is deliberately not inspected: keeping it would place a
+    relationship in evidence that references a table absent from the document, which the
+    deterministic renderer cannot resolve to a Mermaid node. The honest state is
+    ``excluded`` with a scope reason, so the omission is visible in coverage instead of
+    silently dropping the relationship.
+    """
+    relationships = [
+        RelationshipInfo("RIn", "Child", "Parent", "1", columns=["parent_id"], foreign_columns=["id"]),
+        RelationshipInfo("ROut", "Other", "Parent", "1", columns=["parent_id"], foreign_columns=["id"]),
+    ]
+    subset_document = inspect_with(
+        port(tables=[TableInfo("Parent"), TableInfo("Child"), TableInfo("Other")], relationships=relationships),
+        tables=["Parent", "Child"],
+    )
+    assert [item.name for item in subset_document.relationships] == ["RIn"]
+    assert subset_document.coverage.relationships.inspected == ["RIn"]
+    assert "subset" in subset_document.coverage.relationships.excluded["ROut"]
+    selected = {"Parent", "Child"}
+    for relationship in subset_document.relationships:
+        assert relationship.parent_table in selected and relationship.child_table in selected
+
+    # PRESERVE: without an explicit subset no relationship is dropped.
+    unfiltered_document = inspect_with(
+        port(tables=[TableInfo("Parent"), TableInfo("Child"), TableInfo("Other")], relationships=relationships)
+    )
+    assert [item.name for item in unfiltered_document.relationships] == ["RIn", "ROut"]
+    assert unfiltered_document.coverage.relationships.excluded == {}
+
+
 def test_total_read_failures_are_coverage_failures_and_close_runs_on_exception() -> None:
     fake = port(relationships=RuntimeError("relationships failed"), queries=RuntimeError("queries failed"))
     document = inspect_with(fake)

@@ -26,6 +26,13 @@ same built fixture copy through the Access ODBC driver, and
 asserts the ODBC-visible evidence plus every capability the probe proved invisible as
 an explicit ``unavailable`` fact with a reason.
 
+Finally it qualifies filtered inspection (T3): the repeatable ``--tables``/``--queries``
+flags scope evidence and coverage to the requested subset, a filtered-out object is
+absent rather than failed or unavailable, a table subset scopes the relationship
+catalogue to relationships with both endpoints selected (recorded as ``excluded`` when
+not), filtered evidence still renders a coherent database report, and an unknown
+requested name is a hard ``Err`` with exit 1.
+
 Run explicitly on Windows with ACE DAO and pywin32::
 
     $env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
@@ -291,6 +298,82 @@ def core_odbc_evidence(e2e_build: dict[str, Any], work_dir: Path) -> dict[str, A
         "before": before,
         "after": after,
         "lock_files": sorted(path.name for path in directory.iterdir() if path.name.startswith("core.accdb.")),
+    }
+
+
+@pytest.fixture(scope="session")
+def core_filtered_tables(e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
+    """Inspect core.accdb with an explicit table subset and render its database report.
+
+    The subset is passed as three repeatable ``--tables`` occurrences, including the
+    space-containing table ``Sales Notes``. The source is hashed before and after so the
+    filtered open's no-write behavior is observed, and the resulting evidence is rendered
+    offline to observe that a filtered document stays coherent.
+    """
+    directory = e2e_build["directory"]
+    core = directory / "core.accdb"
+    before = _sha256(core)
+    completed = _run_cli(
+        [
+            "documentation",
+            "inspect",
+            "--db",
+            str(core),
+            "--backend",
+            "dao",
+            "--tables",
+            "Customers",
+            "--tables",
+            "Orders",
+            "--tables",
+            "Sales Notes",
+            "--json",
+        ],
+        _cli_env(directory),
+    )
+    after = _sha256(core)
+    evidence_path = work_dir / "inspect-core-filtered-tables.json"
+    evidence_path.write_text(completed.stdout, encoding="utf-8")
+    rendered = _run_cli(
+        ["documentation", "render", "--evidence", str(evidence_path), "--kind", "database", "--json"],
+        _cli_env(directory),
+    )
+    (work_dir / "report-filtered-tables.json").write_text(rendered.stdout, encoding="utf-8")
+    return {
+        "completed": completed,
+        "envelope": json.loads(completed.stdout) if completed.stdout.strip().startswith("{") else None,
+        "rendered": rendered,
+        "path": evidence_path,
+        "before": before,
+        "after": after,
+        "lock_files": sorted(path.name for path in directory.iterdir() if path.name.startswith("core.accdb.")),
+    }
+
+
+@pytest.fixture(scope="session")
+def core_filtered_queries(e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
+    """Inspect core.accdb with an explicit saved-query subset (repeatable ``--queries``)."""
+    directory = e2e_build["directory"]
+    completed = _run_cli(
+        [
+            "documentation",
+            "inspect",
+            "--db",
+            str(directory / "core.accdb"),
+            "--backend",
+            "dao",
+            "--queries",
+            "qryOpenOrders",
+            "--json",
+        ],
+        _cli_env(directory),
+    )
+    evidence_path = work_dir / "inspect-core-filtered-queries.json"
+    evidence_path.write_text(completed.stdout, encoding="utf-8")
+    return {
+        "completed": completed,
+        "envelope": json.loads(completed.stdout) if completed.stdout.strip().startswith("{") else None,
+        "path": evidence_path,
     }
 
 
@@ -987,6 +1070,221 @@ def test_inspect_open_is_engine_read_only_and_refuses_write(
 
     # (iii) the source file is byte-identical.
     assert _sha256(core) == before
+
+
+# ---------------------------------------------------------------------------
+# 7. filtered inspection (T3): --tables / --queries scoping
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_filtered_tables_returns_exactly_the_requested_subset(
+    core_filtered_tables: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """T3: ``--tables`` scopes evidence, coverage, relationships, and rendering to a subset.
+
+    The CLI flag is repeatable (``--tables <name>``), so the space-containing
+    ``Sales Notes`` is carried as one whole name by one occurrence. An explicit subset
+    selects exactly the requested tables: filtered-out tables are absent from the
+    document and are neither failed, unsupported, nor fabricated as unavailable (their
+    names do not appear in any ``coverage.tables`` bucket). The query scope is unaffected
+    by a table filter, and the relationship catalogue is scoped to relationships whose
+    parent and child are both selected -- a relationship referencing an excluded table is
+    recorded as ``excluded`` with a scope reason instead of being retained, because the
+    deterministic renderer resolves both endpoints to diagram nodes and retaining it would
+    make the filtered document unrenderable.
+    """
+    completed = core_filtered_tables["completed"]
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+    envelope = core_filtered_tables["envelope"]
+    assert envelope is not None and envelope["success"] is True
+    evidence = envelope["data"]
+    payload = evidence["data"]
+    expected = e2e_build["expected"]["databases"]["core.accdb"]
+    requested = ["Customers", "Orders", "Sales Notes"]
+
+    assert [table["name"] for table in payload["tables"]] == requested
+    assert evidence["run"]["scope"]["tables"] == requested
+    assert set(evidence["run"]["scope"]["queries"]) == set(expected["queries"])
+    assert evidence["coverage"]["tables"]["inspected"] == requested
+    assert evidence["coverage"]["tables"]["failed"] == {}
+    assert evidence["coverage"]["tables"]["unsupported"] == {}
+    assert evidence["coverage"]["tables"]["excluded"] == {}
+    omitted = sorted(set(expected["tables"]) - set(requested))
+    assert omitted == ["CustomerProfiles", "OrderLines", "Products", "Stock", "Warehouses"]
+    present = {table["name"] for table in payload["tables"]}
+    for name in omitted:
+        assert name not in present, name
+        for bucket in ("inspected", "excluded", "unsupported", "failed"):
+            assert name not in evidence["coverage"]["tables"][bucket], (name, bucket)
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+    # A table filter does not narrow the query scope.
+    assert {query["name"] for query in payload["queries"]} == set(expected["queries"])
+    # The relationship catalogue covers only relationships with both endpoints selected.
+    assert sorted(item["name"] for item in payload["relationships"]) == [
+        "BillingCustomersOrders",
+        "CustomersOrders",
+    ]
+    excluded_relationships = evidence["coverage"]["relationships"]["excluded"]
+    assert sorted(excluded_relationships) == [
+        "OrdersOrderLines",
+        "ProductsStock",
+        "StockOrderLines",
+        "WarehousesStock",
+        "relCustomersProfiles",
+    ]
+    assert all("subset" in reason for reason in excluded_relationships.values())
+    for relationship in payload["relationships"]:
+        assert relationship["parent_table"] in requested and relationship["child_table"] in requested
+
+    # No observed mutation and no lock residue from the filtered open.
+    assert core_filtered_tables["after"] == core_filtered_tables["before"]
+    assert core_filtered_tables["after"] == e2e_build["inventory"]["core.accdb"]["sha256"]
+    assert core_filtered_tables["lock_files"] == []
+
+    # (e) The filtered evidence renders one coherent database report for the subset.
+    rendered = core_filtered_tables["rendered"]
+    assert rendered.returncode == 0, rendered.stdout
+    assert "Traceback" not in rendered.stderr
+    report = json.loads(rendered.stdout)["data"]
+    markdown = report["markdown"]
+    assert report["schema"] == "access.documentation.report/1"
+    assert report["status"] == "partial"
+    assert report["sha256"] == hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    assert "- Tables: Customers, Orders, Sales Notes" in markdown
+    for name in requested:
+        assert f"### {name}" in markdown, name
+    for name in omitted:
+        assert f"### {name}" not in markdown, name
+    assert "| CustomersOrders |" in markdown
+    assert "| ProductsStock |" not in markdown
+    assert any(line.startswith("- Excluded (relationships): relCustomersProfiles") for line in markdown.splitlines())
+    block = _mermaid_block(markdown)
+    assert "| t1 | Customers |" in markdown
+    assert "| t2 | Orders |" in markdown
+    assert "| t3 | Sales Notes |" in markdown
+    edges = [line for line in block.splitlines() if _EDGE_RE.match(line)]
+    assert edges == ['  t2 }o--|| t1 : "BillingCustomersOrders"', '  t2 }o--|| t1 : "CustomersOrders"']
+
+
+def test_inspect_filtered_queries_returns_exactly_the_requested_query(
+    core_filtered_queries: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """T3: ``--queries`` selects exactly the requested saved query and nothing else.
+
+    The other four queries are absent from both the evidence and every
+    ``coverage.queries`` bucket (never failed or unavailable). A query filter leaves the
+    table scope and the relationship catalogue untouched, which is the counterpart of the
+    table-filter scoping asserted above.
+    """
+    completed = core_filtered_queries["completed"]
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+    envelope = core_filtered_queries["envelope"]
+    assert envelope is not None and envelope["success"] is True
+    evidence = envelope["data"]
+    payload = evidence["data"]
+    expected = e2e_build["expected"]["databases"]["core.accdb"]
+
+    assert [query["name"] for query in payload["queries"]] == ["qryOpenOrders"]
+    assert evidence["coverage"]["queries"]["inspected"] == ["qryOpenOrders"]
+    assert evidence["coverage"]["queries"]["failed"] == {}
+    assert evidence["coverage"]["queries"]["unsupported"] == {}
+    assert evidence["coverage"]["queries"]["excluded"] == {}
+    omitted = sorted(set(expected["queries"]) - {"qryOpenOrders"})
+    assert omitted == [
+        "qryDeleteDraftOrders",
+        "qryOrderSummary",
+        "qryOrdersByCustomer",
+        "qryUpdateOrderStatus",
+    ]
+    for name in omitted:
+        assert name not in {query["name"] for query in payload["queries"]}, name
+        for bucket in ("inspected", "excluded", "unsupported", "failed"):
+            assert name not in evidence["coverage"]["queries"][bucket], (name, bucket)
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+    # A query filter does not narrow the table scope or the relationship catalogue.
+    assert {table["name"] for table in payload["tables"]} == set(expected["tables"])
+    assert set(evidence["run"]["scope"]["tables"]) == set(expected["tables"])
+    assert evidence["run"]["scope"]["queries"] == ["qryOpenOrders"]
+    assert set(evidence["coverage"]["tables"]["inspected"]) == set(expected["tables"])
+    assert len(payload["relationships"]) == len(expected["relationships"])
+    assert evidence["coverage"]["relationships"]["excluded"] == {}
+
+
+def test_inspect_combined_table_and_query_filters_scope_both_axes(e2e_build: dict[str, Any]) -> None:
+    """T3: one invocation can filter tables and queries at the same time.
+
+    ``--tables Orders --tables OrderLines --queries qryOrdersByCustomer`` scopes both
+    axes independently: the two requested tables, the single requested query, their own
+    coverage ``inspected`` lists, and the relationship catalogue reduced to
+    ``OrdersOrderLines`` (the only relationship whose parent and child are both selected).
+    """
+    completed = _run_cli(
+        [
+            "documentation",
+            "inspect",
+            "--db",
+            str(e2e_build["directory"] / "core.accdb"),
+            "--backend",
+            "dao",
+            "--tables",
+            "Orders",
+            "--tables",
+            "OrderLines",
+            "--queries",
+            "qryOrdersByCustomer",
+            "--json",
+        ],
+        _cli_env(e2e_build["directory"]),
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+    evidence = json.loads(completed.stdout)["data"]
+    payload = evidence["data"]
+    assert [table["name"] for table in payload["tables"]] == ["Orders", "OrderLines"]
+    assert [query["name"] for query in payload["queries"]] == ["qryOrdersByCustomer"]
+    assert evidence["run"]["scope"] == {"tables": ["Orders", "OrderLines"], "queries": ["qryOrdersByCustomer"]}
+    assert evidence["coverage"]["tables"]["inspected"] == ["Orders", "OrderLines"]
+    assert evidence["coverage"]["queries"]["inspected"] == ["qryOrdersByCustomer"]
+    assert [item["name"] for item in payload["relationships"]] == ["OrdersOrderLines"]
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+
+def test_inspect_unknown_requested_name_is_a_hard_error(e2e_build: dict[str, Any]) -> None:
+    """T3: an unknown requested name is a hard ``Err`` (exit 1), not an honest-empty document.
+
+    Spec section 3.4 maps invalid input to ``Err(message)`` with CLI exit 1 (2 is reserved
+    for usage/invocation errors), so both an unknown table and an unknown query must fail
+    with a named error envelope and no evidence payload, while leaving the source bytes
+    untouched and no lock residue behind.
+    """
+    directory = e2e_build["directory"]
+    core = directory / "core.accdb"
+    before = _sha256(core)
+    table_run = _run_cli(
+        ["documentation", "inspect", "--db", str(core), "--backend", "dao", "--tables", "NoSuchTable", "--json"],
+        _cli_env(directory),
+    )
+    query_run = _run_cli(
+        ["documentation", "inspect", "--db", str(core), "--backend", "dao", "--queries", "NoSuchQuery", "--json"],
+        _cli_env(directory),
+    )
+    after = _sha256(core)
+    for completed, expected_error in (
+        (table_run, "Unknown requested table name(s): NoSuchTable"),
+        (query_run, "Unknown requested query name(s): NoSuchQuery"),
+    ):
+        assert completed.returncode == 1
+        assert "Traceback" not in completed.stderr
+        envelope = json.loads(completed.stdout)
+        assert envelope["success"] is False
+        assert envelope["error"] == expected_error
+        assert "data" not in envelope
+    assert after == before == e2e_build["inventory"]["core.accdb"]["sha256"]
+    assert sorted(path.name for path in directory.iterdir() if path.name.startswith("core.accdb.")) == []
 
 
 # ---------------------------------------------------------------------------

@@ -2,9 +2,10 @@
 
 Status: generator, expected manifest, the opt-in raw-readback integration suite, and
 the opt-in documentation-pipeline qualification suite are implemented. The pipeline
-suite qualifies engine-level read-only protection for the DAO inspection open and
-exercises the ODBC inspection path with behavioral no-write evidence; startup-code
-non-execution remains unqualified.
+suite qualifies engine-level read-only protection for the DAO inspection open, exercises
+the ODBC inspection path with behavioral no-write evidence, and qualifies filtered
+inspection (`--tables`/`--queries`, DAO backend); startup-code non-execution remains
+unqualified.
 
 ## Generate
 
@@ -195,11 +196,29 @@ stderr banner, and the `source.path`/`source.format` placeholders.
 Engine-level read-only enforcement is now qualified for the DAO inspection open (see the
 proof above). The ODBC inspection path is now exercised by the pipeline suite with
 behavioral no-write evidence (source hashes unchanged, no lock residue) as well as
-per-capability honest gaps; it has no engine-level read-only claim. Still unproven by any
-fixture suite: startup/macro/VBA non-execution (no executable fixture exists) and
-filtered (`--tables`/`--queries`) inspection. Linked-source isolation is now observed
-for this fixture while the sentinel is exclusively locked, but it is scoped to that
-observation and not to engine-level enforcement.
+per-capability honest gaps; it has no engine-level read-only claim. Linked-source
+isolation is now observed for this fixture while the sentinel is exclusively locked, but
+it is scoped to that observation and not to engine-level enforcement.
+
+Filtered inspection is now qualified for the DAO backend by the pipeline suite. The
+`--tables`/`--queries` flags are repeatable CLI occurrences (no comma-separated form).
+An explicit table subset carries exactly the requested tables (including the
+space-containing `Sales Notes`), `coverage.tables.inspected` matches the request, and a
+filtered-out table is absent from evidence and from every `coverage.tables` bucket
+(never failed, unsupported, or fabricated as unavailable). A query subset carries exactly
+that query and leaves the table scope untouched, and both filters can be combined in one
+invocation. A relationship whose parent or child table is not selected is recorded in
+`coverage.relationships.excluded` and is not inspected, which fixed a blocking defect:
+the retained relationship made the filtered document unrenderable (`KeyError` resolving a
+Mermaid alias) so no report could be produced for a subset that cut a relationship in
+half; filtered evidence now renders one coherent `database` report
+(`test_inspect_filtered_tables_returns_exactly_the_requested_subset`,
+`test_inspect_filtered_queries_returns_exactly_the_requested_query`,
+`test_inspect_combined_table_and_query_filters_scope_both_axes`). An unknown requested
+name is a hard `Err` with exit 1 and leaves the source bytes untouched
+(`test_inspect_unknown_requested_name_is_a_hard_error`). Still unproven by any fixture
+suite: startup/macro/VBA non-execution (no executable fixture exists), and filtered
+inspection over the ODBC backend.
 
 No startup macro or executable VBA fixture is generated or run here. Startup
 execution remains separately authorized. An unchanged source hash alone establishes

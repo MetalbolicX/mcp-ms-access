@@ -344,6 +344,17 @@ class DocumentationInspectService:
         tables: list[str] | None,
         queries: list[str] | None,
     ) -> EvidenceDoc:
+        """Build evidence for the requested table/query subset.
+
+        ``None`` selects every eligible object; an explicit list selects exactly its
+        members in the given order (an empty list selects none). A requested name that
+        is not an eligible table/query -- including a policy-excluded system table --
+        raises ``AccessMcpError`` rather than being silently ignored. When ``tables`` is
+        an explicit list, a relationship whose parent or child table is not selected is
+        recorded as ``excluded`` in ``coverage.relationships`` and is not inspected, so
+        every relationship that reaches evidence references two tables the document
+        contains (the renderer resolves both endpoints to diagram nodes).
+        """
         try:
             return self._inspect(port, tables=tables, queries=queries)
         finally:
@@ -408,10 +419,20 @@ class DocumentationInspectService:
             # An invisible capability is `unavailable`; it is never a read failure.
             coverage.relationships.unsupported["relationships"] = relationship_gap
         else:
+            selected_table_names = {table.name for table in selected_tables}
             try:
                 for relationship in port.get_relationships():
                     if _is_system_name(relationship.name):
                         coverage.relationships.excluded[relationship.name] = "System or temporary relationship excluded"
+                        continue
+                    if tables is not None and not {relationship.table, relationship.foreign_table} <= selected_table_names:
+                        # A relationship whose endpoint was filtered out cannot be
+                        # rendered (the renderer resolves both endpoints to table
+                        # nodes), so it is deliberately not inspected. Record the
+                        # scope exclusion instead of silently dropping it.
+                        coverage.relationships.excluded[relationship.name] = (
+                            "Relationship references a table outside the requested table subset"
+                        )
                         continue
                     coverage.relationships.inspected.append(relationship.name)
                     coverage.relationships.unsupported[relationship.name] = (
