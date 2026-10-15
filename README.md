@@ -23,7 +23,7 @@ Engineering reference (as-built) lives under `docs/`:
 | [Architecture](docs/01-architecture.md) | Layers, COM lifecycle, sessions, tool surface by profile |
 | [Contracts](docs/02-contracts.md) | Result envelope, error hierarchy, authorization gates, limits |
 | [Safety and configuration](docs/03-safety-and-configuration.md) | Environment variables, backend selection, crash-resilience model |
-| [Access documentation workflows (implemented; ACE/DAO and ACE/ODBC qualified at fixture scope)](docs/specs/documentation-workflows.md) | deterministic database documentation workflows; linked-table isolation, filtered inspection, and startup-code non-execution are qualified at fixture scope; legacy `.mdb` formats, ODBC-side filtering, and ODBC engine-level read-only remain unqualified |
+| [Access documentation workflows (implemented; ACE/DAO and ACE/ODBC qualified at fixture scope)](docs/specs/documentation-workflows.md) | deterministic database documentation workflows; linked-table isolation, engine-level read-only inspection open (DAO and ODBC), filtered inspection (DAO and ODBC), startup-code non-execution, and the bounded-resource profile (byte caps plus the 120-second inspection deadline) are qualified at fixture scope. Legacy `.mdb` formats, a genuine `dbAttachedODBC` runtime link, an encrypted ODBC read-only reopen, and table data-macro execution (tripwire accept-blocked) remain unqualified |
 
 Operational how-to stays in this README. The crash-recovery specification is
 `docs/specs/crash-recovery.md`; implementation history is in `plans/`.

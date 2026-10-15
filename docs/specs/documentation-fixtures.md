@@ -2,12 +2,18 @@
 
 Status: generator, expected manifest, the opt-in raw-readback integration suite, and
 the opt-in documentation-pipeline qualification suite are implemented. The pipeline
-suite qualifies engine-level read-only protection for the DAO inspection open, exercises
-the ODBC inspection path with behavioral no-write evidence, and qualifies filtered
-inspection (`--tables`/`--queries`, DAO backend). Startup-code non-execution is now
+suite qualifies engine-level read-only protection for both the DAO and ODBC inspection
+opens, exercises the ODBC inspection path with engine-level refusal plus no-write
+evidence, and qualifies filtered
+inspection (`--tables`/`--queries`, DAO and ODBC backends). Startup-code non-execution is now
 qualified at fixture scope: the pipeline suite proves the DAO and ODBC backends never
 execute the fixture, and a doubly gated control run proves the same fixture genuinely
-executes when deliberately opened under isolation.
+executes when deliberately opened under isolation. The fixture was extended with a
+never-auto-run named macro (`ManualMarker`) and an `AutoKeys` macro group (loaded under a
+neutral name and renamed last); both are name-observable through DAO `Containers("Scripts")`.
+A table data-macro DML tripwire was **not** added: the client data-macro import format
+could not be established within the bounded attempt budget (see the blocked-tripwire
+section below).
 
 ## Generate
 
@@ -26,13 +32,14 @@ cannot build it.
 
 The default output is `db/fixtures/documentation/`; it holds four databases
 (`core.accdb`, `sentinel.accdb`, `linked.accdb`, `startup.accdb`), the two per-build
-records `expected.json` and `inventory.json`, and two retained provenance sources,
-`startup_module.bas` (raw VBA module source) and `startup_macro.txt` (framed macro
-definition). The provenance files are the `Application.LoadFromText` inputs for the
-startup module and macro; they are intentionally kept beside the built database for
-inspection and rebuild, and they are never executed by the generator or the inspection
-pipeline. The whole directory is a local, git-ignored build output. For a fresh
-independent run:
+records `expected.json` and `inventory.json`, and four retained provenance sources:
+`startup_module.bas` (raw VBA module source), `startup_macro.txt` (framed `AutoExec`
+definition), `named_macro.txt` (framed `ManualMarker` definition), and
+`autokeys_macro.txt` (framed `AutoKeys` macro group). The provenance files are the
+`Application.LoadFromText` inputs for the startup module and macros; they are
+intentionally kept beside the built database for inspection and rebuild, and they are
+never executed by the generator or the inspection pipeline. The whole directory is a
+local, git-ignored build output. For a fresh independent run:
 
 ```powershell
 .venv\Scripts\python.exe scripts\generate_documentation_fixtures.py --build --output-dir db\fixtures\documentation-run-2
@@ -50,7 +57,7 @@ Database binaries remain git-ignored. The committed ground truth is
 which `--describe` reproduces exactly; both the CLI/manifest equality and the absence
 of writes are enforced by `tests/unit/test_generate_documentation_fixtures.py`.
 Each successful build writes `expected.json` and
-`inventory.json` beside the databases (plus the two provenance sources named above).
+`inventory.json` beside the databases (plus the four provenance sources named above).
 The inventory records the actual hashes, sizes, and DAO-canonical query SQL of that
 build. ACE metadata can vary between runs: regeneration yields **structural**, not
 byte-level, identity, and the recorded hashes are per-build observations rather than a
@@ -64,8 +71,9 @@ stability promise.
 - **linked.accdb:** one LocalNotes table with one row, and LinkedCustomers pointing
   to SentinelCustomers in the generated sentinel.accdb.
 - **startup.accdb:** one StartupNotes table with one row, a standard VBA module
-  `StartupMarkerModule`, and a macro renamed to `AutoExec`; it is the only fixture that
-  contains executable code (see the startup-code fixture section below).
+  `StartupMarkerModule`, a never-auto-run named macro `ManualMarker`, an `AutoKeys`
+  macro group, and a macro renamed to `AutoExec`; it is the only fixture that contains
+  executable code (see the startup-code fixture section below).
 
 Core has explicit primary keys, two composite keys, seven declared relationships
 including the composite Stock-to-OrderLines FK, required and nullable customer
@@ -97,10 +105,12 @@ reviewed CREATE/INSERT statements on newly created synthetic databases.
 
 `startup.accdb` is the executable fixture that closes the startup-code non-execution
 gap. It contains one synthetic table `StartupNotes` (one row), a standard VBA module
-`StartupMarkerModule` with a public `StartupMarker` function, and a macro renamed to
-`AutoExec` that runs `StartupMarker()` through `RunCode`. The manifest records the
-module name, macro name, pre-rename control name, marker filename, and the execution
-policy `authorized-isolated-control-only`.
+`StartupMarkerModule` with a public `StartupMarker` function, a never-auto-run named
+macro `ManualMarker`, an `AutoKeys` macro group, and a macro renamed to `AutoExec`.
+`AutoExec` and the single `AutoKeys` submacro (`^+{F12}`) both invoke `StartupMarker()`
+through `RunCode`; `ManualMarker` does the same and is only ever invoked by name. The
+manifest records the module name, the macro names, the pre-rename control names, the
+marker filename, and the execution policy `authorized-isolated-control-only`.
 
 The `StartupMarker` function writes a harmless one-line text file named
 `startup_executed.marker`, beside the database it runs from:
@@ -111,25 +121,70 @@ database writes beside the copy and a database that never runs writes nothing.
 ### Build-without-executing discipline
 
 The generator creates the table through DAO-only DDL, then opens Access.Application
-*only while no macro named `AutoExec` exists*. It loads the module (raw VBA source; the
-`Version`/`Begin`/`End` wrapper is export framing, not module code) and the macro
-(temporarily named `StartupControl`) from text definitions written beside the database,
-renames the macro to `AutoExec` last with `DoCmd.Rename`, closes the database, and quits
-without reopening. Access.Application is confined to this pre-AutoExec build phase; the
-generator never runs VBA or a macro. `Application.LoadFromText` is used because
-`DoCmd.LoadFromText` is not exposed on the late-bound `DoCmd` object; it is the same
-database operation. After the phase the build asserts that the built database produced
-no marker, no `startup.accdb.laccdb` lock survives, and no MSACCESS.EXE process that
-the build started remains, before it records the hashes and sizes in `inventory.json`.
+*only while no auto-run object exists*. It loads the module (raw VBA source; the
+`Version`/`Begin`/`End` wrapper is export framing, not module code), the named macro
+`ManualMarker` (never auto-runs, so it is loaded under its final name), and the
+`AutoExec` and `AutoKeys` macros (temporarily named `StartupControl` and
+`AutoKeysControl`) from text definitions written beside the database, then assigns the
+auto-run-adjacent names last with `DoCmd.Rename` (AutoKeys first, AutoExec last),
+closes the database, and quits without reopening. Access.Application is confined to
+this pre-auto-run build phase; the generator never runs VBA or a macro.
+`Application.LoadFromText` is used because `DoCmd.LoadFromText` is not exposed on the
+late-bound `DoCmd` object; it is the same database operation. After the phase the build
+asserts that the built database produced no marker, no `startup.accdb.laccdb` lock
+survives, and no MSACCESS.EXE process that the build started remains, before it records
+the hashes and sizes in `inventory.json`.
 
 ### DAO observability
 
 DAO exposes construction facts and object *names* only: `db.Containers("Modules")`
-lists `StartupMarkerModule` and `db.Containers("Scripts")` lists `AutoExec` (there is no
-`Macros` container). Neither container exposes the VBA source or the macro actions, so
-DAO readback can assert *that* the module and macro exist, but not what they contain.
-The raw-readback suite therefore proves fixture construction and the absent marker; the
-executable-code proof is the control run.
+lists `StartupMarkerModule` and `db.Containers("Scripts")` lists `AutoExec`,
+`ManualMarker`, and `AutoKeys` (there is no `Macros` container). Neither container
+exposes the VBA source or the macro actions, so DAO readback can assert *that* the module
+and macros exist, but not what they contain. The raw-readback suite therefore proves
+fixture construction and the absent marker; the executable-code proof is the control run.
+The `AutoKeys` group holds one submacro keyed to `Ctrl+Shift+F12`; without Access UI
+keyboard input it never runs, which is why it can be loaded and renamed during the build
+without executing anything.
+
+### Data-macro DML tripwire: not implemented (blocked)
+
+T5's accepted scope also asked for a `DmlTripWire` table whose Before Change table data
+macro (`SetField TrippedAt = Now()` when `TrippedAt` is null) would arm an engine-level
+DML tripwire, created with `Application.LoadFromText` `acTableDataMacro` (AcObjectType
+`12`) from hand-authored XML, plus a doubly gated deliberate-DML control that proves
+whether DAO DML fires table data macros on this runtime. **This was not implemented:**
+the client data-macro import text format could not be established within the bounded
+attempt budget, and no such fixture is committed.
+
+Seven controlled `--build` runs were executed (each opening Access.Application exactly as
+the normal build does), probing roughly 65 bounded encodings: unprefixed and `axl:`-prefixed
+`<DataMacro>`/`<EventDataMacro>`/`<DataMacros>`/`<TableDataMacro>` roots; the Access
+application-part namespaces `2009/11`, `2010/12`, and `2011/07`; `Event`/`Name`/`Table`
+attributes and an `<Event>` child; `Action` with `Name`/`ActionName`; arguments with and
+without an `<Arguments>` wrapper and named `Field`/`Name`/`Value`; bracketed and bare field
+references; `Now()` and `=Now()`; element-per-action form; an `<axl:Table>` CSDL wrapper; a
+UTF-16 (BOM) encoding pass; and the `Version`/`ColumnsShown`/`Begin`/`Action`/`Argument`
+frame. Every one failed. The exact observed errors are:
+
+- ObjectName `DmlTripWire` with any probe encoding:
+  `Microsoft Access cannot interpret the text you are pasting as a data macro. Correct the
+  text and then try again.` (HRESULT `-2146824418`), for every candidate; and
+- ObjectName `DmlTripWire.BeforeChange`: the database engine could not find that object
+  (`jeterr40.chm` `5003011`), so the event is not encoded in the ObjectName;
+- pre-import `SaveAsText acTableDataMacro, "DmlTripWire"` on a table without a data macro
+  fails with `Reserved Error` (`-2146825338`), so Access exposes no skeleton to seed the
+  format from;
+- the shipped Access application-part template `accessparts.xml` only ever contains
+  empty `<axl:DataMacro Event="..." />` elements, and the machine has no Access fixture
+  with a populated table data macro to export as ground truth.
+
+The import is loud: the generator raises when the tripwire XML cannot be round-tripped,
+so a build can never silently produce an unarmed tripwire. Because the tripwire could not
+be armed, the `DmlTripWire` table, the hand-authored XML provenance source, and the
+doubly gated `test_documentation_datamacro_control.py` deliberate-DML control were not
+added. This remains an explicit, unqualified gap; the named macro and AutoKeys vector is
+implemented and observationally proven instead.
 
 ### Non-execution proof and the control run
 
@@ -239,15 +294,34 @@ key, relationships, saved-query SQL/category, linked-table target). Query parame
 `observed` through `SQLProcedureColumns` (`[pCustomerID]`, ODBC type `4` = `INTEGER`;
 parameterless queries report a known empty, not `unavailable`). The test also asserts the
 source copy's sha256 is unchanged and that no `core.accdb.*` lock file remains. The ODBC
-path has no engine-level read-only reopen, so those hashes are behavioral no-write
-evidence only; the engine-level read-only qualification above stays DAO-scoped. ODBC
-catalog reads on a linked table contact the linked source read-only, so isolation is not
-guaranteed over ODBC; a separate lock-probe regression
-(`test_inspect_linked_via_odbc_reports_unreachable_source_as_failed_table`) holds the
-session sentinel exclusively and confirms that a linked table whose source is unreachable
-(which makes the driver return zero columns) surfaces as a `failed` table in
-`coverage.tables.failed` -- never an observed-empty field/index fact -- with the sentinel
-sha256 unchanged.
+open is a separate engine-level read-only connection
+(`OdbcAdapter.open_readonly_inspection_connection` → `pyodbc.connect(..., readonly=True)`,
+qualified on ACEODBC `16.0.20326.20022` x64) isolated from the adapter's CRUD
+connection: `test_odbc_inspection_open_is_engine_read_only_and_refuses_write` opens it
+through the production seam and shows a narrow `UPDATE` is refused (`-3035`,
+`Operation must use an updateable query.`) with the disposable copy byte-identical and no
+lock residue, while the adapter's own CRUD connection still reads and a separate writable
+control copy still accepts an ordinary CRUD write. Behavior hashes alone are not the
+claim; the engine-level refusal is. ODBC
+classifies every listed table by its `SQLTables` type before any column/index read, so a
+`SYNONYM` (linked table) is never passed to `SQLColumns` or `SQLStatistics` and the linked
+source is not contacted; the table is reported as an explicit coverage `unsupported` gap
+with empty fields/indexes and an `unavailable` primary key. A separate lock-probe
+regression
+(`test_inspect_linked_via_odbc_does_not_contact_the_linked_source`) holds the session
+sentinel exclusively and confirms the linked table is neither a failed read nor an
+observed-empty schema, with the sentinel sha256 unchanged.
+
+The suite also qualifies the T4a bounded CLI ingress at the real default caps
+(`test_cli_rejects_oversized_evidence_and_report_files_at_the_default_caps`): a raw
+`--evidence` file above 32 MiB plus the 1024-byte `Ok`-envelope allowance, and a raw
+`--report` file above 16 MiB plus allowance, each deliberately starting with non-JSON
+bytes, are rejected with the raw-ingress size `Err` (CLI exit 1) before any parse —
+proving the bounded read rejected them rather than a JSON parser — and the rejected
+save leaves no destination or temporary file. The same run still saves a normal report
+with exactly its Markdown bytes. Units, inclusive boundaries, and the 120-second
+inspection deadline (qualified at fixture scope by the deadline integration suite and the
+runtime guard tests) are recorded in `documentation-workflows.md` §6.3.
 
 All three blocking qualification findings from that suite are resolved in T3 phase 2:
 
@@ -273,14 +347,14 @@ The three cosmetic gaps stay open intentionally: nullable-FK cardinality renderi
 (`Orders.BillingCustomerID` still diagrams `}o--||`), the pywin32 `IUnknown` teardown
 stderr banner, and the `source.path`/`source.format` placeholders.
 
-Engine-level read-only enforcement is now qualified for the DAO inspection open (see the
-proof above). The ODBC inspection path is now exercised by the pipeline suite with
-behavioral no-write evidence (source hashes unchanged, no lock residue) as well as
-per-capability honest gaps; it has no engine-level read-only claim. Linked-source
+Engine-level read-only enforcement is now qualified for the DAO and ODBC inspection
+opens (see the proofs above). The ODBC inspection path is exercised by the pipeline
+suite with engine-level read-only refusal plus per-capability honest gaps. Linked-source
 isolation is now observed for this fixture while the sentinel is exclusively locked, but
 it is scoped to that observation and not to engine-level enforcement.
 
-Filtered inspection is now qualified for the DAO backend by the pipeline suite. The
+Filtered inspection is now qualified for the DAO and ODBC backends by the pipeline suite.
+The
 `--tables`/`--queries` flags are repeatable CLI occurrences (no comma-separated form).
 An explicit table subset carries exactly the requested tables (including the
 space-containing `Sales Notes`), `coverage.tables.inspected` matches the request, and a
@@ -296,10 +370,26 @@ half; filtered evidence now renders one coherent `database` report
 `test_inspect_filtered_queries_returns_exactly_the_requested_query`,
 `test_inspect_combined_table_and_query_filters_scope_both_axes`). An unknown requested
 name is a hard `Err` with exit 1 and leaves the source bytes untouched
-(`test_inspect_unknown_requested_name_is_a_hard_error`). Still unproven by any fixture
-suite: VBA/macro execution beyond the startup fixture, and filtered
-inspection over the ODBC backend. The startup fixture's own non-execution is qualified
-above (DAO and ODBC pipeline tests plus the gated control run).
+(`test_inspect_unknown_requested_name_is_a_hard_error`).
+
+The same selection contract is qualified over the Access ODBC driver by
+`test_inspect_filtered_tables_via_odbc_returns_exactly_the_requested_subset`,
+`test_inspect_filtered_queries_via_odbc_returns_exactly_the_requested_view`,
+`test_inspect_combined_table_and_query_filters_via_odbc_scope_both_axes`, and
+`test_inspect_unknown_requested_name_via_odbc_is_a_hard_error`. ODBC keeps its honest
+gaps under filtering (each selected table's primary key `unavailable` with the
+`SQLPrimaryKeys` reason, relationships an explicit `coverage.relationships.unsupported`
+gap) and its visible query catalogue is only the row-returning `VIEW` rows; the action
+query names are never claimed visible. Selecting only `LocalNotes` in `linked.accdb`
+while `sentinel.accdb` is exclusively locked never contacts the filtered-out linked
+source (`test_inspect_filtered_out_linked_source_is_not_contacted_via_odbc`). The
+explicit empty-list selection, inexpressible with the repeatable CLI flags, is exercised
+over a real ODBC port through the public application inspect interface and the public MCP
+tool with a CLI transport-parity assertion
+(`test_inspect_empty_selection_via_odbc_is_select_none_and_transport_parity`). Still
+unproven by any fixture suite: VBA/macro execution beyond the startup fixture. The
+startup fixture's own non-execution is qualified above (DAO and ODBC pipeline tests plus
+the gated control run).
 
 No startup macro or executable VBA fixture is run by the generator or the inspection
 pipeline. The `startup.accdb` fixture contains executable code and is deliberately run
