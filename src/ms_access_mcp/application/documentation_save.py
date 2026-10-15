@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..errors import AccessMcpError
 from ..safety import allowed_dirs_from_env, is_path_allowed
+from .documentation_limits import ensure_markdown_within_limit
 
 _DATABASE_SUFFIXES = {".mdb", ".accdb", ".accde", ".mdw", ".mde"}
 
@@ -54,6 +55,9 @@ class DocumentationSaveService:
         expected_fingerprint: str | None = None,
     ) -> SaveResult:
         """Atomically save a report after authorization and destination checks."""
+        # Reject oversized Markdown before any authorization or destination work, so a
+        # rejected input can never create a destination, temporary file, or parent.
+        ensure_markdown_within_limit(report_markdown)
         if not self._allowed:
             raise AccessMcpError("Documentation save permission denied: operator doc-write is not enabled.")
         if not confirm:

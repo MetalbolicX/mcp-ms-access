@@ -31,7 +31,12 @@ flags scope evidence and coverage to the requested subset, a filtered-out object
 absent rather than failed or unavailable, a table subset scopes the relationship
 catalogue to relationships with both endpoints selected (recorded as ``excluded`` when
 not), filtered evidence still renders a coherent database report, and an unknown
-requested name is a hard ``Err`` with exit 1.
+requested name is a hard ``Err`` with exit 1. The same selection contract is exercised
+over the ODBC backend (table-only, query-only, combined, unknown-name, and a
+filtered-out linked source). The explicit empty-list selection, which the repeatable
+CLI flags cannot express, is exercised through the public application inspect interface
+and the public MCP tool over a real ODBC port, with a transport-parity assertion against
+the CLI ODBC run.
 
 Run explicitly on Windows with ACE DAO and pywin32::
 
@@ -909,6 +914,86 @@ def test_save_gating_contract_on_report_copies(
 
 
 # ---------------------------------------------------------------------------
+# 4b. bounded resource ingress at the real default caps (T4a)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_rejects_oversized_evidence_and_report_files_at_the_default_caps(
+    e2e_build: dict[str, Any], work_dir: Path, core_reports: dict[str, Any]
+) -> None:
+    """Default 32 MiB/16 MiB caps reject an oversized raw file before parse, with no output.
+
+    The oversized files start with non-JSON bytes, so observing the raw-ingress size
+    error (not a JSON error) proves the bounded read rejected the file before any parse.
+    The same session then saves a normal report (PRESERVE) with exact bytes.
+    """
+    from ms_access_mcp.application.documentation_limits import (
+        raw_evidence_file_limit,
+        raw_report_file_limit,
+    )
+
+    directory = e2e_build["directory"]
+    granted_env = _cli_env(directory, allow_doc_write=True)
+
+    oversized_evidence = work_dir / "oversized-evidence.json"
+    with oversized_evidence.open("wb") as handle:
+        handle.write(b"not-json")
+        handle.truncate(raw_evidence_file_limit() + 1)
+    rendered = _run_cli(
+        ["documentation", "render", "--evidence", str(oversized_evidence), "--json"],
+        granted_env,
+    )
+    assert rendered.returncode == 1
+    payload = json.loads(rendered.stdout)
+    assert payload["success"] is False
+    assert str(raw_evidence_file_limit()) in payload["error"]
+    assert "not-json" not in payload["error"]
+
+    oversized_report = work_dir / "oversized-report.json"
+    with oversized_report.open("wb") as handle:
+        handle.write(b"not-json")
+        handle.truncate(raw_report_file_limit() + 1)
+    destination = work_dir / "never-written.md"
+    saved = _run_cli(
+        [
+            "documentation",
+            "save",
+            "--report",
+            str(oversized_report),
+            "--output-path",
+            str(destination),
+            "--allow-doc-write",
+            "--yes",
+            "--json",
+        ],
+        granted_env,
+    )
+    assert saved.returncode == 1
+    assert json.loads(saved.stdout)["success"] is False
+    assert not destination.exists()
+    assert list(work_dir.glob("*.tmp")) == []
+
+    # PRESERVE: a normal-size report still saves exactly its Markdown bytes.
+    normal = core_reports["database"]
+    saved_ok = _run_cli(
+        [
+            "documentation",
+            "save",
+            "--report",
+            str(normal["path"]),
+            "--output-path",
+            str(destination),
+            "--allow-doc-write",
+            "--yes",
+            "--json",
+        ],
+        granted_env,
+    )
+    assert saved_ok.returncode == 0, saved_ok.stderr
+    assert destination.read_bytes() == normal["report"]["markdown"].encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
 # 5. linked isolation via access-observation
 # ---------------------------------------------------------------------------
 
@@ -932,21 +1017,23 @@ def test_inspect_linked_succeeds_while_sentinel_is_exclusively_locked(
     assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
 
 
-def test_inspect_linked_via_odbc_reports_unreachable_source_as_failed_table(
+def test_inspect_linked_via_odbc_does_not_contact_the_linked_source(
     e2e_build: dict[str, Any], dao_engine: Any
 ) -> None:
-    """B1: an unreachable linked source is a failed table, never an observed-empty schema.
+    """T1: ODBC classifies the SYNONYM first and never reads its columns/indexes.
 
-    The Access ODBC driver returns zero SQLColumns rows (no exception) for a linked table
-    whose source is unreachable, which bypassed the port's exception -> failed path and
-    fabricated an empty field/index fact. Holding the session's ``sentinel.accdb`` open
-    exclusively via DAO reproduces that state for the session's ``linked.accdb`` (whose
-    ``Connect`` points at that sentinel by absolute path; no relinking). Inspection still
-    exits 0 with a success envelope, but ``LinkedCustomers`` must appear in
-    ``coverage.tables.failed`` with the zero-columns reason instead of a fabricated empty
-    field/index list. The sentinel sha256 is compared before and after to show any catalog
-    contact was read-only, and the lock is released in a ``finally``. This uses only the
-    session's self-built fixture tree.
+    Contract change (observed rationale): the previous port read SQLColumns/SQLStatistics
+    for every listed table, so a linked table contacted its source and, when the source
+    was unreachable (sentinel held exclusively), the driver returned zero columns and
+    the table was recorded as ``failed``. The port now classifies by SQLTables type
+    before any column/index call: ``LinkedCustomers`` is a SYNONYM and is never passed to
+    SQLColumns or SQLStatistics, so no contact happens and the table is recorded as an
+    explicit coverage ``unsupported`` gap with empty fields/indexes and an ``unavailable``
+    primary key -- never as a failed read and never as an observed-empty schema. Holding
+    the sentinel exclusively makes any attempted contact fail loudly, so a successful
+    run is positive non-contact evidence. The sentinel sha256 is compared before and
+    after, and the lock is released in a ``finally``. Only the session's self-built
+    fixture tree is used.
     """
     directory = e2e_build["directory"]
     sentinel = directory / "sentinel.accdb"
@@ -977,23 +1064,22 @@ def test_inspect_linked_via_odbc_reports_unreachable_source_as_failed_table(
     payload = evidence["data"]
     assert evidence["source"]["backend_identity"] == "ODBC"
 
-    # The unreachable linked source is a failed read, not an observed-empty schema.
-    failed = evidence["coverage"]["tables"]["failed"]
-    assert "LinkedCustomers" in failed
-    assert "no columns" in failed["LinkedCustomers"]
+    # The linked SYNONYM is an explicit support gap, not a failure or an observed empty.
+    assert "LinkedCustomers" not in evidence["coverage"]["tables"]["failed"]
+    assert "LinkedCustomers" in evidence["coverage"]["tables"]["unsupported"]
     linked = next(table for table in payload["tables"] if table["name"] == "LinkedCustomers")
+    assert linked["kind"] == "linked"
     assert linked["fields"] == []
     assert linked["indexes"] == []
-    assert linked["primary_key"]["state"] == "failed"
-    assert linked["primary_key"]["reason"] == failed["LinkedCustomers"]
+    assert linked["primary_key"]["state"] == "unavailable"
 
-    # A local table in the same database still reads its real columns normally.
+    # A local table in the same database still reads its real columns normally (PRESERVE).
     local = next(table for table in payload["tables"] if table["name"] == "LocalNotes")
     assert local["fields"], "LocalNotes must expose its real columns"
-    assert "LocalNotes" not in failed
+    assert "LocalNotes" not in evidence["coverage"]["tables"]["failed"]
     assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
 
-    # Any catalog contact with the sentinel was read-only.
+    # No contact: the locked sentinel is untouched and no bytes changed.
     assert sentinel_after == sentinel_before
     assert sentinel_after == e2e_build["inventory"]["sentinel.accdb"]["sha256"]
 
@@ -1089,6 +1175,88 @@ def test_inspect_open_is_engine_read_only_and_refuses_write(
 
     # (iii) the source file is byte-identical.
     assert _sha256(core) == before
+
+
+def test_odbc_inspection_open_is_engine_read_only_and_refuses_write(
+    e2e_build: dict[str, Any], work_dir: Path
+) -> None:
+    """T2: the ODBC inspection open is engine-level read-only on the installed driver.
+
+    Qualified driver scope: Microsoft Access Driver (*.mdb, *.accdb) (ACEODBC
+    ``16.0.20326.20022``, x64). Opened through the production seam
+    (``documentation_inspect.open_odbc_inspection_port`` / ``OdbcAdapter``), the port
+    reads complete ODBC metadata from a disposable copy, and the production read-only
+    opening method refuses one narrow ``UPDATE`` at the engine level (driver error
+    ``-3035`` "Operation must use an updateable query."), leaving the copy
+    byte-identical with no lock residue. The adapter's own CRUD connection is untouched
+    and still usable afterwards, and a separate writable control copy proves the
+    ordinary adapter CRUD path still writes. The probe UPDATE is a test control only:
+    production never issues an UPDATE as a capability check.
+    """
+    import pyodbc
+
+    from ms_access_mcp.application.documentation_inspect import (
+        DocumentationInspectService,
+        open_odbc_inspection_port,
+    )
+    from ms_access_mcp.backends.odbc import OdbcAdapter
+
+    directory = e2e_build["directory"]
+    source = directory / "core.accdb"
+    readonly_copy = work_dir / "odbc-readonly.accdb"
+    control_copy = work_dir / "odbc-writable-control.accdb"
+    shutil.copy2(source, readonly_copy)
+    shutil.copy2(source, control_copy)
+    readonly_before = _sha256(readonly_copy)
+
+    adapter = OdbcAdapter(str(readonly_copy))
+    adapter.connect(str(readonly_copy))
+    crud_connection = adapter._conn
+    try:
+        # (i) the production inspection open reads complete ODBC metadata.
+        port = open_odbc_inspection_port(adapter)
+        document = DocumentationInspectService().inspect(port, tables=None, queries=None)
+        assert document.source.backend_identity == "ODBC"
+        assert {table.name for table in document.tables} == set(
+            e2e_build["expected"]["databases"]["core.accdb"]["tables"]
+        )
+        assert document.coverage.tables.failed == {}
+
+        # (ii) the production read-only opening method refuses a narrow UPDATE at the
+        # engine level, not merely by policy.
+        readonly = adapter.open_readonly_inspection_connection()
+        try:
+            with pytest.raises(pyodbc.Error) as excinfo:
+                readonly.cursor().execute("UPDATE Orders SET Status = 'Tampered'")
+            refusal = str(excinfo.value)
+            assert "-3035" in refusal, refusal
+            assert "updateable query" in refusal.casefold(), refusal
+        finally:
+            readonly.close()
+
+        # (iii) the adapter's own CRUD connection is untouched and still functional.
+        assert adapter._conn is crud_connection
+        assert adapter.connected is True
+        assert {table.name for table in adapter.get_tables()} == set(
+            e2e_build["expected"]["databases"]["core.accdb"]["tables"]
+        )
+    finally:
+        adapter.disconnect()
+
+    # The refused write changed nothing and left no Access lock file behind.
+    assert _sha256(readonly_copy) == readonly_before
+    assert sorted(path.name for path in work_dir.glob("odbc-readonly*.laccdb")) == []
+
+    # (iv) writable control on a separate copy through the ordinary adapter CRUD path.
+    control = OdbcAdapter(str(control_copy))
+    control.connect(str(control_copy))
+    try:
+        written = control.update_data("Orders", {"Status": "Tampered"}, {"OrderID": 1})
+    finally:
+        control.disconnect()
+    assert written.success is True and written.affected == 1
+    assert _sha256(control_copy) != readonly_before
+    assert sorted(path.name for path in work_dir.glob("odbc-writable-control*.laccdb")) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1304,6 +1472,423 @@ def test_inspect_unknown_requested_name_is_a_hard_error(e2e_build: dict[str, Any
         assert "data" not in envelope
     assert after == before == e2e_build["inventory"]["core.accdb"]["sha256"]
     assert sorted(path.name for path in directory.iterdir() if path.name.startswith("core.accdb.")) == []
+
+
+# ---------------------------------------------------------------------------
+# 7b. filtered inspection over ODBC (T3): same selection contract, ODBC gaps
+# ---------------------------------------------------------------------------
+
+# ODBC exposes only row-returning saved queries as SQLTables ``VIEW`` rows. These are the
+# fixture's complete ODBC-visible query catalogue; the action queries are not VIEW rows
+# and are never visible to ODBC, so no test may claim their names are query evidence.
+_ODBC_VISIBLE_QUERIES = ["qryOpenOrders", "qryOrdersByCustomer", "qryOrderSummary"]
+_ODBC_ACTION_QUERIES = ["qryUpdateOrderStatus", "qryDeleteDraftOrders"]
+_ODBC_PK_GAP = "SQLPrimaryKeys"
+_ODBC_RELATIONSHIP_GAP = "SQLForeignKeys"
+
+
+def _lock_files(directory: Path, stem: str) -> list[str]:
+    """Return the names of any Access lock files left beside a fixture database."""
+    return sorted(path.name for path in directory.iterdir() if path.name.startswith(f"{stem}."))
+
+
+def _render_database_report(completed_stdout: str, evidence_path: Path, directory: Path) -> dict[str, Any]:
+    """Persist an evidence envelope and render it offline to a database report."""
+    evidence_path.write_text(completed_stdout, encoding="utf-8")
+    rendered = _run_cli(
+        ["documentation", "render", "--evidence", str(evidence_path), "--kind", "database", "--json"],
+        _cli_env(directory),
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    assert "Traceback" not in rendered.stderr
+    return json.loads(rendered.stdout)["data"]
+
+
+def test_inspect_filtered_tables_via_odbc_returns_exactly_the_requested_subset(
+    e2e_build: dict[str, Any], work_dir: Path
+) -> None:
+    """T3: ``--tables`` scopes ODBC evidence, coverage, and rendering in request order.
+
+    ODBC exposes the same eight user tables as DAO, so an explicit subset selects exactly
+    the requested tables in the order given (a deliberately non-alphabetical order
+    including the space-containing ``Sales Notes``). The query axis is untouched: every
+    ODBC-visible row-returning query (a ``VIEW`` row) is still reported. A filtered-out
+    table leaves no trace in any ``coverage.tables`` bucket. ODBC must not fabricate the
+    capabilities it lacks: relationships stay an explicit coverage ``unsupported`` gap,
+    each selected table's primary key is ``unavailable`` with the SQLPrimaryKeys reason,
+    and each query's SQL/type remain ``unavailable`` while its declared parameters stay
+    ``observed``. The source copy is byte-identical with no lock residue, and the filtered
+    evidence renders one coherent database report for the subset.
+    """
+    directory = e2e_build["directory"]
+    core = directory / "core.accdb"
+    before = _sha256(core)
+    requested = ["Orders", "Sales Notes", "Customers"]
+    completed = _run_cli(
+        [
+            "documentation", "inspect", "--db", str(core), "--backend", "odbc",
+            "--tables", "Orders", "--tables", "Sales Notes", "--tables", "Customers", "--json",
+        ],
+        _cli_env(directory),
+    )
+    after = _sha256(core)
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+    envelope = json.loads(completed.stdout)
+    assert envelope["success"] is True
+    evidence = envelope["data"]
+    payload = evidence["data"]
+    expected = e2e_build["expected"]["databases"]["core.accdb"]
+
+    assert evidence["source"]["backend_identity"] == "ODBC"
+    # Exactly the requested tables in request order; the query axis is unchanged.
+    assert [table["name"] for table in payload["tables"]] == requested
+    assert evidence["run"]["scope"] == {"tables": requested, "queries": _ODBC_VISIBLE_QUERIES}
+    assert evidence["coverage"]["tables"]["inspected"] == requested
+    assert evidence["coverage"]["tables"]["failed"] == {}
+    assert evidence["coverage"]["tables"]["excluded"] == {}
+    assert sorted(evidence["coverage"]["tables"]["unsupported"]) == sorted(requested)
+    omitted = sorted(set(expected["tables"]) - set(requested))
+    for name in omitted:
+        assert name not in {table["name"] for table in payload["tables"]}, name
+        for bucket in ("inspected", "excluded", "unsupported", "failed"):
+            assert name not in evidence["coverage"]["tables"][bucket], (name, bucket)
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+    # Honest ODBC gaps: unavailable PK per selected table, no fabricated relationships,
+    # and query SQL/type unavailable while declared parameters stay observed.
+    for table in payload["tables"]:
+        assert table["primary_key"]["state"] == "unavailable"
+        assert _ODBC_PK_GAP in table["primary_key"]["reason"]
+        assert _ODBC_PK_GAP in evidence["coverage"]["tables"]["unsupported"][table["name"]]
+        for field in table["fields"]:
+            assert field["type"]["state"] == "observed" and field["size"]["state"] == "observed"
+            for prop in ("required", "allow_zero_length", "default_value"):
+                assert field[prop]["state"] == "unavailable", (table["name"], field["name"], prop)
+                assert field[prop]["reason"].strip()
+    assert payload["relationships"] == []
+    assert _ODBC_RELATIONSHIP_GAP in evidence["coverage"]["relationships"]["unsupported"]["relationships"]
+    assert evidence["coverage"]["relationships"]["failed"] == {}
+    queries = _queries_by_name({"envelope": envelope})
+    assert list(queries) == _ODBC_VISIBLE_QUERIES
+    for name in _ODBC_ACTION_QUERIES:
+        assert name not in queries
+    for query in queries.values():
+        assert query["sql"]["state"] == "unavailable" and query["sql"]["reason"].strip()
+        assert query["type"]["state"] == "unavailable" and query["type"]["reason"].strip()
+    assert queries["qryOrdersByCustomer"]["parameters"]["state"] == "observed"
+    assert [(item["name"], item["type"], item["type_name"]) for item in queries["qryOrdersByCustomer"]["parameters"]["value"]] == [
+        ("[pCustomerID]", 4, "INTEGER")
+    ]
+    assert evidence["coverage"]["queries"]["inspected"] == _ODBC_VISIBLE_QUERIES
+    assert evidence["coverage"]["queries"]["failed"] == {}
+
+    # No observed mutation and no lock residue from the filtered ODBC open.
+    assert after == before == e2e_build["inventory"]["core.accdb"]["sha256"]
+    assert _lock_files(directory, "core.accdb") == []
+
+    # The filtered ODBC evidence renders one coherent database report for the subset.
+    report = _render_database_report(completed.stdout, work_dir / "inspect-core-filtered-tables-odbc.json", directory)
+    markdown = report["markdown"]
+    assert report["schema"] == "access.documentation.report/1"
+    assert report["status"] == "partial"
+    assert report["sha256"] == hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    assert "- Backend: ODBC" in markdown
+    assert "- Tables: Orders, Sales Notes, Customers" in markdown
+    for name in requested:
+        assert f"### {name}" in markdown, name
+    for name in omitted:
+        assert f"### {name}" not in markdown, name
+    assert "relCustomersProfiles" not in markdown
+    assert "| t1 | Orders |" in markdown
+    assert "| t2 | Sales Notes |" in markdown
+    assert "| t3 | Customers |" in markdown
+    block = _mermaid_block(markdown)
+    assert [line for line in block.splitlines() if _EDGE_RE.match(line)] == []
+
+
+def test_inspect_filtered_queries_via_odbc_returns_exactly_the_requested_view(
+    e2e_build: dict[str, Any], work_dir: Path
+) -> None:
+    """T3: ``--queries`` selects exactly the requested ODBC ``VIEW`` row and nothing else.
+
+    Only the three row-returning queries are ODBC-visible. Selecting one leaves the table
+    axis at all eight user tables and the relationship catalogue at its explicit ODBC
+    unsupported gap (never an observed-empty catalogue). The unselected ODBC-visible
+    queries are absent from evidence and every ``coverage.queries`` bucket, and the action
+    query names are never visible to ODBC at all.
+    """
+    directory = e2e_build["directory"]
+    core = directory / "core.accdb"
+    before = _sha256(core)
+    completed = _run_cli(
+        [
+            "documentation", "inspect", "--db", str(core), "--backend", "odbc",
+            "--queries", "qryOrderSummary", "--json",
+        ],
+        _cli_env(directory),
+    )
+    after = _sha256(core)
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+    envelope = json.loads(completed.stdout)
+    assert envelope["success"] is True
+    evidence = envelope["data"]
+    payload = evidence["data"]
+    expected = e2e_build["expected"]["databases"]["core.accdb"]
+
+    assert [query["name"] for query in payload["queries"]] == ["qryOrderSummary"]
+    assert evidence["coverage"]["queries"]["inspected"] == ["qryOrderSummary"]
+    assert evidence["coverage"]["queries"]["failed"] == {}
+    assert evidence["coverage"]["queries"]["excluded"] == {}
+    for name in ["qryOpenOrders", "qryOrdersByCustomer", *_ODBC_ACTION_QUERIES]:
+        assert name not in {query["name"] for query in payload["queries"]}, name
+        for bucket in ("inspected", "excluded", "unsupported", "failed"):
+            assert name not in evidence["coverage"]["queries"][bucket], (name, bucket)
+
+    # A query filter does not narrow the table scope or the relationship catalogue.
+    assert {table["name"] for table in payload["tables"]} == set(expected["tables"])
+    assert {table["name"] for table in payload["tables"]} == set(evidence["coverage"]["tables"]["inspected"])
+    assert evidence["run"]["scope"] == {
+        "tables": [table["name"] for table in payload["tables"]],
+        "queries": ["qryOrderSummary"],
+    }
+    assert payload["relationships"] == []
+    assert _ODBC_RELATIONSHIP_GAP in evidence["coverage"]["relationships"]["unsupported"]["relationships"]
+
+    # The requested query keeps its honest ODBC gaps and known-empty parameters.
+    query = payload["queries"][0]
+    assert query["sql"]["state"] == "unavailable" and query["sql"]["reason"].strip()
+    assert query["type"]["state"] == "unavailable" and query["type"]["reason"].strip()
+    assert query["parameters"]["state"] == "observed" and query["parameters"]["value"] == []
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+    assert after == before == e2e_build["inventory"]["core.accdb"]["sha256"]
+    assert _lock_files(directory, "core.accdb") == []
+
+    report = _render_database_report(completed.stdout, work_dir / "inspect-core-filtered-queries-odbc.json", directory)
+    markdown = report["markdown"]
+    assert report["status"] == "partial"
+    assert "- Backend: ODBC" in markdown
+    assert "qryOrderSummary" in markdown
+    for name in ["qryOpenOrders", "qryOrdersByCustomer", *_ODBC_ACTION_QUERIES]:
+        assert f"### {name}" not in markdown, name
+
+
+def test_inspect_combined_table_and_query_filters_via_odbc_scope_both_axes(
+    e2e_build: dict[str, Any], work_dir: Path
+) -> None:
+    """T3: one ODBC invocation can filter tables and queries at the same time.
+
+    ``--tables Orders --tables OrderLines --queries qryOrdersByCustomer`` scopes both
+    axes independently: exactly those two requested tables (in order), exactly that one
+    ODBC-visible query, their own coverage ``inspected`` lists, and empty (unsupported)
+    ODBC relationships. The filtered evidence renders one coherent database report for
+    the intersection.
+    """
+    directory = e2e_build["directory"]
+    core = directory / "core.accdb"
+    before = _sha256(core)
+    completed = _run_cli(
+        [
+            "documentation", "inspect", "--db", str(core), "--backend", "odbc",
+            "--tables", "Orders", "--tables", "OrderLines", "--queries", "qryOrdersByCustomer", "--json",
+        ],
+        _cli_env(directory),
+    )
+    after = _sha256(core)
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+    envelope = json.loads(completed.stdout)
+    assert envelope["success"] is True
+    evidence = envelope["data"]
+    payload = evidence["data"]
+
+    assert [table["name"] for table in payload["tables"]] == ["Orders", "OrderLines"]
+    assert [query["name"] for query in payload["queries"]] == ["qryOrdersByCustomer"]
+    assert evidence["run"]["scope"] == {"tables": ["Orders", "OrderLines"], "queries": ["qryOrdersByCustomer"]}
+    assert evidence["coverage"]["tables"]["inspected"] == ["Orders", "OrderLines"]
+    assert evidence["coverage"]["queries"]["inspected"] == ["qryOrdersByCustomer"]
+    for table in payload["tables"]:
+        assert table["primary_key"]["state"] == "unavailable" and _ODBC_PK_GAP in table["primary_key"]["reason"]
+    assert payload["relationships"] == []
+    assert _ODBC_RELATIONSHIP_GAP in evidence["coverage"]["relationships"]["unsupported"]["relationships"]
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+    assert after == before == e2e_build["inventory"]["core.accdb"]["sha256"]
+    assert _lock_files(directory, "core.accdb") == []
+
+    report = _render_database_report(completed.stdout, work_dir / "inspect-core-combined-odbc.json", directory)
+    markdown = report["markdown"]
+    assert "- Tables: Orders, OrderLines" in markdown
+    assert "### Orders" in markdown and "### OrderLines" in markdown
+    assert "### Customers" not in markdown
+    assert "qryOrdersByCustomer" in markdown and "qryOpenOrders" not in markdown
+
+
+def test_inspect_unknown_requested_name_via_odbc_is_a_hard_error(e2e_build: dict[str, Any]) -> None:
+    """T3: an unknown requested name over ODBC is the same hard ``Err`` as DAO.
+
+    ODBC exposes the same eligible object names as the DAO port here, so an unknown
+    table or query must fail with the identical named error envelope, CLI exit 1, and no
+    evidence payload, while leaving the source bytes untouched with no lock residue.
+    """
+    directory = e2e_build["directory"]
+    core = directory / "core.accdb"
+    before = _sha256(core)
+    table_run = _run_cli(
+        ["documentation", "inspect", "--db", str(core), "--backend", "odbc", "--tables", "NoSuchTable", "--json"],
+        _cli_env(directory),
+    )
+    query_run = _run_cli(
+        ["documentation", "inspect", "--db", str(core), "--backend", "odbc", "--queries", "NoSuchQuery", "--json"],
+        _cli_env(directory),
+    )
+    after = _sha256(core)
+    for completed, expected_error in (
+        (table_run, "Unknown requested table name(s): NoSuchTable"),
+        (query_run, "Unknown requested query name(s): NoSuchQuery"),
+    ):
+        assert completed.returncode == 1
+        assert "Traceback" not in completed.stderr
+        envelope = json.loads(completed.stdout)
+        assert envelope["success"] is False
+        assert envelope["error"] == expected_error
+        assert "data" not in envelope
+    assert after == before == e2e_build["inventory"]["core.accdb"]["sha256"]
+    assert _lock_files(directory, "core.accdb") == []
+
+
+def test_inspect_filtered_out_linked_source_is_not_contacted_via_odbc(
+    e2e_build: dict[str, Any], dao_engine: Any
+) -> None:
+    """T3: selecting only ``LocalNotes`` never contacts the filtered-out linked source.
+
+    ``linked.accdb`` carries one local table (``LocalNotes``) and one linked table
+    (``LinkedCustomers`` -> ``sentinel.accdb``). With ``--tables LocalNotes --backend odbc``
+    the linked synonym is filtered out before any column/index read, so it never reaches
+    evidence; the sentinel is held exclusively throughout, so any attempted contact would
+    fail loudly. A successful inspection is positive non-contact evidence: the sentinel
+    bytes are unchanged, no lock residue remains, and the filtered-out linked name leaves
+    no trace in the serialized envelope (no classification result, no read probe).
+    """
+    directory = e2e_build["directory"]
+    sentinel = directory / "sentinel.accdb"
+    sentinel_before = _sha256(sentinel)
+    handle = dao_engine.OpenDatabase(str(sentinel), True, False)
+    try:
+        completed = _run_cli(
+            [
+                "documentation", "inspect", "--db", str(directory / "linked.accdb"),
+                "--backend", "odbc", "--tables", "LocalNotes", "--json",
+            ],
+            _cli_env(directory),
+        )
+    finally:
+        handle.Close()
+    sentinel_after = _sha256(sentinel)
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert "LinkedCustomers" not in completed.stdout
+    envelope = json.loads(completed.stdout)
+    assert envelope["success"] is True
+    evidence = envelope["data"]
+    payload = evidence["data"]
+    assert evidence["source"]["backend_identity"] == "ODBC"
+    assert [table["name"] for table in payload["tables"]] == ["LocalNotes"]
+    assert evidence["run"]["scope"] == {"tables": ["LocalNotes"], "queries": []}
+    assert evidence["coverage"]["tables"]["inspected"] == ["LocalNotes"]
+    assert evidence["coverage"]["tables"]["failed"] == {}
+    for bucket in ("inspected", "excluded", "unsupported", "failed"):
+        assert "LinkedCustomers" not in evidence["coverage"]["tables"][bucket], bucket
+    local = payload["tables"][0]
+    assert local["kind"] == "local"
+    assert local["fields"], "LocalNotes must expose its real columns"
+    assert local["primary_key"]["state"] == "unavailable" and _ODBC_PK_GAP in local["primary_key"]["reason"]
+    assert payload["relationships"] == []
+    assert {fact["state"] for fact in _iter_facts(payload)} <= LEGAL_FACT_STATES
+
+    # No contact: the locked sentinel is untouched and no lock file remains.
+    assert sentinel_after == sentinel_before == e2e_build["inventory"]["sentinel.accdb"]["sha256"]
+    assert _lock_files(directory, "linked.accdb") == []
+    assert _lock_files(directory, "sentinel.accdb") == []
+
+
+def test_inspect_empty_selection_via_odbc_is_select_none_and_transport_parity(
+    e2e_build: dict[str, Any], core_odbc_evidence: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T3: an explicit empty list selects no object, distinct from ``None`` selecting all.
+
+    The repeatable CLI flags cannot express an empty list (omitting ``--tables`` means
+    "every eligible table"), so the documented empty-selection contract is exercised
+    through the public application inspect interface over a real ODBC port. ``None`` on
+    the same port selects every eligible object. Transport parity then asserts the public
+    MCP tool over the same real ODBC backend and the public CLI ODBC run produce the same
+    selection, evidence body, coverage, and source; the empty and full selections differ.
+    """
+    from ms_access_mcp.application.database import DatabaseUseCases
+    from ms_access_mcp.application.documentation_inspect import (
+        DocumentationInspectService,
+        open_odbc_inspection_port,
+    )
+    from ms_access_mcp.backends.odbc import OdbcAdapter
+    from ms_access_mcp.mcp_tools import analysis
+
+    directory = e2e_build["directory"]
+    core = directory / "core.accdb"
+    before = _sha256(core)
+
+    # (a) public application inspect interface over a real ODBC port: [] selects none.
+    adapter = OdbcAdapter(str(core))
+    adapter.connect(str(core))
+    try:
+        empty = DocumentationInspectService().inspect(open_odbc_inspection_port(adapter), tables=[], queries=[])
+        every = DocumentationInspectService().inspect(open_odbc_inspection_port(adapter), tables=None, queries=None)
+    finally:
+        adapter.disconnect()
+    empty_dict = empty.to_dict()
+    every_dict = every.to_dict()
+
+    assert empty_dict["run"]["scope"] == {"tables": [], "queries": []}
+    assert empty_dict["data"]["tables"] == []
+    assert empty_dict["data"]["queries"] == []
+    assert empty_dict["data"]["relationships"] == []
+    assert empty_dict["coverage"]["tables"] == {"inspected": [], "excluded": {}, "unsupported": {}, "failed": {}}
+    assert empty_dict["coverage"]["queries"] == {"inspected": [], "excluded": {}, "unsupported": {}, "failed": {}}
+    assert empty_dict["coverage"]["relationships"]["inspected"] == []
+    assert _ODBC_RELATIONSHIP_GAP in empty_dict["coverage"]["relationships"]["unsupported"]["relationships"]
+    assert empty_dict["source"]["backend_identity"] == "ODBC"
+    # The relationship gap keeps even an empty document honestly partial, not complete.
+    assert empty_dict["data"]["status"] == "partial"
+
+    # (b) ``None`` selects every eligible object on the same real ODBC port.
+    expected = e2e_build["expected"]["databases"]["core.accdb"]
+    assert set(every_dict["run"]["scope"]["tables"]) == set(expected["tables"])
+    assert every_dict["run"]["scope"]["queries"] == _ODBC_VISIBLE_QUERIES
+
+    # (c) transport parity: the public MCP tool and the public CLI over the same real
+    # ODBC backend select the same objects with the same body, coverage, and source.
+    session = DatabaseUseCases(backend="odbc", readonly=True, allowed_dirs=[directory])
+    monkeypatch.setattr(analysis, "_new_db", lambda readonly=True: session)
+    try:
+        result = analysis.documentation_inspect(str(core), tables=None, queries=None)
+    finally:
+        session.close_database()
+    assert result.isError is False
+    mcp_payload = json.loads(result.content[0].text)
+    assert mcp_payload["success"] is True
+    mcp_evidence = mcp_payload["data"]
+    cli_evidence = core_odbc_evidence["envelope"]["data"]
+    assert mcp_evidence["run"]["scope"] == cli_evidence["run"]["scope"] == every_dict["run"]["scope"]
+    assert mcp_evidence["coverage"] == cli_evidence["coverage"] == every_dict["coverage"]
+    assert mcp_evidence["data"] == cli_evidence["data"] == every_dict["data"]
+    assert mcp_evidence["source"] == cli_evidence["source"] == every_dict["source"]
+
+    # (d) the empty and full explicit selections differ; the source is untouched.
+    assert empty_dict["run"]["scope"] != every_dict["run"]["scope"]
+    assert _sha256(core) == before == e2e_build["inventory"]["core.accdb"]["sha256"]
+    assert _lock_files(directory, "core.accdb") == []
 
 
 # ---------------------------------------------------------------------------

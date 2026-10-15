@@ -55,8 +55,17 @@ def _access_type_name(type_code: int) -> str:
     return _ACCESS_TYPE_MAP.get(type_code, f"Unknown({type_code})")
 
 
-# DAO TableDef.Attributes bit set on an attached (linked) table.
+# DAO TableDef.Attributes bits set on an attached (linked) table: a linked ACE/Jet
+# table (dbAttachedTable) and a linked ODBC source (dbAttachedODBC). Either bit means
+# the table's fields/indexes belong to another source and reading them may contact it.
 _DAO_ATTACHED_TABLE = 0x40000000
+_DAO_ATTACHED_ODBC_TABLE = 0x20000000
+_DAO_ATTACHED_MASK = _DAO_ATTACHED_TABLE | _DAO_ATTACHED_ODBC_TABLE
+
+
+def _is_attached_table(attributes: int) -> bool:
+    """Return True when DAO attributes mark the table as a linked (attached) table."""
+    return bool(attributes & _DAO_ATTACHED_MASK)
 
 
 def _com_string(value: Any) -> str:
@@ -118,6 +127,48 @@ class SchemaInspector:
                 if name.startswith("MSys") or name.startswith("~"):
                     continue
                 if tdef.Attributes & 0x80000000:
+                    continue
+                fields = []
+                for fld in tdef.Fields:
+                    fields.append(
+                        FieldInfo(
+                            name=fld.Name,
+                            type=_access_type_name(fld.Type),
+                            size=fld.Size,
+                            required=bool(fld.Required),
+                            allow_zero_length=bool(fld.AllowZeroLength),
+                            default_value=_com_string(fld.DefaultValue),
+                        )
+                    )
+                tables.append(TableInfo(name=name, fields=fields))
+            return tables
+
+        return self._dispatcher.call(_do)
+
+    def get_passive_tables(self) -> list[TableInfo]:
+        """Return user tables without reading linked tables' fields.
+
+        The documentation-inspection path must never contact a linked source, so a
+        linked table (dbAttachedTable or dbAttachedODBC) is listed with an empty field
+        list instead of iterating ``TableDef.Fields``. Local tables keep their full
+        field inventory. The generic ``get_tables`` is deliberately unchanged and still
+        reads every table for its other callers.
+        """
+        if not self._dispatcher.is_connected():
+            return []
+
+        def _do() -> list[TableInfo]:
+            db = self._dispatcher.current_db
+            tables: list[TableInfo] = []
+            for tdef in db.TableDefs:
+                name = tdef.Name
+                # Skip system and hidden tables
+                if name.startswith("MSys") or name.startswith("~"):
+                    continue
+                if tdef.Attributes & 0x80000000:
+                    continue
+                if _is_attached_table(tdef.Attributes):
+                    tables.append(TableInfo(name=name, fields=[]))
                     continue
                 fields = []
                 for fld in tdef.Fields:
@@ -225,7 +276,8 @@ class SchemaInspector:
 
         Reads only the local catalogue (``Attributes``, ``Connect``,
         ``SourceTableName``); the linked source is never resolved, opened, refreshed,
-        or contacted.
+        or contacted. Both attached-table bits are recognized: ``dbAttachedTable``
+        (``0x40000000``) and ``dbAttachedODBC`` (``0x20000000``).
         """
         if not self._dispatcher.is_connected():
             return None
@@ -236,7 +288,7 @@ class SchemaInspector:
                 tdef = db.TableDefs[table_name]
             except Exception:
                 return None
-            if not (tdef.Attributes & _DAO_ATTACHED_TABLE):
+            if not _is_attached_table(tdef.Attributes):
                 return None
             return {
                 "connect": _com_string(getattr(tdef, "Connect", "")),

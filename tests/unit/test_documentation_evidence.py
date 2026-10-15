@@ -14,6 +14,8 @@ from ms_access_mcp.application.documentation import (
     RunMetadata,
     SourceEvidence,
     TableEvidence,
+    redact_connection_secrets,
+    sanitize_connection_string,
 )
 
 
@@ -160,3 +162,50 @@ def test_status_is_complete_without_gaps_and_partial_with_non_excluded_gap() -> 
     assert evidence.status == "complete"
     evidence.coverage.queries.failed["Q"] = "enumeration failed"
     assert evidence.status == "partial"
+
+
+def test_sanitize_connection_string_drops_credential_pairs_and_preserves_the_rest() -> None:
+    """T1: credential pairs are removed; local catalogue metadata is preserved."""
+    assert sanitize_connection_string(None) is None
+    assert sanitize_connection_string("") == ""
+    assert (
+        sanitize_connection_string(";DATABASE=C:\\x\\s.accdb;UID=canary-user;PWD=canary-secret")
+        == ";DATABASE=C:\\x\\s.accdb"
+    )
+    assert sanitize_connection_string("ODBC;DSN=Foo;PWD=canary-secret") == "ODBC;DSN=Foo"
+
+
+def test_sanitize_connection_string_handles_braced_and_semicolon_values() -> None:
+    """T1: a braced value containing semicolons is removed whole, not partially."""
+    sanitized = sanitize_connection_string(";DATABASE=x.accdb;PWD={can;ary};UID={a}}b}")
+    assert sanitized == ";DATABASE=x.accdb"
+    assert "can" not in sanitized and "ary" not in sanitized
+
+
+def test_sanitize_connection_string_fails_safe_on_unbalanced_braces() -> None:
+    """T1: an unparseable string becomes a redaction marker, never a partial secret."""
+    assert sanitize_connection_string(";PWD={unbalanced;canary-secret") == "[redacted connection string]"
+    assert sanitize_connection_string("canary};PWD=x") == "[redacted connection string]"
+
+
+def test_redact_connection_secrets_scrubs_credential_values_in_free_text() -> None:
+    """T1: error text keeps its context but loses every credential value."""
+    assert redact_connection_secrets("open failed for ;DATABASE=x;PWD=canary-secret") == (
+        "open failed for ;DATABASE=x;PWD=***"
+    )
+    assert "canary" not in redact_connection_secrets("PWD={can;ary} rest")
+    assert redact_connection_secrets("") == ""
+
+
+def test_redact_connection_secrets_removes_braced_values_with_escaped_braces() -> None:
+    """B1: ``}}`` escapes a brace inside a value; the whole value must be removed."""
+    redacted = redact_connection_secrets("open failed for ;DATABASE=x;PWD={can}}ary}")
+    assert redacted == "open failed for ;DATABASE=x;PWD=***"
+    assert "ary" not in redacted
+
+
+def test_redact_connection_secrets_handles_multiple_escaped_pairs_and_keeps_context() -> None:
+    """B1: several escaped pairs are removed and non-credential context is preserved."""
+    redacted = redact_connection_secrets("PWD={can}}ary};UID={u}}v} tail")
+    assert redacted == "PWD=***;UID=*** tail"
+    assert "ary" not in redacted and "u}}v" not in redacted

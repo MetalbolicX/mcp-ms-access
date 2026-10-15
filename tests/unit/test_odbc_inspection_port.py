@@ -14,15 +14,22 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 from ms_access_mcp import cli
+from ms_access_mcp.application import documentation_inspect
 from ms_access_mcp.application.database import Ok
 from ms_access_mcp.application.documentation_inspect import (
     DocumentationInspectService,
     InspectionCapabilities,
     InspectionCapabilityUnavailableError,
     OdbcInspectionPort,
+    inspect_open_database,
+    open_odbc_inspection_port,
 )
+from ms_access_mcp.backends.odbc import OdbcAdapter
 from ms_access_mcp.backends.schema_inspector import QueryParameterInfo
+from ms_access_mcp.errors import AccessMcpError
 from ms_access_mcp.mcp_tools import analysis
 from ms_access_mcp.models import IndexInfo
 
@@ -130,6 +137,7 @@ class _FakeConnection:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.cursors: list[_FakeCursor] = []
         self.closed = False
+        self.close_calls = 0
 
     def cursor(self) -> _FakeCursor:
         cursor = _FakeCursor(self)
@@ -138,6 +146,7 @@ class _FakeConnection:
 
     def close(self) -> None:
         self.closed = True
+        self.close_calls += 1
 
 
 def _odbc_connection() -> _FakeConnection:
@@ -167,20 +176,68 @@ def _odbc_connection() -> _FakeConnection:
     )
 
 
+class _UnfilteredTypeCursor(_FakeCursor):
+    """A cursor whose SQLTables ignores the requested tableType filter.
+
+    Real drivers may return a row type the inspection query did not request; the port
+    must classify it as unsafe and read nothing from it.
+    """
+
+    def tables(self, table: str | None = None, tableType: str | None = None) -> None:  # noqa: N803
+        self._connection.calls.append(("tables", {"table": table, "tableType": tableType}))
+        rows = list(self._connection.tables)
+        if table is not None:
+            rows = [row for row in rows if row.table_name == table]
+        self._rows = rows
+
+
+class _UnfilteredTypeConnection(_FakeConnection):
+    def cursor(self) -> _FakeCursor:
+        cursor = _UnfilteredTypeCursor(self)
+        self.cursors.append(cursor)
+        return cursor
+
+
 def _run_cli(argv: list[str]) -> int:
     with patch.object(sys, "argv", ["ms-access-mcp", *argv]):
         return cli.main()
 
 
 class _WiringAdapter:
+    """Fake ODBC adapter exposing only the production inspection seam.
+
+    ``connection`` is the adapter's own writable CRUD handle; the inspection path must
+    never read it. It is a recording property so a test can prove the wiring opens a
+    distinct read-only handle instead of reusing the CRUD connection.
+    """
+
     def __init__(self, connection: Any) -> None:
-        self.connection = connection
+        self._connection = connection
+        self.connection_reads = 0
+        self.readonly_open_calls = 0
+
+    @property
+    def connection(self) -> Any:
+        self.connection_reads += 1
+        return self._connection
+
+    def open_readonly_inspection_connection(self) -> Any:
+        self.readonly_open_calls += 1
+        return self._connection
+
+
+class _NoInspectionAdapter:
+    """Fake adapter with neither a DAO dispatcher nor an ODBC inspection seam."""
 
 
 class _WiringDatabase:
-    def __init__(self, connection: Any) -> None:
+    def __init__(self, connection: Any, *, backend: str = "odbc") -> None:
         self._adapter = _WiringAdapter(connection)
+        self._backend_name = backend
         self.closed = False
+
+    def inspection_context(self) -> tuple[str, list[Any]]:
+        return self._backend_name, []
 
     def open_database(self, _path: str) -> Ok:
         return Ok(data={"path": _path})
@@ -188,6 +245,26 @@ class _WiringDatabase:
     def close_database(self) -> Ok:
         self.closed = True
         return Ok()
+
+
+class _NoInspectionDatabase(_WiringDatabase):
+    """A database whose adapter exposes no DAO dispatcher and no ODBC inspection seam."""
+
+    def __init__(self) -> None:
+        super().__init__(None)
+        self._adapter = _NoInspectionAdapter()
+
+
+class _FailingOpenAdapter:
+    """Fake ODBC adapter whose read-only inspection open always fails."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+        self.readonly_open_calls = 0
+
+    def open_readonly_inspection_connection(self) -> Any:
+        self.readonly_open_calls += 1
+        raise self._error
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +289,43 @@ def test_list_tables_closes_every_cursor_it_opens() -> None:
     connection = _odbc_connection()
     OdbcInspectionPort(connection).list_tables()
     assert connection.cursors and all(cursor.closed for cursor in connection.cursors)
+
+
+def test_list_tables_does_not_read_columns_for_a_linked_synonym() -> None:
+    """T1: a SYNONYM is classified before any column read, so the source is not touched."""
+    connection = _odbc_connection()
+    tables = OdbcInspectionPort(connection).list_tables()
+    linked = next(table for table in tables if table.name == "LinkedCustomers")
+    assert linked.fields == []
+    assert ("columns", {"table": "LinkedCustomers"}) not in connection.calls
+    # PRESERVE: the local table still has its columns read.
+    customers = next(table for table in tables if table.name == "Customers")
+    assert [field.name for field in customers.fields] == ["CustomerID", "Name"]
+
+
+def test_linked_table_indexes_are_refused_without_a_statistics_read() -> None:
+    """T1: SQLStatistics would contact the linked source, so the port refuses instead."""
+    connection = _odbc_connection()
+    port = OdbcInspectionPort(connection)
+    port.list_tables()
+    with pytest.raises(InspectionCapabilityUnavailableError):
+        port.get_indexes("LinkedCustomers")
+    assert ("statistics", {"table": "LinkedCustomers"}) not in connection.calls
+
+
+def test_unclassified_table_type_is_not_read_and_fails_closed() -> None:
+    """T1: a table type the port cannot classify is never read (fail closed)."""
+    connection = _UnfilteredTypeConnection(
+        tables=[_table("Mystery", "GLOBAL TEMPORARY")],
+        columns=[_column("Mystery", "id", "INTEGER", 10)],
+        statistics=[_index("Mystery", "ix", "id")],
+    )
+    port = OdbcInspectionPort(connection)
+    assert port.list_tables()[0].fields == []
+    assert ("columns", {"table": "Mystery"}) not in connection.calls
+    with pytest.raises(InspectionCapabilityUnavailableError):
+        port.get_indexes("Mystery")
+    assert not any(call[0] == "statistics" for call in connection.calls)
 
 
 def test_get_indexes_groups_statistics_rows_and_reports_observed_uniqueness() -> None:
@@ -363,14 +477,14 @@ def test_odbc_index_read_failure_is_failed_not_unavailable() -> None:
     assert document.status == "partial"
 
 
-def test_odbc_zero_column_linked_table_is_failed_not_observed_empty() -> None:
-    """B1: an unreachable linked source reads zero columns and must be ``failed``.
+def test_odbc_linked_synonym_is_not_read_and_reports_explicit_gap() -> None:
+    """T1: a linked SYNONYM is never read; its gap is explicit, never failed/empty.
 
-    Access ODBC returns zero SQLColumns rows *without raising* for a linked table whose
-    source is unreachable, so the port's exception -> failed path never fires and the
-    table was recorded as an observed-empty field/index list (a false fact). A listed
-    Access table can never legitimately have zero columns, so the service must route it
-    through the same failed-table path it uses for read failures.
+    The old contract read SQLColumns/SQLStatistics for the SYNONYM (contacting the
+    linked source and, when it was unreachable, fabricating a failed zero-column table).
+    The new contract classifies first: the linked table keeps its kind with empty
+    fields/indexes, an ``unavailable`` primary key, and a coverage ``unsupported``
+    reason, and no catalog call targets it.
     """
     connection = _FakeConnection(
         tables=[_table("Local"), _table("LinkedCustomers", "SYNONYM")],
@@ -380,19 +494,41 @@ def test_odbc_zero_column_linked_table_is_failed_not_observed_empty() -> None:
     document = DocumentationInspectService().inspect(
         OdbcInspectionPort(connection), tables=None, queries=None
     )
-    # The zero-column table is a failure with a zero-columns reason, never observed empty.
-    reason = document.coverage.tables.failed["LinkedCustomers"]
-    assert "no columns" in reason
+    assert ("columns", {"table": "LinkedCustomers"}) not in connection.calls
+    assert ("statistics", {"table": "LinkedCustomers"}) not in connection.calls
     linked = next(table for table in document.tables if table.name == "LinkedCustomers")
+    assert linked.kind == "linked"
     assert linked.fields == []
     assert linked.indexes == []
-    assert linked.primary_key.state == "failed"
-    assert linked.primary_key.reason == reason
-    # A local table with real columns is still inspected normally (PRESERVE).
+    assert linked.primary_key.state == "unavailable"
+    assert "LinkedCustomers" in document.coverage.tables.unsupported
+    assert "LinkedCustomers" not in document.coverage.tables.failed
+    # A local table in the same database is still inspected normally (PRESERVE).
     local = next(table for table in document.tables if table.name == "Local")
     assert [field.name for field in local.fields] == ["Note"]
     assert "Local" in document.coverage.tables.inspected
     assert "Local" not in document.coverage.tables.failed
+
+
+def test_odbc_zero_column_local_table_is_failed_not_observed_empty() -> None:
+    """B1 PRESERVE: a local table whose column read returns nothing is ``failed``.
+
+    A listed Access table can never legitimately have zero columns, so a local ``TABLE``
+    row that yields no SQLColumns rows stays a failed read, not an observed-empty schema.
+    """
+    connection = _FakeConnection(
+        tables=[_table("Local"), _table("Empty")],
+        columns=[_column("Local", "Note", "VARCHAR", 50)],
+    )
+    document = DocumentationInspectService().inspect(
+        OdbcInspectionPort(connection), tables=None, queries=None
+    )
+    reason = document.coverage.tables.failed["Empty"]
+    assert "no columns" in reason
+    empty = next(table for table in document.tables if table.name == "Empty")
+    assert empty.indexes == []
+    assert empty.primary_key.state == "failed"
+    assert empty.primary_key.reason == reason
 
 
 def test_odbc_seam_never_executes_a_query_or_writes() -> None:
@@ -411,13 +547,17 @@ def test_odbc_seam_never_executes_a_query_or_writes() -> None:
 
 
 def test_cli_inspect_with_odbc_backend_returns_evidence_envelope(capsys) -> None:
-    database = _WiringDatabase(_odbc_connection())
-    with patch.object(cli, "DatabaseUseCases", return_value=database):
+    connection = _odbc_connection()
+    database = _WiringDatabase(connection)
+    with patch.object(
+        cli,
+        "run_documentation_inspection",
+        lambda *a, **k: inspect_open_database(database, tables=k.get("tables"), queries=k.get("queries")),
+    ):
         result = _run_cli(["documentation", "inspect", "--db", "core.accdb", "--backend", "odbc", "--json"])
 
     captured = capsys.readouterr()
     assert result == 0, captured.err
-    assert database.closed is True
     assert "Traceback" not in captured.err
     envelope = json.loads(captured.out)
     assert envelope["success"] is True
@@ -425,24 +565,228 @@ def test_cli_inspect_with_odbc_backend_returns_evidence_envelope(capsys) -> None
     assert envelope["data"]["data"]["status"] == "partial"
 
 
-def test_cli_inspect_without_dao_or_odbc_reports_an_error_envelope(capsys) -> None:
-    database = _WiringDatabase(None)
-    with patch.object(cli, "DatabaseUseCases", return_value=database):
+def test_inspect_open_database_without_dao_or_odbc_fails_closed() -> None:
+    with pytest.raises(ValueError, match="connected DAO or ODBC backend"):
+        inspect_open_database(_NoInspectionDatabase(), tables=None, queries=None)
+
+
+def test_cli_inspect_surfaces_a_facade_open_failure_as_an_error_envelope(capsys) -> None:
+    def _boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise ValueError("Documentation inspection requires a connected DAO or ODBC backend")
+
+    with patch.object(cli, "run_documentation_inspection", _boom):
         result = _run_cli(["documentation", "inspect", "--db", "core.accdb", "--backend", "odbc"])
 
     captured = capsys.readouterr()
     assert result == 1
     assert "Traceback" not in captured.err
     assert "connected DAO or ODBC backend" in captured.err
-    assert database.closed is True
+
+
+def test_inspect_open_database_odbc_uses_the_readonly_inspection_factory() -> None:
+    """T2: the worker extraction branch opens the read-only seam, never the CRUD connection."""
+    connection = _odbc_connection()
+    database = _WiringDatabase(connection)
+    document = inspect_open_database(database, tables=None, queries=None)
+
+    adapter = database._adapter
+    assert document.source.backend_identity == "ODBC"
+    assert adapter.readonly_open_calls == 1
+    assert adapter.connection_reads == 0
+    assert connection.close_calls == 1
+
+
+def test_mcp_inspect_forwards_inspection_context_to_the_facade() -> None:
+    """The MCP callback never opens the source itself: it forwards backend/dir policy."""
+    connection = _odbc_connection()
+    database = _WiringDatabase(connection)
+    seen: dict[str, Any] = {}
+
+    def fake_run(path: str, *, backend: str, allowed_dirs: Any, tables: Any, queries: Any) -> Any:
+        seen.update(path=path, backend=backend, allowed_dirs=list(allowed_dirs), tables=tables, queries=queries)
+        return inspect_open_database(database, tables=tables, queries=queries)
+
+    with (
+        patch.object(analysis, "_new_db", return_value=database),
+        patch.object(analysis, "run_documentation_inspection", fake_run),
+    ):
+        result = analysis.documentation_inspect(path="core.accdb", tables=["Customers"], queries=None)
+
+    assert json.loads(result.content[0].text)["success"] is True
+    assert seen == {
+        "path": "core.accdb",
+        "backend": "odbc",
+        "allowed_dirs": [],
+        "tables": ["Customers"],
+        "queries": None,
+    }
+
+
+def test_mcp_inspect_odbc_uses_the_readonly_inspection_factory() -> None:
+    """T2: the MCP callback's facade extraction opens the read-only seam, not the CRUD handle."""
+    connection = _odbc_connection()
+    database = _WiringDatabase(connection)
+    with (
+        patch.object(analysis, "_new_db", return_value=database),
+        patch.object(
+            analysis,
+            "run_documentation_inspection",
+            lambda *a, **k: inspect_open_database(database, tables=k.get("tables"), queries=k.get("queries")),
+        ),
+    ):
+        result = analysis.documentation_inspect(path="core.accdb")
+
+    adapter = database._adapter
+    assert json.loads(result.content[0].text)["success"] is True
+    assert adapter.readonly_open_calls == 1
+    assert adapter.connection_reads == 0
+    assert connection.close_calls == 1
 
 
 def test_mcp_inspect_with_odbc_backend_returns_evidence_envelope() -> None:
-    database = _WiringDatabase(_odbc_connection())
-    with patch.object(analysis, "_new_db", return_value=database):
+    connection = _odbc_connection()
+    database = _WiringDatabase(connection)
+    with (
+        patch.object(analysis, "_new_db", return_value=database),
+        patch.object(
+            analysis,
+            "run_documentation_inspection",
+            lambda *a, **k: inspect_open_database(database, tables=k.get("tables"), queries=k.get("queries")),
+        ),
+    ):
         result = analysis.documentation_inspect(path="core.accdb")
 
     payload = json.loads(result.content[0].text)
     assert payload["success"] is True
     assert payload["data"]["source"]["backend_identity"] == "ODBC"
     assert result.isError is False
+
+
+# ---------------------------------------------------------------------------
+# 4. T2: inspection-specific engine-level read-only connection
+# ---------------------------------------------------------------------------
+
+# The exact connection string ``OdbcAdapter.connect`` builds; the inspection open must
+# reuse the same recorded target/password and add ``readonly=True``.
+_EXPECTED_CONN_STR = "DBQ=core.accdb;PWD=canary-secret;DRIVER={Microsoft Access Driver (*.mdb, *.accdb)}"
+
+
+def test_odbc_readonly_open_pins_readonly_and_reuses_recorded_target_and_password(
+    monkeypatch,
+) -> None:
+    """T2: the inspection open is a fresh ``readonly=True`` connection with recorded state."""
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_connect(conn_str: str, **kwargs: Any) -> _FakeConnection:
+        calls.append((conn_str, kwargs))
+        return _odbc_connection()
+
+    monkeypatch.setattr("ms_access_mcp.backends.odbc.pyodbc.connect", fake_connect)
+    adapter = OdbcAdapter("core.accdb")
+    adapter.connect("core.accdb", password="canary-secret")
+    inspection = adapter.open_readonly_inspection_connection()
+
+    assert calls == [
+        (_EXPECTED_CONN_STR, {}),
+        (_EXPECTED_CONN_STR, {"readonly": True}),
+    ]
+    # The CRUD handle is untouched and the inspection handle is a distinct instance.
+    assert adapter._conn is not inspection
+    assert adapter.connected is True
+    assert adapter.is_connected() is True
+
+
+def test_odbc_readonly_open_requires_a_connected_recorded_session(monkeypatch) -> None:
+    """T2: without a connected session there is no recorded target/password to reuse."""
+    calls: list[Any] = []
+    monkeypatch.setattr("ms_access_mcp.backends.odbc.pyodbc.connect", lambda *a, **k: calls.append((a, k)))
+    adapter = OdbcAdapter("core.accdb")
+
+    with pytest.raises(RuntimeError):
+        adapter.open_readonly_inspection_connection()
+    assert calls == []
+
+
+def test_odbc_readonly_open_never_falls_back_to_a_writable_connection(monkeypatch) -> None:
+    """T2: a read-only failure is not retried without the read-only attribute."""
+    kwargs_seen: list[dict[str, Any]] = []
+
+    def fake_connect(_conn_str: str, **kwargs: Any) -> _FakeConnection:
+        kwargs_seen.append(kwargs)
+        if kwargs.get("readonly"):
+            raise RuntimeError("driver does not support read-only access mode")
+        return _odbc_connection()
+
+    monkeypatch.setattr("ms_access_mcp.backends.odbc.pyodbc.connect", fake_connect)
+    adapter = OdbcAdapter("core.accdb")
+    adapter.connect("core.accdb")
+
+    with pytest.raises(RuntimeError, match="read-only"):
+        adapter.open_readonly_inspection_connection()
+    assert kwargs_seen == [{}, {"readonly": True}]
+
+
+def test_open_odbc_inspection_port_owns_and_closes_the_readonly_connection_exactly_once() -> None:
+    """T2: the factory port owns the handle and closes it exactly once, on success."""
+    connection = _odbc_connection()
+    adapter = _WiringAdapter(connection)
+    port = open_odbc_inspection_port(adapter)
+    assert adapter.readonly_open_calls == 1
+    assert adapter.connection_reads == 0
+
+    DocumentationInspectService().inspect(port, tables=None, queries=None)
+    assert connection.close_calls == 1
+    port.close()  # idempotent: a second close never closes the handle again
+    assert connection.close_calls == 1
+
+
+def test_open_odbc_inspection_port_closes_on_inspection_failure() -> None:
+    """T2: the owned handle is released once even when a catalog read raises."""
+
+    class _BoomConnection(_FakeConnection):
+        def cursor(self) -> _FakeCursor:
+            raise RuntimeError("catalog read failed")
+
+    connection = _BoomConnection()
+    port = open_odbc_inspection_port(_WiringAdapter(connection))
+
+    with pytest.raises(RuntimeError, match="catalog read failed"):
+        DocumentationInspectService().inspect(port, tables=None, queries=None)
+    assert connection.close_calls == 1
+
+
+def test_open_odbc_inspection_port_does_not_leak_a_handle_when_wrapping_fails(monkeypatch) -> None:
+    """T2: a setup exception after the open still releases the new handle."""
+    connection = _odbc_connection()
+    adapter = _WiringAdapter(connection)
+
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("port construction failed")
+
+    monkeypatch.setattr(documentation_inspect, "OdbcInspectionPort", boom)
+    with pytest.raises(RuntimeError, match="port construction failed"):
+        open_odbc_inspection_port(adapter)
+    assert connection.close_calls == 1
+
+
+def test_open_odbc_inspection_port_scrubs_credentials_from_open_failure() -> None:
+    """T2: an open failure reaches the caller as a scrubbed AccessMcpError."""
+    adapter = _FailingOpenAdapter(
+        RuntimeError(f"SQLDriverConnect failed: {_EXPECTED_CONN_STR}")
+    )
+
+    with pytest.raises(AccessMcpError) as excinfo:
+        open_odbc_inspection_port(adapter)
+    message = str(excinfo.value)
+    assert adapter.readonly_open_calls == 1
+    assert "canary-secret" not in message
+    assert "PWD=***" in message
+
+
+def test_open_odbc_inspection_port_rejects_an_adapter_without_the_readonly_seam() -> None:
+    """T2: no writable fallback — an adapter without the seam is refused, not reused."""
+    class _ConnectionOnlyAdapter:
+        connection = _odbc_connection()
+
+    with pytest.raises(AccessMcpError, match="read-only inspection"):
+        open_odbc_inspection_port(_ConnectionOnlyAdapter())

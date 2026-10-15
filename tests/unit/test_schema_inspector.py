@@ -31,8 +31,10 @@ class FakeField:
 class FakeFields:
     def __init__(self, fields: list[FakeField]) -> None:
         self._fields = fields
+        self.iter_calls = 0
 
     def __iter__(self):
+        self.iter_calls += 1
         return iter(self._fields)
 
     def __getitem__(self, idx: int) -> FakeField:
@@ -383,6 +385,44 @@ class TestGetTables:
         )
 
 
+class TestGetPassiveTables:
+    """T1: documentation enumeration never reads a linked table's own columns."""
+
+    def test_linked_tables_are_listed_without_reading_their_fields(self) -> None:
+        linked = FakeTableDef(
+            "LinkedCustomers",
+            [FakeField("CustomerID", 4)],
+            attributes=0x40000000,
+            connect=";DATABASE=C:\\fixtures\\sentinel.accdb",
+            source_table_name="SentinelCustomers",
+        )
+        local = FakeTableDef("LocalNotes", [FakeField("NotesID", 4)])
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[linked, local])))
+        tables = insp.get_passive_tables()
+        assert [table.name for table in tables] == ["LinkedCustomers", "LocalNotes"]
+        assert tables[0].fields == []
+        assert linked.Fields.iter_calls == 0
+        # PRESERVE: an ordinary local table keeps its real fields.
+        assert [field.name for field in tables[1].fields] == ["NotesID"]
+        assert local.Fields.iter_calls == 1
+
+    def test_odbc_attached_table_is_also_enumerated_passively(self) -> None:
+        linked = FakeTableDef("OdbcLinked", [FakeField("id", 4)], attributes=0x20000000)
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[linked])))
+        assert insp.get_passive_tables()[0].fields == []
+        assert linked.Fields.iter_calls == 0
+
+    def test_get_tables_still_reads_linked_fields_for_generic_callers(self) -> None:
+        """PRESERVE: the generic get_tables behavior is unchanged."""
+        linked = FakeTableDef("LinkedCustomers", [FakeField("CustomerID", 4)], attributes=0x40000000)
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[linked])))
+        assert [field.name for field in insp.get_tables()[0].fields] == ["CustomerID"]
+
+    def test_disconnected_returns_empty(self) -> None:
+        insp = SchemaInspector(FakeDispatcher(db=None, connected=False))
+        assert insp.get_passive_tables() == []
+
+
 class TestGetSystemTables:
     def test_returns_msys_tables_with_zero_record_count(self) -> None:
         tdef = FakeTableDef("MSysObjects", [FakeField("id", 4)])
@@ -474,6 +514,21 @@ class TestGetLinkedTableMetadata:
         assert insp.get_table_link_metadata("LinkedCustomers") == {
             "connect": ";DATABASE=C:\\fixtures\\sentinel.accdb",
             "source_table_name": "SentinelCustomers",
+        }
+
+    def test_odbc_attached_table_is_recognized_as_linked(self) -> None:
+        """T1: a dbAttachedODBC link (0x20000000) is a linked table, not a local one."""
+        tdef = FakeTableDef(
+            "OdbcLinked",
+            [FakeField("id", 4)],
+            attributes=0x20000000,
+            connect="ODBC;DSN=Sentinel",
+            source_table_name="RemoteCustomers",
+        )
+        insp = SchemaInspector(FakeDispatcher(db=FakeDb(tdefs=[tdef])))
+        assert insp.get_table_link_metadata("OdbcLinked") == {
+            "connect": "ODBC;DSN=Sentinel",
+            "source_table_name": "RemoteCustomers",
         }
 
     def test_local_table_returns_none(self) -> None:

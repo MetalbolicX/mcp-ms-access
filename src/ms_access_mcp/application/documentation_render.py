@@ -20,7 +20,16 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from ms_access_mcp.application.documentation import EvidenceDoc, FactStatus, RelationshipEvidence
+from ms_access_mcp.application.documentation import (
+    EvidenceDoc,
+    FactStatus,
+    RelationshipEvidence,
+    sanitize_connection_string,
+)
+from ms_access_mcp.application.documentation_limits import (
+    ensure_markdown_within_limit,
+    ensure_report_within_limit,
+)
 
 ReportKind = Literal["database", "er"]
 REPORT_SCHEMA = "access.documentation.report/1"
@@ -36,7 +45,7 @@ class ReportDoc:
     sha256: str
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "schema": self.schema,
             "kind": self.kind,
             "markdown": self.markdown,
@@ -44,9 +53,12 @@ class ReportDoc:
             "coverage": self.coverage,
             "sha256": self.sha256,
         }
+        ensure_report_within_limit(result)
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReportDoc:
+        ensure_report_within_limit(data)
         if data.get("schema") != REPORT_SCHEMA:
             raise ValueError(f"Unsupported report schema: {data.get('schema')}")
         report = cls(
@@ -77,7 +89,9 @@ def render_document(
         raise ValueError(f"Unsupported language: {language}; only English is currently qualified")
     if kind not in ("database", "er"):
         raise ValueError(f"Unsupported report kind: {kind}")
-    evidence.validate()
+    # Serializing here both validates and enforces the evidence byte cap; the renderer
+    # then reads the same validated object directly.
+    evidence.to_dict()
     interpretations = interpretations or []
     known_refs = _known_refs(evidence)
     for item in interpretations:
@@ -94,6 +108,7 @@ def render_document(
     if interpretations:
         sections.append(_interpretations(interpretations))
     markdown = "\n\n".join(section.rstrip() for section in sections) + "\n"
+    ensure_markdown_within_limit(markdown)
     coverage = _coverage_summary(evidence)
     return ReportDoc(
         schema=REPORT_SCHEMA,
@@ -322,8 +337,12 @@ def _matches_unique(evidence: EvidenceDoc, table_name: str, columns: list[str]) 
 
 
 def _linked_source(connect: str | None, source_table_name: str | None) -> str:
-    """Render a linked table's local source as ``database-file/source-table``."""
-    database = connect or ""
+    """Render a linked table's local source as ``database-file/source-table``.
+
+    The connection string is sanitized defensively before any part of it is shown, so a
+    credential that survived to hand-built evidence cannot leak into report text.
+    """
+    database = sanitize_connection_string(connect) or ""
     match = re.search(r"(?:^|;)database=([^;]*)", database, flags=re.IGNORECASE)
     if match:
         database = match.group(1)

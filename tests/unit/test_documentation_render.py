@@ -174,6 +174,19 @@ def test_local_tables_render_no_link_line() -> None:
     assert "Linked table:" not in markdown
 
 
+def test_linked_render_never_leaks_a_credential_from_a_connect_string() -> None:
+    """T1: a credential in hand-built evidence cannot reach report text."""
+    evidence = make_evidence()
+    linked = evidence.tables[1]
+    linked.kind = "linked"
+    linked.connect = "ODBC;DSN=Fixture;UID=canary-user;PWD=canary-secret"
+    linked.source_table_name = "SentinelCustomers"
+    markdown = render_document(evidence).markdown
+    assert "canary-secret" not in markdown
+    assert "canary-user" not in markdown
+    assert "Linked table:" in markdown
+
+
 def test_unusual_names_are_aliased_in_mermaid_and_pipes_escaped_in_tables() -> None:
     report = render_document(make_evidence(unusual=True))
     assert "t1" in report.markdown and "t2" in report.markdown

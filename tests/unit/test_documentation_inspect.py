@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,6 +11,7 @@ from ms_access_mcp.application.documentation_inspect import (
     DaoInspectionPort,
     DocumentationInspectService,
     InspectionCapabilities,
+    InspectionCapabilityUnavailableError,
     InspectionPort,
 )
 from ms_access_mcp.backends.schema_inspector import QueryParameterInfo
@@ -442,6 +444,110 @@ def test_linked_table_local_catalogue_metadata_reaches_evidence() -> None:
     assert linked.to_dict()["kind"] == "linked"
     assert local.kind == "local"
     assert local.connect is None and local.source_table_name is None
+
+
+def test_linked_table_is_classified_before_index_reads_and_reports_explicit_gap() -> None:
+    """T1: a linked table is classified first; its fields/indexes are never read."""
+    fake = port(
+        tables=[
+            TableInfo("LinkedCustomers", fields=[FieldInfo("CustomerID", "Long Integer")]),
+            TableInfo("LocalNotes", fields=[FieldInfo("NotesID", "Long Integer")]),
+        ],
+        indexes={
+            "LinkedCustomers": RuntimeError("linked index read must not run"),
+            "LocalNotes": [IndexInfo("PK_LocalNotes", ["NotesID"], is_unique=True, is_primary=True)],
+        },
+        link_metadata={
+            "LinkedCustomers": {
+                "connect": ";DATABASE=C:\\fixtures\\sentinel.accdb",
+                "source_table_name": "SentinelCustomers",
+            }
+        },
+    )
+    document = inspect_with(fake)
+    linked, local = document.tables
+    assert linked.kind == "linked"
+    assert linked.connect == ";DATABASE=C:\\fixtures\\sentinel.accdb"
+    assert linked.source_table_name == "SentinelCustomers"
+    assert linked.fields == []
+    assert linked.indexes == []
+    assert linked.primary_key.state == "unavailable"
+    assert linked.primary_key.reason
+    assert "linked" in document.coverage.tables.unsupported["LinkedCustomers"].lower()
+    # The linked index read never ran, so no failure was recorded.
+    assert document.coverage.tables.failed == {}
+    # PRESERVE: the ordinary local table keeps its fields and index-derived primary key.
+    assert [field.name for field in local.fields] == ["NotesID"]
+    assert local.indexes[0].name == "PK_LocalNotes"
+    assert local.primary_key.state == "observed" and local.primary_key.value == ["NotesID"]
+    assert local.kind == "local"
+    assert document.status == "partial"
+
+
+def test_unreadable_index_capability_is_unsupported_not_failed() -> None:
+    """T1: a port refusing an index read as a known capability gap is ``unsupported``."""
+    fake = port(
+        tables=[TableInfo("T", fields=[FieldInfo("id", "Long Integer")])],
+        indexes={"T": InspectionCapabilityUnavailableError("indexes are not exposed")},
+    )
+    document = inspect_with(fake)
+    table = document.tables[0]
+    assert table.kind == "local"
+    assert [field.name for field in table.fields] == ["id"]
+    assert table.primary_key.state == "unavailable"
+    assert table.primary_key.reason == "indexes are not exposed"
+    assert document.coverage.tables.unsupported["T"] == "indexes are not exposed"
+    assert document.coverage.tables.failed == {}
+
+
+def test_link_metadata_credentials_are_removed_before_evidence() -> None:
+    """T1: a synthetic credential in a connect string never reaches evidence."""
+    fake = port(
+        tables=[TableInfo("LinkedCustomers")],
+        link_metadata={
+            "LinkedCustomers": {
+                "connect": ";DATABASE=C:\\fixtures\\sentinel.accdb;UID=canary-user;PWD=canary-secret",
+                "source_table_name": "SentinelCustomers",
+            }
+        },
+    )
+    document = inspect_with(fake)
+    linked = document.tables[0]
+    assert "canary-secret" not in linked.connect
+    assert "canary-user" not in linked.connect
+    assert "PWD" not in linked.connect and "UID" not in linked.connect
+    assert "sentinel.accdb" in linked.connect
+    assert "canary-secret" not in json.dumps(document.to_dict())
+
+
+def test_credentials_in_a_read_error_are_redacted_from_coverage() -> None:
+    """T1: a credential embedded in an error message is redacted before coverage."""
+    fake = port(
+        tables=[TableInfo("T")],
+        link_metadata={"T": RuntimeError("open failed for ;DATABASE=x.accdb;PWD=canary-secret")},
+    )
+    document = inspect_with(fake)
+    reason = document.coverage.tables.failed["T"]
+    assert "canary-secret" not in reason
+    assert "PWD=***" in reason
+    assert document.tables[0].primary_key.reason == reason
+
+
+def test_malformed_connect_string_fails_safe_without_leaking_the_value() -> None:
+    """T1: an unparseable braced value is replaced, never partially leaked."""
+    fake = port(
+        tables=[TableInfo("LinkedCustomers")],
+        link_metadata={
+            "LinkedCustomers": {
+                "connect": ";DATABASE=x;PWD={unbalanced;canary-secret",
+                "source_table_name": "SentinelCustomers",
+            }
+        },
+    )
+    document = inspect_with(fake)
+    linked = document.tables[0]
+    assert linked.kind == "linked"
+    assert "canary-secret" not in linked.connect
 
 
 def test_link_metadata_read_failure_marks_the_table_failed() -> None:

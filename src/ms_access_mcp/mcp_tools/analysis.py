@@ -12,14 +12,11 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult
 
 from ..application.analysis import QueryAnalyzerService
-from ..application.database import DatabaseUseCases, Err
+from ..application.database import DatabaseUseCases
 from ..application.documentation import EvidenceDoc
-from ..application.documentation_inspect import (
-    DocumentationInspectService,
-    OdbcInspectionPort,
-    open_inspection_port,
-)
+from ..application.documentation_limits import ensure_evidence_within_limit
 from ..application.documentation_render import ReportDoc, render_document
+from ..application.documentation_runtime import run_documentation_inspection
 from ..application.documentation_save import DocumentationSaveService, DocumentationWritePolicy
 from ..safety import allowed_dirs_from_env
 from ._registry import ToolRegistry, register_tools
@@ -179,31 +176,23 @@ def documentation_inspect(
     """Inspect Access metadata into versioned documentation evidence."""
     del connection_ref  # Credentials are resolved by the existing path/session policy.
     try:
+        # The facade carries the constructor-injected backend/allowed-dir policy to an
+        # owned child, which performs the source open. The MCP callback therefore never
+        # opens the source itself and its active sessions are untouched.
         database = _new_db(readonly=True)
-        opened = database.open_database(path)
-        if isinstance(opened, Err):
-            return to_mcp_result({"success": False, "error": opened.message})
-        adapter = getattr(database, "_adapter", None)
-        dispatcher = getattr(adapter, "_dispatcher", None)
-        if dispatcher is not None and dispatcher.is_connected():
-            port = open_inspection_port(dispatcher)
-
-            def leave_session_open() -> None:
-                return None
-
-            port.close = leave_session_open  # The session owns and closes this handle.
-            evidence = dispatcher.call(
-                lambda: DocumentationInspectService().inspect(port, tables=tables, queries=queries)
-            )
-        else:
-            connection = getattr(adapter, "connection", None)
-            if connection is None:
-                raise ValueError("Documentation inspection requires a connected DAO or ODBC backend")
-            evidence = DocumentationInspectService().inspect(
-                OdbcInspectionPort(connection), tables=tables, queries=queries
-            )
+        backend, allowed_dirs = database.inspection_context()
+        evidence = run_documentation_inspection(
+            path,
+            backend=backend,
+            allowed_dirs=allowed_dirs,
+            tables=tables,
+            queries=queries,
+        )
         data = evidence.to_dict()
         data["status"] = evidence.status
+        # Re-check the whole emitted payload (status metadata included) against the
+        # evidence cap; the outer JSON-RPC wrapper allowance is unchanged.
+        ensure_evidence_within_limit(data)
         return to_mcp_result({"success": True, "data": data})
     except Exception as exc:
         return to_mcp_result({"success": False, "error": str(exc)})

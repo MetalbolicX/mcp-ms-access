@@ -109,6 +109,16 @@ class DatabaseUseCases:
         """Whether write operations are rejected (public read of the write policy)."""
         return self._policy.readonly
 
+    def inspection_context(self) -> tuple[str, list[Path]]:
+        """Return the documentation-inspection policy (backend name, allowed dirs).
+
+        Additive read-only accessor. It carries the constructor-injected backend and the
+        allowed-directory policy to the documentation runtime facade without opening a
+        connection, so the facade can spawn an owned child that applies the same policy.
+        No other tool or wrapper behavior changes.
+        """
+        return self._backend_name, list(self._allowed_dirs)
+
     # -------------------------------------------------------------------------
     # Connection Management
     # -------------------------------------------------------------------------

@@ -42,25 +42,50 @@ class OdbcAdapter:
     def __init__(self, db_path: str) -> None:
         """Initialize an ODBC adapter for the specified database path."""
         self._db_path = db_path
+        self._password = ""
         self._conn: Any = None
         self._connected = False
         self._schema_reader: OdbcSchemaReader | None = None
 
-    def connect(self, db_path: str | None = None, password: str = "") -> None:
-        """Open an ODBC connection to the Access database."""
-        target = db_path if db_path is not None else self._db_path
+    @staticmethod
+    def _connection_string(target: str, password: str) -> str:
+        """Build the Access ODBC connect string from a target path and credential."""
         conn_str_parts = [f"DBQ={target}"]
         if password:
             conn_str_parts.append(f"PWD={password}")
         conn_str_parts.append("DRIVER={Microsoft Access Driver (*.mdb, *.accdb)}")
-        conn_str = ";".join(conn_str_parts)
+        return ";".join(conn_str_parts)
+
+    def connect(self, db_path: str | None = None, password: str = "") -> None:
+        """Open an ODBC connection to the Access database."""
+        target = db_path if db_path is not None else self._db_path
+        conn_str = self._connection_string(target, password)
 
         try:
             self._conn = pyodbc.connect(conn_str)
             self._connected = True
+            # Record the open target and credential so the inspection-only read-only
+            # open can reuse exactly what the session opened, without re-resolving.
+            self._db_path = target
+            self._password = password
         except Exception:
             self._connected = False
             raise
+
+    def open_readonly_inspection_connection(self) -> Any:
+        """Open a fresh engine-level read-only ODBC connection for documentation inspection.
+
+        Additive and isolated: it opens a new handle from the target and credential
+        recorded by ``connect`` and leaves this adapter's own CRUD connection untouched,
+        so the session's normal write-tool connection keeps working. The caller owns the
+        returned handle and closes it. There is no writable fallback: ``readonly=True``
+        sets the driver's access mode to read-only at the engine level, and a driver that
+        cannot honour it raises instead of silently opening a writable handle.
+        """
+        if not self._connected or self._conn is None:
+            msg = "ODBC inspection requires an open adapter connection"
+            raise RuntimeError(msg)
+        return pyodbc.connect(self._connection_string(self._db_path, self._password), readonly=True)
 
     def disconnect(self) -> None:
         """Close the ODBC connection."""
@@ -71,6 +96,7 @@ class OdbcAdapter:
                 pass
             self._conn = None
         self._connected = False
+        self._password = ""
 
     @property
     def connected(self) -> bool:
@@ -83,10 +109,12 @@ class OdbcAdapter:
 
     @property
     def connection(self) -> Any:
-        """Return the live ODBC connection for read-only inspection adapters.
+        """Return the adapter-owned CRUD connection.
 
-        The adapter keeps ownership: callers must not close or mutate the
-        connection, and the handle is only valid while ``connected`` is True.
+        The adapter keeps ownership: callers must not close or mutate the connection,
+        and the handle is only valid while ``connected`` is True. Documentation
+        inspection does not use this handle; it opens its own read-only connection
+        through ``open_readonly_inspection_connection``.
         """
         return self._conn
 

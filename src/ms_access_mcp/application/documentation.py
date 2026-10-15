@@ -2,14 +2,151 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Generic, Literal, TypeVar
+
+from .documentation_limits import ensure_evidence_within_limit
 
 EvidenceState = Literal["observed", "unavailable", "failed", "excluded"]
 QueryType = Literal["select", "action", "ddl", "unknown"]
 EvidenceStatus = Literal["complete", "partial"]
 _MISSING = object()
 T = TypeVar("T")
+
+# Connection-string keys whose values are credentials. The whole ``key=value`` pair is
+# removed before a connection string reaches evidence, a report, or an error message.
+_CREDENTIAL_KEYS = frozenset(
+    {
+        "pwd",
+        "password",
+        "passwd",
+        "uid",
+        "user",
+        "userid",
+        "user id",
+        "username",
+        "user name",
+        "jet oledb:database password",
+    }
+)
+_REDACTED_CONNECTION = "[redacted connection string]"
+# Credential key assignments inside free text, e.g. an engine error message.
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])"
+    r"(pwd|passwd|password|uid|user\s*id|userid|username|user\s*name|user|"
+    r"jet\s+oledb:database\s+password)\s*="
+)
+
+
+def _connection_segments(value: str) -> list[str] | None:
+    """Split a connection string on unbraced semicolons.
+
+    Returns ``None`` when brace quoting is unbalanced or a stray closing brace is
+    present. Such a string cannot be parsed reliably, so callers fail safe instead of
+    guessing where a credential value ends. Inside braces, ``}}`` is the ODBC escape for
+    a literal ``}``.
+    """
+    segments: list[str] = []
+    current: list[str] = []
+    depth = 0
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if character == "{":
+            depth += 1
+            current.append(character)
+        elif character == "}":
+            if depth == 0:
+                return None
+            if depth == 1 and index + 1 < len(value) and value[index + 1] == "}":
+                current.append("}}")
+                index += 2
+                continue
+            depth -= 1
+            current.append(character)
+        elif character == ";" and depth == 0:
+            segments.append("".join(current))
+            current = []
+        else:
+            current.append(character)
+        index += 1
+    if depth:
+        return None
+    segments.append("".join(current))
+    return segments
+
+
+def _is_credential_pair(segment: str) -> bool:
+    key, separator, _value = segment.partition("=")
+    return bool(separator) and key.strip().casefold() in _CREDENTIAL_KEYS
+
+
+def sanitize_connection_string(value: str | None) -> str | None:
+    """Remove credential pairs from a connection string before it reaches output.
+
+    The whole ``key=value`` pair is dropped for credential keys, so no partial secret
+    survives. A string whose brace quoting cannot be parsed fails safe to a redaction
+    marker rather than risk leaking a braced or semicolon-containing value. A string
+    with no credential pair is returned unchanged, preserving local catalogue metadata
+    such as ``;DATABASE=...``.
+    """
+    if value is None or value == "":
+        return value
+    segments = _connection_segments(value)
+    if segments is None:
+        return _REDACTED_CONNECTION
+    return ";".join(segment for segment in segments if not _is_credential_pair(segment))
+
+
+def _credential_value_end(text: str, start: int) -> int:
+    """Return the index just past a credential value beginning at ``start``.
+
+    A braced value is consumed through its matching closing brace (``}}`` escapes a
+    literal ``}``); an unterminated braced value is redacted to the end of the text. An
+    unbraced value runs to the next semicolon or the end, whichever comes first.
+    """
+    index = start
+    while index < len(text) and text[index] in " \t":
+        index += 1
+    if index < len(text) and text[index] == "{":
+        depth = 0
+        while index < len(text):
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                if depth == 1 and index + 1 < len(text) and text[index + 1] == "}":
+                    # ``}}`` escapes a literal ``}`` inside a braced value.
+                    index += 2
+                    continue
+                depth -= 1
+                if depth == 0:
+                    return index + 1
+            index += 1
+        return len(text)
+    while index < len(text) and text[index] != ";":
+        index += 1
+    return index
+
+
+def redact_connection_secrets(text: str) -> str:
+    """Redact credential values embedded anywhere in free text, e.g. an error message.
+
+    Uses the same brace-aware value scan as a connection string so braced or
+    semicolon-containing values are removed whole instead of leaving a partial secret.
+    """
+    if not text:
+        return text
+    result: list[str] = []
+    position = 0
+    for match in _CREDENTIAL_ASSIGNMENT.finditer(text):
+        if match.start() < position:
+            continue
+        result.append(text[position : match.end()])
+        position = _credential_value_end(text, match.end())
+        result.append("***")
+    result.append(text[position:])
+    return "".join(result)
 
 
 @dataclass
@@ -392,10 +529,13 @@ class EvidenceDoc:
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
-        return {"schema": self.schema, "run": self.run.to_dict(), "source": self.source.to_dict(), "coverage": self.coverage.to_dict(), "warnings": list(self.warnings), "data": {"status": self.status, "tables": [item.to_dict() for item in self.tables], "relationships": [item.to_dict() for item in self.relationships], "queries": [item.to_dict() for item in self.queries]}}
+        result = {"schema": self.schema, "run": self.run.to_dict(), "source": self.source.to_dict(), "coverage": self.coverage.to_dict(), "warnings": list(self.warnings), "data": {"status": self.status, "tables": [item.to_dict() for item in self.tables], "relationships": [item.to_dict() for item in self.relationships], "queries": [item.to_dict() for item in self.queries]}}
+        ensure_evidence_within_limit(result)
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvidenceDoc:
+        ensure_evidence_within_limit(data)
         if data.get("schema") != "access.documentation.evidence/1":
             raise ValueError(f"Unsupported evidence schema: {data.get('schema')}")
         payload = data["data"]

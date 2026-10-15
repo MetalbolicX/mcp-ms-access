@@ -23,9 +23,19 @@ from .documentation import (
     RunMetadata,
     SourceEvidence,
     TableEvidence,
+    redact_connection_secrets,
+    sanitize_connection_string,
 )
 
 _QUERY_TYPES = {"select": "select", "action": "action", "ddl": "ddl"}
+
+# A linked table's fields and indexes are not read at all. The gap is recorded as a
+# coverage ``unsupported`` reason so an unread schema is never presented as observed
+# empty; only local catalogue link metadata (kind/connect/source table) is reported.
+_LINKED_TABLE_NOT_INSPECTED_REASON = (
+    "Linked table: fields and indexes are not read because the linked source is never "
+    "resolved or contacted; only local link metadata is reported"
+)
 
 # Capability keys name an extraction-level property a port may not be able to observe.
 # A key present in `InspectionCapabilities.unavailable` maps every dependent fact to
@@ -105,7 +115,7 @@ class DaoInspectionPort:
         return InspectionCapabilities()
 
     def list_tables(self) -> list[TableInfo]:
-        return self._inspector.get_tables()
+        return self._inspector.get_passive_tables()
 
     def get_table_link_metadata(self, table_name: str) -> dict[str, Any] | None:
         return self._inspector.get_table_link_metadata(table_name)
@@ -130,17 +140,32 @@ class DaoInspectionPort:
 # row-returning queries appear as VIEW rows. SQL_PARAM_INPUT marks a declared parameter
 # in a SQLProcedureColumns row.
 _ODBC_TABLE_TYPES = "TABLE,SYNONYM"
+_ODBC_LOCAL_TABLE_TYPE = "TABLE"
 _ODBC_QUERY_TABLE_TYPE = "VIEW"
 _ODBC_SYNONYM_TABLE_TYPE = "SYNONYM"
 _ODBC_PARAMETER_COLUMN_TYPE = 1
 
 # A listed Access table always has at least one column, so the Access ODBC driver
-# returning zero SQLColumns rows (without raising) for a linked table means the column
-# read failed -- typically because the linked source is unreachable. This is never an
-# observed-empty schema.
+# returning zero SQLColumns rows (without raising) for a local table means the column
+# read failed. This is never an observed-empty schema. Linked (SYNONYM) tables are not
+# read at all, so this failure path only applies to a local table whose read failed.
 _ODBC_NO_COLUMNS_REASON = (
-    "ODBC driver returned no columns for a listed table; "
-    "the linked source is unreachable or the column read failed"
+    "ODBC driver returned no columns for a listed local table; "
+    "the column read failed"
+)
+
+# A SYNONYM is a linked table. SQLColumns/SQLStatistics on it can contact the linked
+# source, so neither is called and the table is reported with an explicit gap instead.
+_ODBC_LINKED_TABLE_REASON = (
+    "ODBC exposes the linked table as a SYNONYM only; its columns and indexes are not "
+    "read because the linked source is never resolved or contacted"
+)
+
+# Any other SQLTables row type is not provably a local table. Fail closed: do not read
+# columns or statistics, because an unknown type might be backed by another source.
+_ODBC_UNCLASSIFIED_TABLE_REASON = (
+    "ODBC SQLTables reported a table type that is not a known local table; column and "
+    "index reads are refused rather than risk contacting an unknown source"
 )
 
 # Probed on the Access ODBC driver: every property below is invisible through ODBC and
@@ -175,12 +200,13 @@ class OdbcInspectionPort:
 
     Reads only ODBC catalog metadata (SQLTables, SQLColumns, SQLStatistics, and
     SQLProcedureColumns). It never executes a saved query, reads a table row, or writes.
-    Catalog calls on a linked table DO contact the linked source read-only, so no
-    isolation guarantee is provided over ODBC (unlike the DAO path's lock-probe-qualified
-    isolation). A linked table whose source is unreachable yields zero SQLColumns/
-    SQLStatistics rows without raising, so the service records a listed table that returns
-    no columns as ``failed`` rather than as an observed-empty schema. Every property Access
-    ODBC cannot expose is declared in ``capabilities()`` with a per-capability reason:
+    A table is classified before any column or index read: a ``SYNONYM`` is a linked
+    table and is never passed to SQLColumns or SQLStatistics, so the linked source is
+    not contacted; a table whose SQLTables type is neither the known local ``TABLE``
+    type nor ``SYNONYM`` also fails closed and is not read. The service records such a
+    table as an explicit support gap with empty fields/indexes rather than as an
+    observed-empty schema. Every property Access ODBC cannot expose is declared in
+    ``capabilities()`` with a per-capability reason:
 
     * ``field_required`` / ``field_allow_zero_length`` -- not represented by SQLColumns.
     * ``primary_key`` -- SQLPrimaryKeys is unsupported and SQLStatistics does not flag the
@@ -188,21 +214,38 @@ class OdbcInspectionPort:
     * ``relationships`` -- SQLForeignKeys is unsupported and MSysRelationships is hidden.
     * ``query_sql`` / ``query_type`` -- saved queries are visible as VIEW rows only.
 
-    The adapter owns the connection, so ``close`` is deliberately a no-op.
+    The adapter owns the connection, so ``close`` is deliberately a no-op for a port
+    built directly over an adapter-owned handle. A port built by
+    ``open_odbc_inspection_port`` instead owns a fresh read-only connection and closes
+    it exactly once.
     """
 
-    def __init__(self, connection: Any) -> None:
+    def __init__(self, connection: Any, *, owns_connection: bool = False) -> None:
         self._connection = connection
-        # Populated by list_tables() so get_indexes() can reject a table whose column
-        # read returned zero rows instead of presenting it as an observed-empty schema.
+        self._owns_connection = owns_connection
+        self._closed = False
+        # Populated by list_tables(). A linked or unclassified table is never read;
+        # a local table whose column read returned zero rows is a failed read.
         self._tables_without_columns: set[str] = set()
+        self._linked_tables: set[str] = set()
+        self._unclassified_tables: set[str] = set()
 
     def capabilities(self) -> InspectionCapabilities:
         return InspectionCapabilities(backend_identity="ODBC", unavailable=dict(_ODBC_UNAVAILABLE))
 
     def list_tables(self) -> list[TableInfo]:
         tables: list[TableInfo] = []
-        for name, _table_type in self._catalog_rows(_ODBC_TABLE_TYPES):
+        for name, table_type in self._catalog_rows(_ODBC_TABLE_TYPES):
+            if table_type == _ODBC_SYNONYM_TABLE_TYPE:
+                # Linked table: SQLColumns/SQLStatistics could contact its source.
+                self._linked_tables.add(name)
+                tables.append(TableInfo(name=name, fields=[]))
+                continue
+            if table_type != _ODBC_LOCAL_TABLE_TYPE:
+                # Unknown classification: fail closed and read nothing.
+                self._unclassified_tables.add(name)
+                tables.append(TableInfo(name=name, fields=[]))
+                continue
             fields = self._columns(name)
             if not fields:
                 self._tables_without_columns.add(name)
@@ -213,14 +256,20 @@ class OdbcInspectionPort:
         for name, table_type in self._catalog_rows(None, table=table_name):
             if name == table_name and table_type == _ODBC_SYNONYM_TABLE_TYPE:
                 # The link target is local-catalogue metadata ODBC does not expose.
+                self._linked_tables.add(table_name)
                 return {"connect": None, "source_table_name": None}
         return None
 
     def get_indexes(self, table_name: str) -> list[IndexInfo]:
+        if table_name in self._linked_tables:
+            # Never read SQLStatistics for a linked table: it can contact the source.
+            raise InspectionCapabilityUnavailableError(_ODBC_LINKED_TABLE_REASON)
+        if table_name in self._unclassified_tables:
+            raise InspectionCapabilityUnavailableError(_ODBC_UNCLASSIFIED_TABLE_REASON)
         if table_name in self._tables_without_columns:
-            # The column read for this listed table returned zero rows; surface the same
-            # failed-table path the service uses for read failures rather than letting
-            # SQLStatistics present an observed-empty index list for a broken read.
+            # The column read for this listed local table returned zero rows; surface the
+            # same failed-table path the service uses for read failures rather than
+            # letting SQLStatistics present an observed-empty index list for a broken read.
             raise AccessMcpError(_ODBC_NO_COLUMNS_REASON)
         grouped: dict[str, list[str]] = {}
         unique: dict[str, bool] = {}
@@ -266,7 +315,18 @@ class OdbcInspectionPort:
         ]
 
     def close(self) -> None:
-        """Leave the adapter-owned connection open; the session closes it."""
+        """Close the connection only when this port owns it.
+
+        A port wrapping an adapter-owned handle keeps the historical no-op semantics,
+        so existing callers are unchanged. A port built by ``open_odbc_inspection_port``
+        owns a fresh read-only connection and releases it exactly once; repeat calls
+        never close it again.
+        """
+        if not self._owns_connection or self._closed:
+            return None
+        self._closed = True
+        with contextlib.suppress(Exception):
+            self._connection.close()
         return None
 
     def _catalog_rows(self, table_type: str | None, table: str | None = None) -> list[tuple[str, str]]:
@@ -332,6 +392,72 @@ def open_inspection_port(dispatcher: Any) -> DaoInspectionPort:
     """
     dispatcher.reopen_dao_database_read_only()
     return DaoInspectionPort(dispatcher.current_db)
+
+
+def open_odbc_inspection_port(adapter: Any) -> OdbcInspectionPort:
+    """Open an inspection port over a fresh engine-level read-only ODBC connection.
+
+    Additive to the adapter's CRUD connection: the adapter opens a new read-only handle
+    and the returned port owns and closes it exactly once. There is no writable
+    fallback -- a missing read-only seam, a failing open, or an unusable open result
+    raises (with credentials scrubbed) instead of reusing the adapter's writable
+    connection. A setup exception after the open still releases the new handle.
+    """
+    opener = getattr(adapter, "open_readonly_inspection_connection", None)
+    if not callable(opener):
+        msg = "Documentation inspection requires an ODBC adapter with a read-only inspection connection"
+        raise AccessMcpError(msg)
+    try:
+        connection: Any = opener()
+    except Exception as error:
+        raise AccessMcpError(
+            redact_connection_secrets(str(error).strip() or type(error).__name__)
+        ) from error
+    if connection is None:
+        msg = "ODBC inspection read-only connection open returned no connection"
+        raise AccessMcpError(msg)
+    try:
+        return OdbcInspectionPort(connection, owns_connection=True)
+    except Exception:
+        # Never leak the freshly opened handle if wrapping it fails.
+        with contextlib.suppress(Exception):
+            connection.close()
+        raise
+
+
+def inspect_open_database(
+    database: Any,
+    *,
+    tables: list[str] | None,
+    queries: list[str] | None,
+) -> EvidenceDoc:
+    """Extract documentation evidence from an already-open ``DatabaseUseCases`` session.
+
+    The DAO path reopens the dispatcher's handle engine-level read-only and reports the
+    read-only handle as owned by ``database`` (the caller closes the use case); the ODBC
+    path opens a separate engine-level read-only connection owned by the inspection port
+    and releases it inside the inspection. Both branches fail closed when neither seam is
+    available instead of reusing a writable handle. This is the single extraction seam
+    the owned worker child runs; the parent frontends never call it on a parent handle.
+    """
+    adapter = getattr(database, "_adapter", None)
+    dispatcher = getattr(adapter, "_dispatcher", None)
+    if dispatcher is not None and dispatcher.is_connected():
+        port = open_inspection_port(dispatcher)
+
+        def leave_session_open() -> None:
+            return None
+
+        # The use case owns the DAO handle; the caller closes it after extraction.
+        port.close = leave_session_open
+        return dispatcher.call(
+            lambda: DocumentationInspectService().inspect(port, tables=tables, queries=queries)
+        )
+    if not callable(getattr(adapter, "open_readonly_inspection_connection", None)):
+        msg = "Documentation inspection requires a connected DAO or ODBC backend"
+        raise ValueError(msg)
+    port = open_odbc_inspection_port(adapter)
+    return DocumentationInspectService().inspect(port, tables=tables, queries=queries)
 
 
 class DocumentationInspectService:
@@ -401,8 +527,41 @@ class DocumentationInspectService:
         for table in selected_tables:
             coverage.tables.inspected.append(table.name)
             try:
-                indexes = port.get_indexes(table.name)
                 link_metadata = port.get_table_link_metadata(table.name)
+            except Exception as error:
+                reason = _reason(error)
+                coverage.tables.failed[table.name] = reason
+                table_evidence.append(_table_evidence(table, None, failure=reason, capabilities=capabilities))
+                continue
+            if link_metadata is not None:
+                # Classify before any column/index read: a linked table's fields and
+                # indexes belong to another source, so they are never read or carried.
+                coverage.tables.unsupported[table.name] = _LINKED_TABLE_NOT_INSPECTED_REASON
+                table_evidence.append(
+                    _table_evidence(
+                        table,
+                        None,
+                        link_metadata,
+                        indexes_unavailable_reason=_LINKED_TABLE_NOT_INSPECTED_REASON,
+                        drop_fields=True,
+                        capabilities=capabilities,
+                    )
+                )
+                continue
+            try:
+                indexes = port.get_indexes(table.name)
+            except InspectionCapabilityUnavailableError as gap:
+                reason = _reason(gap)
+                coverage.tables.unsupported[table.name] = reason
+                table_evidence.append(
+                    _table_evidence(
+                        table,
+                        None,
+                        indexes_unavailable_reason=reason,
+                        capabilities=capabilities,
+                    )
+                )
+                continue
             except Exception as error:
                 reason = _reason(error)
                 coverage.tables.failed[table.name] = reason
@@ -479,7 +638,10 @@ class DocumentationInspectService:
             relationships=relationship_evidence,
             queries=query_evidence,
         )
-        document.validate()
+        # Serializing at the seam both validates the document and enforces the evidence
+        # byte cap for generated evidence; frontends serialize the returned document
+        # again to emit it.
+        document.to_dict()
         return document
 
 
@@ -500,7 +662,7 @@ def _select_objects(kind: str, eligible: list[Any], requested: list[str] | None)
 def _reason(error: Exception | None) -> str:
     if error is None:
         return "Metadata read failed"
-    return str(error).strip() or type(error).__name__
+    return redact_connection_secrets(str(error).strip() or type(error).__name__)
 
 
 def _provenance(kind: str, name: str, prop: str) -> FactProvenance:
@@ -513,12 +675,21 @@ def _table_evidence(
     link_metadata: dict[str, Any] | None = None,
     failure: str | None = None,
     capabilities: InspectionCapabilities | None = None,
+    indexes_unavailable_reason: str | None = None,
+    drop_fields: bool = False,
 ) -> TableEvidence:
     capabilities = capabilities or InspectionCapabilities()
-    fields = [_field_evidence(field, capabilities) for field in table.fields]
-    if indexes is None:
-        primary_key = FactStatus.failed(failure or "Index metadata read failed", _provenance("table", table.name, "primary_key"))
+    fields = [] if drop_fields else [_field_evidence(field, capabilities) for field in table.fields]
+    if indexes_unavailable_reason is not None:
+        # The column/index read was deliberately not performed (e.g. a linked table);
+        # the primary key is an explicit gap, never a failed or observed-empty fact.
+        primary_key = FactStatus.unavailable(
+            indexes_unavailable_reason, _provenance("table", table.name, "primary_key")
+        )
         index_evidence: list[IndexEvidence] = []
+    elif indexes is None:
+        primary_key = FactStatus.failed(failure or "Index metadata read failed", _provenance("table", table.name, "primary_key"))
+        index_evidence = []
     else:
         index_evidence = [
             IndexEvidence(item.name, list(item.columns), item.is_unique, item.is_primary, item.ignore_nulls)
@@ -531,7 +702,8 @@ def _table_evidence(
             primary = next((item for item in indexes if item.is_primary), None)
             primary_key = FactStatus.observed(list(primary.columns) if primary else [], _provenance("table", table.name, "primary_key"))
     kind = "linked" if link_metadata else "local"
-    connect = link_metadata.get("connect") if link_metadata else None
+    # Never carry a raw connection string into evidence: drop credential pairs first.
+    connect = sanitize_connection_string(link_metadata.get("connect")) if link_metadata else None
     source_table_name = link_metadata.get("source_table_name") if link_metadata else None
     return TableEvidence(
         name=table.name,

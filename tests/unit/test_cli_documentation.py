@@ -1,9 +1,9 @@
 """CLI contract for the documentation-inspect error envelope.
 
-B1: ``documentation inspect`` must map every failure of the inspection open to the
-same ``Err`` envelope as the rest of the command. A read-only reopen failure
-(transient DAO locks are real in this repository) must not escape as an unhandled
-traceback.
+B1: ``documentation inspect`` must map every failure of the supervised inspection
+(including a read-only reopen failure inside the owned worker) to the same ``Err``
+envelope as the rest of the command. A transient DAO lock is real in this repository, so
+it must never escape as an unhandled traceback.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import patch
 
 from ms_access_mcp import cli
-from ms_access_mcp.application.database import Ok
+from ms_access_mcp.application.documentation_inspect import inspect_open_database
 
 
 class _RaisingReopenDispatcher:
@@ -58,10 +58,14 @@ class _FakeDatabase:
         self._adapter = _FakeAdapter(dispatcher)
         self.closed = False
 
-    def open_database(self, _path: str) -> Ok:
+    def open_database(self, _path: str) -> Any:
+        from ms_access_mcp.application.database import Ok
+
         return Ok(data={"path": _path})
 
-    def close_database(self) -> Ok:
+    def close_database(self) -> Any:
+        from ms_access_mcp.application.database import Ok
+
         self.closed = True
         return Ok()
 
@@ -73,50 +77,45 @@ class _FakeEvidence:
         return {"tables": []}
 
 
-class _FakePort:
-    def close(self) -> None:
-        return None
-
-
-class _FakeInspectService:
-    def inspect(self, _port: Any, *, tables: Any, queries: Any) -> _FakeEvidence:
-        del tables, queries
-        return _FakeEvidence()
-
-
 def _run_cli(argv: list[str]) -> int:
     with patch.object(sys, "argv", ["ms-access-mcp", *argv]):
         return cli.main()
 
 
-def test_inspect_reopen_failure_returns_err_envelope_without_raising(capsys) -> None:
-    """A failing read-only reopen yields the formatted Err envelope, not a traceback."""
+def test_inspect_open_database_reopen_failure_propagates_before_any_evidence() -> None:
+    """The worker extraction seam keeps a failing read-only reopen visible, not silent."""
     dispatcher = _RaisingReopenDispatcher()
     database = _FakeDatabase(dispatcher)
-    with patch.object(cli, "DatabaseUseCases", return_value=database):
+    try:
+        inspect_open_database(database, tables=None, queries=None)
+    except RuntimeError as error:
+        assert "database locked by another session" in str(error)
+    else:  # pragma: no cover - the raise is the assertion
+        raise AssertionError("a failing read-only reopen must not yield evidence")
+    assert dispatcher.reopen_calls == 1
+
+
+def test_inspect_worker_failure_returns_err_envelope_without_raising(capsys) -> None:
+    """A failing worker inspection yields the formatted Err envelope, not a traceback."""
+
+    def _boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("reopen failed: database locked by another session")
+
+    with patch.object(cli, "run_documentation_inspection", _boom):
         result = _run_cli(["documentation", "inspect", "--db", "core.accdb"])
 
     captured = capsys.readouterr()
     assert result == 1
-    assert dispatcher.reopen_calls == 1
     assert "Error: reopen failed: database locked by another session" in captured.err
     assert "Traceback" not in captured.err
     assert captured.out == ""
-    assert database.closed is True
 
 
 def test_inspect_success_still_returns_ok_envelope(capsys) -> None:
-    """PRESERVE: a successful inspection open keeps the Ok envelope and exit 0."""
-    dispatcher = _OkDispatcher()
-    database = _FakeDatabase(dispatcher)
-    with (
-        patch.object(cli, "DatabaseUseCases", return_value=database),
-        patch.object(cli, "open_inspection_port", return_value=_FakePort()),
-        patch.object(cli, "DocumentationInspectService", _FakeInspectService),
-    ):
+    """PRESERVE: a successful supervised inspection keeps the Ok envelope and exit 0."""
+    with patch.object(cli, "run_documentation_inspection", lambda *a, **k: _FakeEvidence()):
         result = _run_cli(["documentation", "inspect", "--db", "core.accdb"])
 
     captured = capsys.readouterr()
     assert result == 0
     assert "Traceback" not in captured.err
-    assert database.closed is True

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import json
 import logging
 import os
 import shutil
@@ -17,8 +16,13 @@ from typing import Any
 from .application.automation import AutomationUseCases
 from .application.database import DatabaseUseCases, Err
 from .application.documentation import EvidenceDoc
-from .application.documentation_inspect import DocumentationInspectService, OdbcInspectionPort, open_inspection_port
+from .application.documentation_limits import (
+    ensure_evidence_within_limit,
+    read_evidence_json_file,
+    read_report_json_file,
+)
 from .application.documentation_render import ReportDoc, render_document
+from .application.documentation_runtime import run_documentation_inspection
 from .application.documentation_save import DocumentationSaveService, DocumentationWritePolicy
 from .application.maintenance import MaintenanceUseCases
 from .application.protocols import AutomationUseCasesProtocol, MaintenanceUseCasesProtocol, VersioningUseCasesProtocol
@@ -1836,33 +1840,6 @@ def _unwrap_cli_envelope(payload: Any) -> Any:
     return payload
 
 
-def _inspect_open_session(database: Any, *, tables: Any, queries: Any) -> Any:
-    """Inspect an open session through its DAO or ODBC inspection port.
-
-    The DAO path reopens engine-level read-only before reading; the ODBC path reuses
-    the adapter's already-open connection (ODBC exposes no read-only reopen) and
-    reports ODBC-invisible metadata as `unavailable` instead of fabricating it.
-    """
-    adapter = getattr(database, "_adapter", None)
-    dispatcher = getattr(adapter, "_dispatcher", None)
-    if dispatcher is not None and dispatcher.is_connected():
-        port = open_inspection_port(dispatcher)
-
-        def leave_session_open() -> None:
-            return None
-
-        port.close = leave_session_open
-        return dispatcher.call(
-            lambda: DocumentationInspectService().inspect(port, tables=tables, queries=queries)
-        )
-    connection = getattr(adapter, "connection", None)
-    if connection is not None:
-        return DocumentationInspectService().inspect(
-            OdbcInspectionPort(connection), tables=tables, queries=queries
-        )
-    raise ValueError("Documentation inspection requires a connected DAO or ODBC backend")
-
-
 def _cmd_documentation(args: argparse.Namespace) -> int:
     """Run inspect/render/save documentation operations."""
     from .errors import err, ok
@@ -1871,24 +1848,27 @@ def _cmd_documentation(args: argparse.Namespace) -> int:
         if not args.db:
             print("Error: --db required", file=sys.stderr)
             return 2
-        database = DatabaseUseCases(backend=args.backend, readonly=True, allowed_dirs=cli_allowed_dirs())
+        # The supervised facade owns the source open in an isolated child; the CLI never
+        # opens the source itself, so the whole-inspection deadline covers the open too.
         try:
-            opened = database.open_database(args.db)
-            if isinstance(opened, Err):
-                result = opened
-            else:
-                try:
-                    evidence = _inspect_open_session(database, tables=args.tables, queries=args.queries)
-                    payload = evidence.to_dict()
-                    payload["status"] = evidence.status
-                    result = ok(data=payload)
-                except Exception as exc:
-                    result = err(str(exc))
-        finally:
-            database.close_database()
+            evidence = run_documentation_inspection(
+                args.db,
+                backend=args.backend,
+                allowed_dirs=cli_allowed_dirs(),
+                tables=args.tables,
+                queries=args.queries,
+            )
+            payload = evidence.to_dict()
+            payload["status"] = evidence.status
+            # Re-check the whole emitted payload (status metadata included) against
+            # the evidence cap; outer Ok/JSON-RPC wrapper allowance is unchanged.
+            ensure_evidence_within_limit(payload)
+            result = ok(data=payload)
+        except Exception as exc:
+            result = err(str(exc))
     elif args.documentation_action == "render":
         try:
-            evidence = EvidenceDoc.from_dict(_unwrap_cli_envelope(json.loads(Path(args.evidence).read_text(encoding="utf-8"))))
+            evidence = EvidenceDoc.from_dict(_unwrap_cli_envelope(read_evidence_json_file(args.evidence)))
             result = ok(data=render_document(evidence, kind=args.kind, language=args.language).to_dict())
         except Exception as exc:
             result = err(str(exc))
@@ -1897,7 +1877,7 @@ def _cmd_documentation(args: argparse.Namespace) -> int:
             print("Error: documentation save requires --yes", file=sys.stderr)
             return 2
         try:
-            report = ReportDoc.from_dict(_unwrap_cli_envelope(json.loads(Path(args.report).read_text(encoding="utf-8"))))
+            report = ReportDoc.from_dict(_unwrap_cli_envelope(read_report_json_file(args.report)))
             allowed = args.allow_doc_write or os.environ.get("ACCESS_MCP_ALLOW_DOC_WRITE", "").casefold() in {"1", "true"}
             saved = DocumentationSaveService(DocumentationWritePolicy(allowed=allowed)).save(
                 report.markdown,
@@ -1917,7 +1897,7 @@ def _build_documentation_parser(sub: argparse._SubParsersAction) -> None:
     parser = sub.add_parser("documentation", help="Inspect and render database documentation")
     actions = parser.add_subparsers(dest="documentation_action")
 
-    inspect = actions.add_parser("inspect", help="Inspect metadata into evidence")
+    inspect = actions.add_parser("inspect", help="Inspect metadata into evidence (120s whole-inspection deadline)")
     inspect.add_argument("--db", required=True, help="Closed, offline Access database path")
     inspect.add_argument("--backend", choices=["auto", "dao", "odbc"], default="auto", help="Backend to use")
     inspect.add_argument("--json", action="store_true", help="JSON output")
