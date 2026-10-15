@@ -451,6 +451,9 @@
         "module": "StartupMarkerModule",
         "macro": "AutoExec",
         "control_name": "StartupControl",
+        "named_macro": "ManualMarker",
+        "autokeys_macro": "AutoKeys",
+        "autokeys_control_name": "AutoKeysControl",
         "marker_filename": "startup_executed.marker",
         "execution_policy": "authorized-isolated-control-only"
       }

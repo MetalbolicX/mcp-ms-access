@@ -1,6 +1,7 @@
 """Public CLI contract for the synthetic fixture builder (no ACE required)."""
 from __future__ import annotations
 
+import ast
 import json
 import re
 import subprocess
@@ -89,6 +90,9 @@ def test_describe_matches_approved_fixture_and_committed_manifest() -> None:
         "module": "StartupMarkerModule",
         "macro": "AutoExec",
         "control_name": "StartupControl",
+        "named_macro": "ManualMarker",
+        "autokeys_macro": "AutoKeys",
+        "autokeys_control_name": "AutoKeysControl",
         "marker_filename": "startup_executed.marker",
         "execution_policy": "authorized-isolated-control-only",
     }
@@ -172,3 +176,80 @@ def test_startup_vba_derives_only_the_fixed_marker_without_escape_hatches() -> N
     macro_source = generator._STARTUP_MACRO_SOURCE
     assert re.findall(r'Action ="([^"]*)"', macro_source) == ["RunCode"]
     assert re.findall(r'Argument ="([^"]*)"', macro_source) == [f"{function_name}()"]
+
+
+def test_generated_executable_and_macro_sources_have_no_escape_hatches() -> None:
+    """Lock the generated executable/macro source safety property.
+
+    Applicability exception: this is a locking pin over the newly added generator
+    surface, so it passes against the intended sources and no synthetic RED is
+    manufactured. It fails if a future edit introduces an ambient path source, a
+    shell/registry/object-creation primitive, a network URL, or a traversal, and it
+    pins the named macro and AutoKeys group to the same single RunCode marker call as
+    AutoExec.
+    """
+    vba_source = generator._STARTUP_MODULE_SOURCE.format(marker=generator.STARTUP_MARKER_FILENAME)
+    for label, text in (
+        ("VBA module", vba_source),
+        ("AutoExec macro", generator._STARTUP_MACRO_SOURCE),
+        ("named macro", generator._MANUAL_MARKER_MACRO_SOURCE),
+        ("AutoKeys macro", generator._AUTOKEYS_MACRO_SOURCE),
+    ):
+        for token in ("Shell", "Environ", "WScript", "RegRead", "RegWrite", "CreateObject"):
+            assert token not in text, f"{label} must not reference {token}"
+        assert re.search(r"\bKill\b", text) is None, f"{label} must not call Kill"
+        assert "http" not in text.lower(), f"{label} must not reference a network URL"
+        assert "\\\\" not in text, f"{label} must not reference a UNC path"
+        assert ".." not in text, f"{label} must not traverse with '..'"
+
+    assert re.findall(r'Action ="([^"]*)"', generator._MANUAL_MARKER_MACRO_SOURCE) == ["RunCode"]
+    assert re.findall(r'Argument ="([^"]*)"', generator._MANUAL_MARKER_MACRO_SOURCE) == ["StartupMarker()"]
+    assert generator._AUTOKEYS_MACRO_SOURCE.count("Begin") == 1
+    assert generator._AUTOKEYS_MACRO_SOURCE.count("End") == 1
+    assert re.findall(r'MacroName ="([^"]*)"', generator._AUTOKEYS_MACRO_SOURCE) == ["^+{F12}"]
+    assert re.findall(r'Action ="([^"]*)"', generator._AUTOKEYS_MACRO_SOURCE) == ["RunCode"]
+    assert re.findall(r'Argument ="([^"]*)"', generator._AUTOKEYS_MACRO_SOURCE) == ["StartupMarker()"]
+
+
+def _generator_provenance_filenames() -> set[str]:
+    """Return the ``output / "<literal>"`` provenance filenames the startup builder writes.
+
+    The generator is a script, not an installed module, so the set is read from its
+    source: within ``create_startup_code`` every ``output / "<name>"`` path is a
+    provenance file left beside the built databases.
+    """
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "create_startup_code":
+            return {
+                child.right.value
+                for child in ast.walk(node)
+                if isinstance(child, ast.BinOp)
+                and isinstance(child.op, ast.Div)
+                and isinstance(child.left, ast.Name)
+                and child.left.id == "output"
+                and isinstance(child.right, ast.Constant)
+                and isinstance(child.right.value, str)
+            }
+    raise AssertionError("generator function create_startup_code not found")
+
+
+def test_provenance_filenames_contain_no_marker_token() -> None:
+    """Lock the provenance names so no built artifact carries the ``marker`` token.
+
+    Applicability exception: this is a locking pin over the audit-verified generator
+    provenance names (the same exception class as the prior startup-safety pin), so it
+    passes against the current source immediately and no synthetic RED is manufactured.
+    It fails if a provenance file is renamed to include ``marker`` -- the T5
+    ``manual_marker_macro.txt`` -> ``named_macro.txt`` rename is exactly this risk --
+    because the pipeline suites' ``*marker*`` detector globs file names beside the built
+    databases, and a provenance file matching it would be a false non-execution failure.
+    """
+    provenance = _generator_provenance_filenames()
+    assert provenance == {
+        "startup_module.bas",
+        "startup_macro.txt",
+        "named_macro.txt",
+        "autokeys_macro.txt",
+    }
+    assert not any("marker" in name.lower() for name in provenance)

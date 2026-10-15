@@ -312,11 +312,14 @@ def test_startup_fixture_is_observable_and_never_executed(
     """Startup table/row readback plus module and macro names; no marker is produced.
 
     DAO observability is limited to the object names: ``Modules`` exposes the VBA
-    module name and ``Scripts`` exposes the macro name (there is no ``Macros``
-    container), but neither exposes the VBA source or the macro's actions. Reading the
-    fixture through DAO therefore cannot execute anything, and the absence of the
-    marker beside the built database is the observable non-execution proof for this
-    suite. The deliberate execution proof lives in the gated control run.
+    module name and ``Scripts`` exposes the macro names (there is no ``Macros``
+    container) — ``AutoExec``, the never-auto-run named macro ``ManualMarker``, and the
+    ``AutoKeys`` macro group. Neither container exposes the VBA source or the macro's
+    actions, and the ``AutoKeys`` group holds a single submacro triggered only by a
+    keyboard chord. Reading the fixture through DAO therefore cannot execute anything,
+    and the absence of the marker beside the built database is the observable
+    non-execution proof for this suite. The deliberate execution proof lives in the
+    gated control run.
     """
     startup = _load_manifest()["databases"]["startup.accdb"]
     spec = startup["startup"]
@@ -326,6 +329,8 @@ def test_startup_fixture_is_observable_and_never_executed(
         assert _user_table_names(db) == set(startup["tables"])
         assert len(_snapshot_rows(db, "StartupNotes")) == startup["tables"]["StartupNotes"]["rows"]
         assert _container_document_names(db, "Modules") == {spec["module"]}
-        assert _container_document_names(db, "Scripts") == {spec["macro"]}
+        assert _container_document_names(db, "Scripts") == {
+            spec["macro"], spec["named_macro"], spec["autokeys_macro"],
+        }
     assert not (directory / spec["marker_filename"]).exists()
     assert not (directory / "startup.accdb.laccdb").exists()

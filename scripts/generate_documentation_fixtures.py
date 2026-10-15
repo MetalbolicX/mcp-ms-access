@@ -1,14 +1,14 @@
 """Build local synthetic ACE fixtures; never overwrite existing databases.
 
 Use --describe for the expected structural manifest, or --build to create the
-four databases. Only the startup fixture contains executable VBA and an AutoExec
-macro. The generator keeps strict build-order discipline around it: the table is
-created through DAO-only DDL, Access.Application is opened only while no AutoExec
-exists, the module and macro are loaded from text definitions, the macro is
-renamed to AutoExec last, and the database is never reopened. The generator never
-runs VBA or a macro, and no saved query is executed. Linking during construction
-intentionally accesses the local sentinel; that activity is not evidence of
-inspection-time isolation.
+four databases. Only the startup fixture contains executable VBA and macros. The
+generator keeps strict build-order discipline around it: tables are created through
+DAO-only DDL, Access.Application is opened only while no auto-run object exists, the
+module, the named macro, the AutoKeys group, and the AutoExec macro are loaded from
+text definitions, the auto-run macro names are assigned last, and the database is
+never reopened. The generator never runs VBA or a macro, and no saved query is
+executed. Linking during construction intentionally accesses the local sentinel; that
+activity is not evidence of inspection-time isolation.
 """
 from __future__ import annotations
 
@@ -32,15 +32,21 @@ LOCALE = ";LANGID=0x0409;CP=1252;COUNTRY=0"
 # AcObjectType constants for Access.Application.LoadFromText and DoCmd.Rename.
 _AC_MACRO = 4
 _AC_MODULE = 5
-# msoAutomationSecurityForceDisable: the build opens Access only before any AutoExec
-# exists, and this explicit value is a second guard that forbids macros from running at
-# all during that phase.
+# msoAutomationSecurityForceDisable: the build opens Access only before any auto-run
+# object exists, and this explicit value is a second guard that forbids macros from
+# running at all during that phase.
 _MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
 # Never an absolute, user, home, temporary, or network path: the VBA derives the
 # marker location from the database's own directory, so a copied database writes
 # beside the copy and a session build writes nowhere. This filename is the only
 # path component in the generated VBA.
 STARTUP_MARKER_FILENAME = "startup_executed.marker"
+# Auto-run-adjacent names are assigned only after every load, immediately before the
+# database is closed: AutoExec runs at startup and AutoKeys runs on keyboard input.
+# Neither can run while only the neutral control names exist.
+MANUAL_MARKER_MACRO_NAME = "ManualMarker"
+AUTOKEYS_MACRO_NAME = "AutoKeys"
+AUTOKEYS_CONTROL_NAME = "AutoKeysControl"
 # Standard modules load as raw VBA source (the ``Version``/``Begin`` wrapper is a
 # SaveAsText export framing, not module code, and would import as a compile error).
 # Macros load in the framed macro text format.
@@ -63,8 +69,20 @@ Begin
     Argument ="StartupMarker()"
 End
 '''
-
-
+# A named macro that only runs when a user or code invokes it by name; nothing in the
+# build or the inspection pipeline ever invokes it.
+_MANUAL_MARKER_MACRO_SOURCE = _STARTUP_MACRO_SOURCE
+# An AutoKeys macro group whose only submacro is triggered by a keyboard chord. Without
+# Access UI keyboard input it never runs, but the group is still loaded under a neutral
+# name and renamed to AutoKeys last, exactly like AutoExec.
+_AUTOKEYS_MACRO_SOURCE = '''Version =196611
+ColumnsShown =0
+Begin
+    MacroName ="^+{F12}"
+    Action ="RunCode"
+    Argument ="StartupMarker()"
+End
+'''
 def field(kind: str = "LONG", *, required: bool = False,
           default: str | None = None, validation: str | None = None) -> dict[str, Any]:
     return {"type": kind, "required": required, "default": default, "validation": validation}
@@ -136,6 +154,9 @@ def expected_manifest() -> dict[str, Any]:
         "module": "StartupMarkerModule",
         "macro": "AutoExec",
         "control_name": "StartupControl",
+        "named_macro": MANUAL_MARKER_MACRO_NAME,
+        "autokeys_macro": AUTOKEYS_MACRO_NAME,
+        "autokeys_control_name": AUTOKEYS_CONTROL_NAME,
         "marker_filename": STARTUP_MARKER_FILENAME,
         "execution_policy": "authorized-isolated-control-only",
     }
@@ -319,36 +340,50 @@ def _ensure_no_owned_access(baseline: set[int]) -> None:
 
 
 def create_startup_code(output: Path, name: str, startup: dict[str, Any]) -> None:
-    """Add the VBA module and AutoExec macro without ever running startup code.
+    """Add the VBA module and macros without ever running any of them.
 
     Build-order discipline: DAO already created the table, so Access.Application opens a
-    database that has no macro named ``AutoExec``. The module and the macro (temporarily
-    named ``control_name``) are loaded from the text definitions written beside the
-    database; only then is the macro renamed to ``AutoExec``. The database is closed and
-    the application is quit without reopening, so startup code cannot run during the
-    build. ``Application.LoadFromText`` is used because ``DoCmd.LoadFromText`` is not
-    exposed on the late-bound ``DoCmd`` object; it is the same database operation.
+    database that has no macro named ``AutoExec`` (and no ``AutoKeys`` group). The module,
+    the named macro, and the AutoKeys group (temporarily named ``AutoKeysControl``) are
+    loaded from the text definitions written beside the database. Only then are the
+    auto-run-named objects renamed: AutoKeys first, AutoExec last, immediately before the
+    database is closed. The database is closed and the application is quit without
+    reopening, so startup code cannot run during the build. ``Application.LoadFromText`` is
+    used because ``DoCmd.LoadFromText`` is not exposed on the late-bound ``DoCmd`` object;
+    it is the same database operation.
     """
     import win32com.client
 
     module_path = output / "startup_module.bas"
     macro_path = output / "startup_macro.txt"
+    manual_macro_path = output / "named_macro.txt"
+    autokeys_macro_path = output / "autokeys_macro.txt"
+    manual_macro_name = startup["named_macro"]
+    autokeys_name = startup["autokeys_macro"]
+    autokeys_control = startup["autokeys_control_name"]
+
     module_path.write_text(
         _STARTUP_MODULE_SOURCE.format(marker=startup["marker_filename"]),
         encoding="utf-8", newline="\r\n",
     )
     macro_path.write_text(_STARTUP_MACRO_SOURCE, encoding="utf-8", newline="\r\n")
+    manual_macro_path.write_text(_MANUAL_MARKER_MACRO_SOURCE, encoding="utf-8", newline="\r\n")
+    autokeys_macro_path.write_text(_AUTOKEYS_MACRO_SOURCE, encoding="utf-8", newline="\r\n")
     app: Any = None
     try:
         app = win32com.client.Dispatch("Access.Application")
         app.Visible = False
-        # Second guard on top of the no-AutoExec-at-open ordering: forbid macros from
-        # running at all while the module and macro are loaded and renamed. Those are
+        # Second guard on top of the no-auto-run-object-at-open ordering: forbid macros
+        # from running at all while the module and macros are loaded and renamed. Those are
         # database edits, not macro execution, so they still succeed under force-disable.
         app.AutomationSecurity = _MSO_AUTOMATION_SECURITY_FORCE_DISABLE
         app.OpenCurrentDatabase(str(output / name))
         app.LoadFromText(_AC_MODULE, startup["module"], str(module_path))
         app.LoadFromText(_AC_MACRO, startup["control_name"], str(macro_path))
+        app.LoadFromText(_AC_MACRO, manual_macro_name, str(manual_macro_path))
+        app.LoadFromText(_AC_MACRO, autokeys_control, str(autokeys_macro_path))
+        # Auto-run-adjacent names are the very last edits, then the database closes.
+        app.DoCmd.Rename(autokeys_name, _AC_MACRO, autokeys_control)
         app.DoCmd.Rename(startup["macro"], _AC_MACRO, startup["control_name"])
         app.CloseCurrentDatabase()
     finally:
