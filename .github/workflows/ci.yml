@@ -88,9 +88,10 @@ jobs:
 
       - name: COM integration suite
         shell: pwsh
-        run: .venv-ci\Scripts\python.exe -B -m pytest tests/integration -m com_integration -q -p no:cacheprovider
+        run: .venv-ci\Scripts\python.exe -B -m pytest tests/integration -m "com_integration or odbc_integration" -q -p no:cacheprovider
         env:
           PYTHONDONTWRITEBYTECODE: '1'
+          ACCESS_DOCUMENTATION_FIXTURES_TEST: '1'
 
       - name: Shutdown resilience smoke (g10)
         shell: pwsh
