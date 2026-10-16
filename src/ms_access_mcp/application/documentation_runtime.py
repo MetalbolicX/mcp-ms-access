@@ -139,6 +139,7 @@ class DocumentationRuntime:
         allowed_dirs: list[Path],
         tables: list[str] | None,
         queries: list[str] | None,
+        include_query_sql: bool = False,
     ) -> EvidenceDoc:
         """Run one whole inspection in an owned child, or raise a safe ``AccessMcpError``."""
         request = build_request(
@@ -147,6 +148,7 @@ class DocumentationRuntime:
             allowed_dirs=allowed_dirs,
             tables=tables,
             queries=queries,
+            include_query_sql=include_query_sql,
         )
         request_bytes = encode_request(request)
         output_limit = documentation_limits.worker_output_limit()
@@ -323,6 +325,7 @@ def run_documentation_inspection(
     allowed_dirs: list[Path],
     tables: list[str] | None = None,
     queries: list[str] | None = None,
+    include_query_sql: bool = False,
 ) -> EvidenceDoc:
     """Run one inspection through the default supervised runtime facade."""
     return DocumentationRuntime().inspect(
@@ -331,4 +334,5 @@ def run_documentation_inspection(
         allowed_dirs=allowed_dirs,
         tables=tables,
         queries=queries,
+        include_query_sql=include_query_sql,
     )

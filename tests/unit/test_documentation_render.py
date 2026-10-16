@@ -202,6 +202,35 @@ def test_failed_query_sql_renders_reason_not_empty_code_fence() -> None:
     assert "```sql\n\n```" not in report.markdown
 
 
+def test_excluded_query_sql_renders_its_reason_without_a_coverage_gap() -> None:
+    """A deliberately excluded SQL fact is visible in prose but never a coverage gap.
+
+    Exclusion is an output policy (SQL is untrusted source text), so the document stays
+    ``complete`` and no ``coverage.queries`` bucket records it; the renderer still states
+    the exclusion instead of dropping the section silently.
+    """
+    evidence = make_evidence()
+    # A known-empty parameter list keeps every other fact observed, so the baseline is
+    # ``complete`` and the assertion isolates the effect of the excluded SQL fact.
+    evidence.queries[0].parameters = FactStatus.observed([], provenance("query", "Q", "parameters"))
+    assert render_document(evidence).status == "complete"
+    evidence.queries[0].sql = FactStatus.excluded(
+        "Saved-query SQL is excluded from emitted evidence by default",
+        provenance("query", "Q", "sql"),
+    )
+    report = render_document(evidence)
+    assert "- SQL **excluded**: Saved-query SQL is excluded from emitted evidence by default" in report.markdown
+    assert report.status == "complete"
+    assert report.coverage["queries"] == {
+        "inspected": 1,
+        "excluded": 0,
+        "unsupported": 0,
+        "failed": 0,
+    }
+    assert "- Excluded (queries)" not in report.markdown
+    assert "```sql" not in report.markdown
+
+
 def test_unsupported_cardinality_relationship_is_catalogued_but_not_diagrammed() -> None:
     report = render_document(make_evidence(justified=False))
     assert "cardinality not derivable from evidence" in report.markdown

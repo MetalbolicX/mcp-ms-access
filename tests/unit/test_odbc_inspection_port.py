@@ -421,7 +421,12 @@ def test_close_leaves_the_adapter_owned_connection_open() -> None:
 
 def test_odbc_seam_keeps_visible_facts_observed_and_gaps_unavailable() -> None:
     document = DocumentationInspectService().inspect(
-        OdbcInspectionPort(_odbc_connection()), tables=None, queries=None
+        OdbcInspectionPort(_odbc_connection()),
+        tables=None,
+        queries=None,
+        # The SQL facts below are opt-in; the default excludes them before the
+        # capability check (see the default-off regression test next to this one).
+        include_query_sql=True,
     )
     assert document.source.backend_identity == "ODBC"
     assert [table.name for table in document.tables] == ["Customers", "LinkedCustomers"]
@@ -457,6 +462,41 @@ def test_odbc_seam_keeps_visible_facts_observed_and_gaps_unavailable() -> None:
     assert queries["qryOpenOrders"].parameters.state == "observed"
     assert queries["qryOpenOrders"].parameters.value == []
     assert document.status == "partial"
+
+
+def test_odbc_seam_excludes_sql_by_default_and_reports_unavailable_when_opted_in() -> None:
+    """ODBC precedence: default off excludes the SQL fact; opt-in reports the real gap."""
+    default_port = OdbcInspectionPort(_odbc_connection())
+    default_document = DocumentationInspectService().inspect(
+        default_port, tables=None, queries=None
+    )
+    default_queries = {query.name: query for query in default_document.queries}
+    assert default_queries["qryOpenOrders"].sql.state == "excluded"
+    assert default_queries["qryOpenOrders"].sql.reason
+    assert default_queries["qryOpenOrders"].type.state == "unavailable"
+    assert default_document.coverage.queries.unsupported == {}
+    assert default_document.coverage.queries.failed == {}
+
+    opted_in_port = OdbcInspectionPort(_odbc_connection())
+    opted_in_document = DocumentationInspectService().inspect(
+        opted_in_port, tables=None, queries=None, include_query_sql=True
+    )
+    opted_in_queries = {query.name: query for query in opted_in_document.queries}
+    assert opted_in_queries["qryOpenOrders"].sql.state == "unavailable"
+    assert "VIEW rows" in opted_in_queries["qryOpenOrders"].sql.reason
+
+
+def test_inspect_open_database_threads_include_query_sql_to_the_service() -> None:
+    """The open-database seam forwards the flag; the default stays excluded."""
+    opted_in = inspect_open_database(
+        _WiringDatabase(_odbc_connection()), tables=None, queries=None, include_query_sql=True
+    )
+    opted_in_queries = {query.name: query for query in opted_in.queries}
+    assert opted_in_queries["qryOpenOrders"].sql.state == "unavailable"
+
+    default = inspect_open_database(_WiringDatabase(_odbc_connection()), tables=None, queries=None)
+    default_queries = {query.name: query for query in default.queries}
+    assert default_queries["qryOpenOrders"].sql.state == "excluded"
 
 
 def test_odbc_index_read_failure_is_failed_not_unavailable() -> None:
@@ -602,9 +642,9 @@ def test_mcp_inspect_forwards_inspection_context_to_the_facade() -> None:
     database = _WiringDatabase(connection)
     seen: dict[str, Any] = {}
 
-    def fake_run(path: str, *, backend: str, allowed_dirs: Any, tables: Any, queries: Any) -> Any:
-        seen.update(path=path, backend=backend, allowed_dirs=list(allowed_dirs), tables=tables, queries=queries)
-        return inspect_open_database(database, tables=tables, queries=queries)
+    def fake_run(path: str, *, backend: str, allowed_dirs: Any, tables: Any, queries: Any, include_query_sql: bool = False) -> Any:
+        seen.update(path=path, backend=backend, allowed_dirs=list(allowed_dirs), tables=tables, queries=queries, include_query_sql=include_query_sql)
+        return inspect_open_database(database, tables=tables, queries=queries, include_query_sql=include_query_sql)
 
     with (
         patch.object(analysis, "_new_db", return_value=database),
@@ -619,7 +659,28 @@ def test_mcp_inspect_forwards_inspection_context_to_the_facade() -> None:
         "allowed_dirs": [],
         "tables": ["Customers"],
         "queries": None,
+        "include_query_sql": False,
     }
+
+
+def test_mcp_inspect_forwards_the_sql_opt_in_flag() -> None:
+    """MCP opt-in is forwarded to the facade; the default stays false."""
+    connection = _odbc_connection()
+    database = _WiringDatabase(connection)
+    seen: list[bool] = []
+
+    def fake_run(path: str, *, backend: str, allowed_dirs: Any, tables: Any, queries: Any, include_query_sql: bool = False) -> Any:
+        seen.append(include_query_sql)
+        return inspect_open_database(database, tables=tables, queries=queries, include_query_sql=include_query_sql)
+
+    with (
+        patch.object(analysis, "_new_db", return_value=database),
+        patch.object(analysis, "run_documentation_inspection", fake_run),
+    ):
+        analysis.documentation_inspect(path="core.accdb")
+        analysis.documentation_inspect(path="core.accdb", include_query_sql=True)
+
+    assert seen == [False, True]
 
 
 def test_mcp_inspect_odbc_uses_the_readonly_inspection_factory() -> None:

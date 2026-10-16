@@ -57,7 +57,7 @@ def test_documentation_tools_are_analysis_only_and_typed():
     assert {"documentation_inspect", "documentation_render", "documentation_save"} <= _tool_names("analysis")
     assert not ({"documentation_inspect", "documentation_render", "documentation_save"} & _tool_names("core"))
     expected = {
-        "documentation_inspect": {"path", "tables", "queries", "connection_ref"},
+        "documentation_inspect": {"path", "tables", "queries", "connection_ref", "include_query_sql"},
         "documentation_render": {"evidence", "kind", "language", "interpretations"},
         "documentation_save": {"report", "output_path", "confirm", "overwrite", "expected_fingerprint"},
     }
@@ -179,4 +179,8 @@ def test_documentation_prompts_render_deterministically_and_use_real_tools():
         assert "no-completeness" in text.lower() or "do not claim completeness" in text.lower()
     er = asyncio.run(server.get_prompt("generate_er_documentation", {"path": "er.accdb"})).messages[0].content.text
     assert 'kind="er"' in er
-    assert "no query extraction" in er.lower()
+    # The prompt states the default-vs-opt-in SQL contract instead of the old
+    # contradiction that claimed no saved-query SQL extraction ever happens.
+    assert "no query extraction" not in er.lower()
+    assert "--include-query-sql" in er
+    assert "default" in er.lower()

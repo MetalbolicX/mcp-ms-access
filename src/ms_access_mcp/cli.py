@@ -1370,7 +1370,14 @@ def _build_query_parser(sub: argparse._SubParsersAction) -> None:
     """Add query subcommand family."""
     query_parser = sub.add_parser("query", help="Execute a SELECT query")
     query_parser.add_argument("sql", type=str, help="SQL SELECT statement")
-    query_parser.add_argument("--param", nargs="*", help="Query parameters")
+    query_parser.add_argument(
+        "--param",
+        nargs="*",
+        help=(
+            "Query parameters; a non-empty binding list requires the ODBC backend "
+            "(DAO rejects parameter bindings)"
+        ),
+    )
     query_parser.add_argument("--limit", type=int, help="Row limit")
     _add_global_flags(query_parser)
     query_parser.set_defaults(func=_with_db(_cmd_query))
@@ -1857,6 +1864,7 @@ def _cmd_documentation(args: argparse.Namespace) -> int:
                 allowed_dirs=cli_allowed_dirs(),
                 tables=args.tables,
                 queries=args.queries,
+                include_query_sql=args.include_query_sql,
             )
             payload = evidence.to_dict()
             payload["status"] = evidence.status
@@ -1903,6 +1911,14 @@ def _build_documentation_parser(sub: argparse._SubParsersAction) -> None:
     inspect.add_argument("--json", action="store_true", help="JSON output")
     inspect.add_argument("--tables", action="append", help="Table to inspect (repeatable)")
     inspect.add_argument("--queries", action="append", help="Saved query to inspect (repeatable)")
+    inspect.add_argument(
+        "--include-query-sql",
+        action="store_true",
+        help=(
+            "Include emitted saved-query SQL evidence (default: SQL is excluded because "
+            "it is untrusted source text that may contain credentials)"
+        ),
+    )
     inspect.set_defaults(func=_cmd_documentation)
 
     render = actions.add_parser("render", help="Render evidence JSON to a Markdown report")

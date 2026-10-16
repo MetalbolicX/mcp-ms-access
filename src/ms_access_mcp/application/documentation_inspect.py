@@ -47,6 +47,17 @@ CAP_RELATIONSHIPS = "relationships"
 CAP_QUERY_SQL = "query_sql"
 CAP_QUERY_TYPE = "query_type"
 
+# Emitted saved-query SQL is gated by an explicit opt-in (``include_query_sql``). The
+# exclusion is a deliberate output policy applied before any capability check: SQL source
+# text is untrusted and may embed credentials. ``get_queries`` still enumerates saved
+# queries (names, category, and the SQL it needs internally); only the emitted SQL
+# evidence is withheld, so this is never a claim that the SQL was not read at all.
+_QUERY_SQL_EXCLUDED_REASON = (
+    "Saved-query SQL is excluded from emitted evidence by default because it is "
+    "untrusted source text that may contain credentials; request it explicitly "
+    "(include_query_sql / --include-query-sql) to include it"
+)
+
 
 @dataclass(frozen=True)
 class InspectionCapabilities:
@@ -430,6 +441,7 @@ def inspect_open_database(
     *,
     tables: list[str] | None,
     queries: list[str] | None,
+    include_query_sql: bool = False,
 ) -> EvidenceDoc:
     """Extract documentation evidence from an already-open ``DatabaseUseCases`` session.
 
@@ -439,6 +451,10 @@ def inspect_open_database(
     and releases it inside the inspection. Both branches fail closed when neither seam is
     available instead of reusing a writable handle. This is the single extraction seam
     the owned worker child runs; the parent frontends never call it on a parent handle.
+
+    ``include_query_sql`` defaults to ``False``: the emitted saved-query SQL fact is then
+    ``excluded`` before any capability check, so no SQL text reaches evidence. Passing
+    ``True`` restores the observing behavior (DAO observed/failed, ODBC unavailable).
     """
     adapter = getattr(database, "_adapter", None)
     dispatcher = getattr(adapter, "_dispatcher", None)
@@ -451,13 +467,20 @@ def inspect_open_database(
         # The use case owns the DAO handle; the caller closes it after extraction.
         port.close = leave_session_open
         return dispatcher.call(
-            lambda: DocumentationInspectService().inspect(port, tables=tables, queries=queries)
+            lambda: DocumentationInspectService().inspect(
+                port,
+                tables=tables,
+                queries=queries,
+                include_query_sql=include_query_sql,
+            )
         )
     if not callable(getattr(adapter, "open_readonly_inspection_connection", None)):
         msg = "Documentation inspection requires a connected DAO or ODBC backend"
         raise ValueError(msg)
     port = open_odbc_inspection_port(adapter)
-    return DocumentationInspectService().inspect(port, tables=tables, queries=queries)
+    return DocumentationInspectService().inspect(
+        port, tables=tables, queries=queries, include_query_sql=include_query_sql
+    )
 
 
 class DocumentationInspectService:
@@ -469,6 +492,7 @@ class DocumentationInspectService:
         *,
         tables: list[str] | None,
         queries: list[str] | None,
+        include_query_sql: bool = False,
     ) -> EvidenceDoc:
         """Build evidence for the requested table/query subset.
 
@@ -480,9 +504,17 @@ class DocumentationInspectService:
         recorded as ``excluded`` in ``coverage.relationships`` and is not inspected, so
         every relationship that reaches evidence references two tables the document
         contains (the renderer resolves both endpoints to diagram nodes).
+
+        ``include_query_sql`` gates only the emitted saved-query SQL fact, defaulting to
+        ``False``; every other query fact (name, type, parameters) is unaffected.
         """
         try:
-            return self._inspect(port, tables=tables, queries=queries)
+            return self._inspect(
+                port,
+                tables=tables,
+                queries=queries,
+                include_query_sql=include_query_sql,
+            )
         finally:
             port.close()
 
@@ -492,6 +524,7 @@ class DocumentationInspectService:
         *,
         tables: list[str] | None,
         queries: list[str] | None,
+        include_query_sql: bool = False,
     ) -> EvidenceDoc:
         capabilities = port.capabilities()
         raw_tables = port.list_tables()
@@ -610,7 +643,13 @@ class DocumentationInspectService:
                 parameter_data = port.get_query_parameters(query.name)
             except Exception as error:
                 parameter_failure = _reason(error)
-            evidence = _query_evidence(query, parameter_data, parameter_failure, capabilities)
+            evidence = _query_evidence(
+                query,
+                parameter_data,
+                parameter_failure,
+                capabilities,
+                include_query_sql=include_query_sql,
+            )
             if evidence.sql.state == "failed":
                 coverage.queries.failed[query.name] = evidence.sql.reason or "Query SQL read failed"
             if parameter_failure is not None:
@@ -751,17 +790,27 @@ def _query_evidence(
     parameter_data: list[QueryParameterInfo] | None = None,
     parameter_failure: str | None = None,
     capabilities: InspectionCapabilities | None = None,
+    *,
+    include_query_sql: bool = False,
 ) -> QueryEvidence:
+    """Map one saved query, keeping the emitted SQL fact an explicit opt-in.
+
+    ``include_query_sql`` defaults to ``False``: the SQL fact is then ``excluded`` before
+    any capability check, so no SQL text is emitted for either backend. When enabled, the
+    historical semantics are unchanged: an unexpressible capability is ``unavailable``,
+    blank or unreadable SQL is ``failed``, and a real QueryDef SQL string is ``observed``.
+    """
     capabilities = capabilities or InspectionCapabilities()
     provenance_sql = _provenance("query", query.name, "sql")
     sql = query.sql if isinstance(query.sql, str) else ""
-    sql_fact = (
-        FactStatus.observed(sql, provenance_sql)
-        if sql.strip()
-        else FactStatus.failed("QueryDef SQL is blank or could not be read", provenance_sql)
-    )
-    if sql_reason := capabilities.reason(CAP_QUERY_SQL):
+    if not include_query_sql:
+        sql_fact: FactStatus[str] = FactStatus.excluded(_QUERY_SQL_EXCLUDED_REASON, provenance_sql)
+    elif sql_reason := capabilities.reason(CAP_QUERY_SQL):
         sql_fact = FactStatus.unavailable(sql_reason, provenance_sql)
+    elif sql.strip():
+        sql_fact = FactStatus.observed(sql, provenance_sql)
+    else:
+        sql_fact = FactStatus.failed("QueryDef SQL is blank or could not be read", provenance_sql)
     query_type = str(query.type).strip().casefold()
     mapped_type = _QUERY_TYPES.get(query_type, "unknown")
     type_provenance = _provenance("query", query.name, "type")

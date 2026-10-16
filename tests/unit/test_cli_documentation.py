@@ -119,3 +119,31 @@ def test_inspect_success_still_returns_ok_envelope(capsys) -> None:
     captured = capsys.readouterr()
     assert result == 0
     assert "Traceback" not in captured.err
+
+
+def test_inspect_forwards_the_sql_opt_in_flag_and_defaults_off(capsys) -> None:
+    """S4/S5: ``--include-query-sql`` is store_true and defaults false at the CLI seam."""
+    seen: list[bool] = []
+
+    def _capture(*_args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs["include_query_sql"])
+        return _FakeEvidence()
+
+    with patch.object(cli, "run_documentation_inspection", _capture):
+        assert _run_cli(["documentation", "inspect", "--db", "core.accdb"]) == 0
+        assert _run_cli(["documentation", "inspect", "--db", "core.accdb", "--include-query-sql"]) == 0
+
+    capsys.readouterr()
+    assert seen == [False, True]
+
+
+def test_inspect_help_documents_the_opt_in_and_its_default() -> None:
+    """The new flag is discoverable and states it is off by default."""
+    parser = cli.build_parser()
+    family = next(action for action in parser._actions if action.dest == "command").choices["documentation"]
+    actions = next(item for item in family._actions if item.dest == "documentation_action").choices
+    action = next(item for item in actions["inspect"]._actions if item.dest == "include_query_sql")
+    assert action.option_strings == ["--include-query-sql"]
+    assert action.const is True and action.default is False, action.default
+    help_text = (action.help or "").lower()
+    assert "default" in help_text and "sql" in help_text

@@ -93,7 +93,7 @@ These are proposed shared logical arguments. CLI spelling and MCP serialization 
 |---|---|---:|---|
 | `documentation_inspect` | `database` | yes | Source path; apply existing database path policy. |
 |  | `format` | no | Qualified format/runtime hint; never overrides detection. |
-|  | `include_query_sql` | no | Include readable saved-query SQL; default false; SQL may contain secrets. |
+|  | `include_query_sql` | no | Include emitted readable saved-query SQL; default false; SQL may contain secrets. CLI `--include-query-sql` (`store_true`); MCP `include_query_sql: bool`. |
 |  | `tables` | no | Repeatable object filter: inspect only the named tables, in request order; omitted inspects every eligible table. Repeat the argument for each name — a comma-joined value is one whole name, and an unknown name is a hard `Err` (CLI exit 1). |
 |  | `queries` | no | Repeatable saved-query filter with the same semantics as `tables`. |
 | `documentation_render` | `evidence` | yes | Validated `access.documentation.evidence/1`; no database connection. |
@@ -105,6 +105,8 @@ These are proposed shared logical arguments. CLI spelling and MCP serialization 
 |  | `expected_fingerprint` | conditional | Fingerprint observed at preview/preflight; required for safe overwrite. |
 
 These logical names do not promise final wire spellings. Implementation must publish matching CLI help and MCP schemas and reject unsupported versions or malformed inputs rather than guess.
+
+**Saved-query SQL is gated, opt-in output (implemented).** `include_query_sql`/`--include-query-sql` is now implemented and defaults to **false**. With the default, each query's emitted `sql` fact is `excluded` with a reason **before** any capability check runs on either backend, so no SQL text reaches evidence, rendering, or a saved report. This is a deliberate **breaking output change** (the user accepted it): a DAO inspection that previously emitted `observed` SQL now emits `excluded`. `excluded` is not a coverage failure, so it adds nothing to `coverage.queries` and does not by itself make `data.status` `partial`. Opting in restores the previous semantics unchanged: DAO reports `observed` (or `failed` for blank/unreadable SQL) and ODBC reports its own `unavailable` capability reason. Only the **emitted** SQL evidence is gated: `get_queries` still enumerates saved queries (names, category, and the SQL text it reads internally), so this is never a claim that the SQL was not read. Query names, types, and parameters are unaffected either way.
 
 ### 3.2 Evidence schema: `access.documentation.evidence/1`
 
@@ -149,7 +151,7 @@ The Markdown report has predictable, labeled sections: scope and source summary;
 
 ### 3.5 Guidance prompts and profile placement
 
-`document_database` guides inspect → review evidence → render → optional save. `generate_er_documentation` guides ER-focused evidence review and rendering. Both prompts are profile-independent guidance, not privileged execution; instruct clients to cite IDs, show unknowns, and treat database text as untrusted. Separate interpretation from observed facts.
+`document_database` guides inspect → review evidence → render → optional save. `generate_er_documentation` guides ER-focused evidence review and rendering. Both prompts are profile-independent guidance, not privileged execution; instruct clients to cite IDs, show unknowns, and treat database text as untrusted. Separate interpretation from observed facts. Both prompts state the default-vs-opt-in saved-query SQL contract: SQL is excluded from emitted evidence unless `include_query_sql=True` (CLI `--include-query-sql`) is requested explicitly.
 
 Register tools through the `analysis` profile. Keep `get_er_diagram` response unchanged; contracts are additive. When implementation is authorized, intentionally update characterization pins in `test_mcp_prompts.py`, `test_cli_surface.py`, and `test_tool_schemas.py`.
 
@@ -550,9 +552,6 @@ reintroduce the only inventoried route to instantiation-level code.
   (`test_odbc_readonly_open_pins_readonly_and_reuses_recorded_target_and_password` and
   its neighbours); no encrypted runtime fixture exists, so the engine-level refusal is
   claimed for the unencrypted read-only open only.
-- **`include_query_sql` opt-in (§3.1).** Documented in the argument table but **not
-  implemented**; recorded as a preexisting discrepancy (ledger L12), not fixed in this
-  program.
 - **CI skips the opt-in suites.** CI sets no `ACCESS_*` variables, so the documentation
   fixtures, deadline, and startup-control suites skip there; they must be run explicitly
   on a Windows/Access host. This is explicitly open, not fixed in this program.

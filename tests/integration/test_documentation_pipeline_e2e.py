@@ -298,12 +298,42 @@ def core_evidence(e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="session")
+def core_sql_evidence(e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
+    """Inspect core.accdb once through the public CLI **opting in** to emitted query SQL.
+
+    ``--include-query-sql`` is the explicit opt-in; without it the run is the
+    ``core_evidence`` fixture, whose SQL facts are ``excluded``.
+    """
+    directory = e2e_build["directory"]
+    completed = _run_cli(
+        [
+            "documentation",
+            "inspect",
+            "--db",
+            str(directory / "core.accdb"),
+            "--backend",
+            "dao",
+            "--include-query-sql",
+            "--json",
+        ],
+        _cli_env(directory),
+    )
+    assert completed.returncode == 0, completed.stderr
+    evidence_path = work_dir / "inspect-core-sql-optin.json"
+    evidence_path.write_text(completed.stdout, encoding="utf-8")
+    return {"envelope": json.loads(completed.stdout), "path": evidence_path, "stderr": completed.stderr}
+
+
+@pytest.fixture(scope="session")
 def core_odbc_evidence(e2e_build: dict[str, Any], work_dir: Path) -> dict[str, Any]:
     """Inspect core.accdb once through the public CLI with ``--backend odbc``.
 
     The ODBC path reads the same built fixture copy as the DAO path through the Access
-    ODBC driver. The source is hashed before and after so the inspection's no-write
-    behavior is observed, not assumed; no lock file may be left behind.
+    ODBC driver. This is the **default** run: saved-query SQL is emitted as ``excluded``.
+    The SQL-capability assertions in the qualification test use an explicit opt-in run,
+    and the transport-parity test compares default runs on all three public paths. The
+    source is hashed before and after so the inspection's no-write behavior is observed,
+    not assumed; no lock file may be left behind.
     """
     directory = e2e_build["directory"]
     core = directory / "core.accdb"
@@ -562,6 +592,57 @@ def test_inspect_core_query_parameters_are_read_from_dao(
     assert "- Parameters: [pCustomerID] (Long Integer)" in markdown
 
 
+def test_inspect_core_excludes_query_sql_by_default(
+    core_evidence: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """Default off: emitted SQL facts are ``excluded``, no SQL text leaks, no coverage gap.
+
+    ``core_evidence`` is the default CLI run (no flag). Exclusion is an output policy
+    applied before the capability check, so it is neither ``observed`` nor a
+    ``coverage.queries`` failure; the manifest's own canonical SQL text must not appear
+    anywhere in the serialized envelope.
+    """
+    queries = _queries_by_name(core_evidence)
+    serialized = json.dumps(core_evidence["envelope"])
+    expected_queries = e2e_build["expected"]["databases"]["core.accdb"]["queries"]
+    for name, spec in expected_queries.items():
+        fact = queries[name]["sql"]
+        assert fact["state"] == "excluded", name
+        assert fact["reason"].strip(), name
+        assert set(fact) == {"state", "reason", "provenance"}, name
+        assert spec["sql"] not in serialized, name
+    data = core_evidence["envelope"]["data"]
+    assert data["coverage"]["queries"]["excluded"] == {}
+    assert data["coverage"]["queries"]["unsupported"] == {}
+    assert data["coverage"]["queries"]["failed"] == {}
+
+
+def test_inspect_core_emits_query_sql_when_opted_in(
+    core_sql_evidence: dict[str, Any], e2e_build: dict[str, Any]
+) -> None:
+    """Opt-in: DAO query SQL is ``observed`` with the build's DAO-canonical text.
+
+    The committed manifest records the fixture *definition* (a normalized single-line
+    statement), while ACE rewrites the stored ``QueryDef.SQL`` (multi-line CRLF, brackets
+    dropped where unnecessary, ``DELETE *``). The emitted evidence must match the build's
+    own ``inventory.canonical_query_sql`` readback, exactly as the raw-DAO fixture suite
+    asserts; comparing it against the manifest definition would compare two different
+    artifacts (observed failure: ``SELECT *\r\nFROM Orders...`` vs ``SELECT * FROM
+    [Orders]...``).
+    """
+    envelope = core_sql_evidence["envelope"]
+    assert envelope["success"] is True
+    queries = {query["name"]: query for query in envelope["data"]["data"]["queries"]}
+    definition = e2e_build["expected"]["databases"]["core.accdb"]["queries"]
+    canonical = e2e_build["inventory"]["core.accdb"]["canonical_query_sql"]
+    assert set(canonical) == set(definition)
+    for name in definition:
+        fact = queries[name]["sql"]
+        assert fact["state"] == "observed", name
+        assert fact["value"] == canonical[name], name
+    assert envelope["data"]["coverage"]["queries"]["failed"] == {}
+
+
 def test_inspect_core_field_defaults_are_read_from_dao(
     core_evidence: dict[str, Any],
 ) -> None:
@@ -596,7 +677,10 @@ def test_inspect_core_via_odbc_exposes_odbc_metadata_with_honest_unavailable_gap
     linked table. The action queries ``qryUpdateOrderStatus``/``qryDeleteDraftOrders`` are
     not ``VIEW`` rows and are therefore invisible to ODBC. Every one of those gaps must
     be an explicit ``unavailable`` fact with a reason, while ODBC-visible facts keep the
-    driver's own values (an honest observed value, never the DAO equivalent).
+    driver's own values (an honest observed value, never the DAO equivalent). This is the
+    shared **default** run, so its SQL facts are ``excluded`` before the capability check;
+    the ODBC SQL capability gap itself is proved by one explicit ``--include-query-sql``
+    run below.
     """
     completed = core_odbc_evidence["completed"]
     assert completed.returncode == 0, completed.stderr
@@ -662,11 +746,29 @@ def test_inspect_core_via_odbc_exposes_odbc_metadata_with_honest_unavailable_gap
     queries = _queries_by_name(core_odbc_evidence)
     assert set(queries) == {"qryOpenOrders", "qryOrdersByCustomer", "qryOrderSummary"}
     assert "qryUpdateOrderStatus" not in queries and "qryDeleteDraftOrders" not in queries
+    # Default run: the emitted SQL fact is excluded before the ODBC capability is read.
     for query in queries.values():
-        assert query["sql"]["state"] == "unavailable"
+        assert query["sql"]["state"] == "excluded"
         assert query["sql"]["reason"].strip()
         assert query["type"]["state"] == "unavailable"
         assert query["type"]["reason"].strip()
+    # Explicit opt-in run: ODBC cannot expose saved-query SQL, so the honest state is
+    # `unavailable` with the driver capability reason (never an observed value).
+    opted_in = _run_cli(
+        [
+            "documentation", "inspect", "--db", str(e2e_build["directory"] / "core.accdb"),
+            "--backend", "odbc", "--include-query-sql", "--json",
+        ],
+        _cli_env(e2e_build["directory"]),
+    )
+    assert opted_in.returncode == 0, opted_in.stderr
+    opted_in_queries = _queries_by_name({"envelope": json.loads(opted_in.stdout)})
+    assert set(opted_in_queries) == set(queries)
+    for query in opted_in_queries.values():
+        assert query["sql"]["state"] == "unavailable"
+        assert query["sql"]["reason"].strip()
+    # Excluding the SQL fact is deliberate output policy, never a coverage failure.
+    assert evidence["coverage"]["queries"]["excluded"] == {}
     parameterized = queries["qryOrdersByCustomer"]["parameters"]
     assert parameterized["state"] == "observed"
     assert [(item["name"], item["type"], item["type_name"]) for item in parameterized["value"]] == [
@@ -1157,9 +1259,17 @@ def test_inspect_open_is_engine_read_only_and_refuses_write(
         open_inspection_port(dispatcher)
         # Belt: the service's own reopen carried read_only=True.
         assert recorded[-1] == (str(core), "", True)
-        handle = dispatcher.current_db
+
+        def _attempt_write() -> None:
+            # The probe touches the DAO handle only on the dispatcher's STA thread. Keeping
+            # a caller-thread reference to that proxy would leave its Release to a later GC
+            # pass after ``shutdown()`` tore the apartment down, which is the dangling
+            # reference class behind the observed release fault
+            # ("Win32 exception occurred releasing IUnknown").
+            dispatcher.current_db.Execute("UPDATE Orders SET Status = 'Tampered'")
+
         with pytest.raises(Exception) as excinfo:  # noqa: B017 — DAO raises pywintypes.com_error
-            dispatcher.call(lambda: handle.Execute("UPDATE Orders SET Status = 'Tampered'"))
+            dispatcher.call(_attempt_write)
         message = str(excinfo.value)
         assert re.search(r"updateable query", message, re.IGNORECASE), message
         # Pin the DAO engine error code (5003073 = "Operation must use an updateable
@@ -1527,6 +1637,7 @@ def test_inspect_filtered_tables_via_odbc_returns_exactly_the_requested_subset(
     completed = _run_cli(
         [
             "documentation", "inspect", "--db", str(core), "--backend", "odbc",
+            "--include-query-sql",
             "--tables", "Orders", "--tables", "Sales Notes", "--tables", "Customers", "--json",
         ],
         _cli_env(directory),
@@ -1624,6 +1735,7 @@ def test_inspect_filtered_queries_via_odbc_returns_exactly_the_requested_view(
     completed = _run_cli(
         [
             "documentation", "inspect", "--db", str(core), "--backend", "odbc",
+            "--include-query-sql",
             "--queries", "qryOrderSummary", "--json",
         ],
         _cli_env(directory),

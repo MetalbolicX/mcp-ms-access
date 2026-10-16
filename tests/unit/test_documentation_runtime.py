@@ -20,7 +20,12 @@ import pytest
 
 from ms_access_mcp.application import documentation_limits
 from ms_access_mcp.application.documentation_runtime import DocumentationRuntime
-from ms_access_mcp.application.documentation_worker import decode_response
+from ms_access_mcp.application.documentation_worker import (
+    build_request,
+    decode_request,
+    decode_response,
+    encode_request,
+)
 from ms_access_mcp.errors import AccessMcpError
 
 HELPER = Path(__file__).resolve().parents[1] / "helpers" / "documentation_deadline_worker.py"
@@ -158,6 +163,116 @@ def test_decode_response_rejects_empty_and_unknown_shapes() -> None:
         decode_response(b"{not json")
     with pytest.raises(AccessMcpError, match="boolean 'ok'"):
         decode_response(b'{"evidence": {}}')
+
+
+def test_request_round_trip_carries_the_sql_opt_in_and_defaults_absent_to_false() -> None:
+    """The worker request carries ``include_query_sql``; absent means false, non-bool is rejected."""
+    opted_in = build_request(
+        db_path="core.accdb",
+        backend="dao",
+        allowed_dirs=[Path("C:/db")],
+        tables=None,
+        queries=None,
+        include_query_sql=True,
+    )
+    assert opted_in["include_query_sql"] is True
+    assert decode_request(encode_request(opted_in))["include_query_sql"] is True
+
+    default = build_request(
+        db_path="core.accdb",
+        backend="dao",
+        allowed_dirs=[Path("C:/db")],
+        tables=None,
+        queries=None,
+    )
+    assert default["include_query_sql"] is False
+
+    legacy = {key: value for key, value in opted_in.items() if key != "include_query_sql"}
+    assert decode_request(encode_request(legacy))["include_query_sql"] is False
+
+    with pytest.raises(AccessMcpError, match="include_query_sql"):
+        decode_request(encode_request({**opted_in, "include_query_sql": "yes"}))
+
+
+def test_worker_run_request_passes_the_flag_to_the_extraction_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Actual-worker survival: the decoded flag reaches inspection, not just the request dict."""
+    from ms_access_mcp.application import documentation_worker as worker
+    from ms_access_mcp.application.database import Ok
+    from ms_access_mcp.application.documentation import (
+        Coverage,
+        EvidenceDoc,
+        RunMetadata,
+        SourceEvidence,
+    )
+
+    seen: dict[str, Any] = {}
+
+    class _FakeDatabase:
+        def __init__(self, *, backend: str, readonly: bool, allowed_dirs: Any) -> None:
+            seen["database"] = (backend, readonly)
+
+        def open_database(self, _path: str) -> Any:
+            return Ok(data={})
+
+        def close_database(self) -> Any:
+            seen["closed"] = True
+            return Ok()
+
+    def fake_inspect(database: Any, *, tables: Any, queries: Any, include_query_sql: bool = False) -> Any:
+        seen["include_query_sql"] = include_query_sql
+        return EvidenceDoc(
+            run=RunMetadata("run-1", "1.0", [], []),
+            source=SourceEvidence("core.accdb", "accdb", "DAO", "offline", "closed"),
+            coverage=Coverage(),
+        )
+
+    monkeypatch.setattr(worker, "DatabaseUseCases", _FakeDatabase)
+    monkeypatch.setattr(worker, "inspect_open_database", fake_inspect)
+    request = decode_request(
+        encode_request(
+            build_request(
+                db_path="core.accdb",
+                backend="dao",
+                allowed_dirs=[Path("C:/db")],
+                tables=None,
+                queries=None,
+                include_query_sql=True,
+            )
+        )
+    )
+
+    payload = worker._run_request(request)
+
+    assert seen["include_query_sql"] is True
+    assert seen["closed"] is True
+    assert payload["schema"] == "access.documentation.evidence/1"
+
+
+def test_runtime_inspect_threads_the_sql_opt_in_into_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The supervisor facade must not drop the flag between frontend and worker request."""
+    from ms_access_mcp.application import documentation_runtime as runtime_module
+
+    real_build_request = runtime_module.build_request
+    seen: dict[str, Any] = {}
+
+    def capture(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return real_build_request(**kwargs)
+
+    monkeypatch.setattr(runtime_module, "build_request", capture)
+    records: list[subprocess.Popen[bytes]] = []
+    runtime = DocumentationRuntime(launcher=_launcher("ok", records), deadline_seconds=30)
+
+    runtime.inspect(
+        "fixture.accdb",
+        backend="dao",
+        allowed_dirs=[Path("C:/db")],
+        tables=None,
+        queries=None,
+        include_query_sql=True,
+    )
+
+    assert seen["include_query_sql"] is True
 
 
 # ---------------------------------------------------------------------------

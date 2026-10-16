@@ -9,7 +9,8 @@ source path, resolves credentials, opens the database, and performs passive extr
   ``DaoAdapter`` -> ``ComDispatcher``); the ODBC path opens its own engine-level
   read-only connection. Neither launches ``Access.Application`` nor executes a query,
   macro, or VBA. No live parent handle is shared across the process boundary.
-* The request carries only path/backend/allowed-dir/filter policy. Credentials are never
+* The request carries only path/backend/allowed-dir/filter policy plus the
+  ``include_query_sql`` output opt-in (default ``False``). Credentials are never
   placed in argv or a dedicated environment variable: the child resolves them through
   the existing server credential resolver (``credentials.resolve_password``), exactly as
   the ordinary server/CLI open does, and the allowed-directory guard runs inside the
@@ -48,6 +49,7 @@ def build_request(
     allowed_dirs: list[Path],
     tables: list[str] | None,
     queries: list[str] | None,
+    include_query_sql: bool = False,
 ) -> dict[str, Any]:
     """Build the structured request handed to the child (no credentials, no executable)."""
     normalized_backend = str(backend).strip().casefold()
@@ -63,6 +65,7 @@ def build_request(
         "allowed_dirs": [str(directory) for directory in allowed_dirs],
         "tables": None if tables is None else [str(name) for name in tables],
         "queries": None if queries is None else [str(name) for name in queries],
+        "include_query_sql": bool(include_query_sql),
     }
 
 
@@ -108,6 +111,13 @@ def decode_request(data: bytes) -> dict[str, Any]:
         if value is not None and (not isinstance(value, list) or any(not isinstance(name, str) for name in value)):
             msg = f"Documentation worker request field {key!r} must be a list of strings or null"
             raise AccessMcpError(msg)
+    # Strict bool validation with a default: an absent key is ``False``; any present
+    # non-bool (including 0/1) is a malformed request rather than a truthy coercion.
+    include_query_sql = request.get("include_query_sql", False)
+    if not isinstance(include_query_sql, bool):
+        msg = "Documentation worker request field 'include_query_sql' must be a boolean"
+        raise AccessMcpError(msg)
+    request["include_query_sql"] = include_query_sql
     return request
 
 
@@ -158,6 +168,7 @@ def _run_request(request: dict[str, Any]) -> dict[str, Any]:
             database,
             tables=request.get("tables"),
             queries=request.get("queries"),
+            include_query_sql=request.get("include_query_sql", False),
         )
     finally:
         database.close_database()

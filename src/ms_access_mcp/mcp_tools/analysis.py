@@ -172,8 +172,14 @@ def documentation_inspect(
     tables: list[str] | None = None,
     queries: list[str] | None = None,
     connection_ref: str | None = None,
+    include_query_sql: bool = False,
 ) -> CallToolResult:
-    """Inspect Access metadata into versioned documentation evidence."""
+    """Inspect Access metadata into versioned documentation evidence.
+
+    ``include_query_sql`` defaults to ``False``: saved-query SQL is then emitted as an
+    ``excluded`` fact instead of its text, because SQL source text is untrusted and may
+    contain credentials. Set it to ``True`` to emit readable saved-query SQL.
+    """
     del connection_ref  # Credentials are resolved by the existing path/session policy.
     try:
         # The facade carries the constructor-injected backend/allowed-dir policy to an
@@ -187,6 +193,7 @@ def documentation_inspect(
             allowed_dirs=allowed_dirs,
             tables=tables,
             queries=queries,
+            include_query_sql=include_query_sql,
         )
         data = evidence.to_dict()
         data["status"] = evidence.status

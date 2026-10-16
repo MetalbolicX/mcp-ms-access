@@ -363,6 +363,22 @@ class TestCLISurface:
         assert "--local" in flags
         assert "--yes" in flags
 
+    def test_query_param_help_names_the_odbc_requirement(self) -> None:
+        """The combined public contract: non-empty bindings need ODBC; DAO rejects them."""
+        parser = build_parser()
+        main_subparsers = next(
+            a for a in parser._actions
+            if getattr(a, "dest", None) == "command"
+        )
+        query = main_subparsers.choices["query"]
+        action = next(
+            item for item in query._actions
+            if getattr(item, "dest", None) == "param"
+        )
+        help_text = (action.help or "").lower()
+        assert "odbc" in help_text
+        assert "dao" in help_text and "reject" in help_text
+
 
 class TestMcpProfileHelpContract:
     """Pin the mcp --profile help to the single source of truth (PROFILES)."""

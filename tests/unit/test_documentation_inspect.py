@@ -95,8 +95,16 @@ def port(
     )
 
 
-def inspect_with(fake: FakePort, tables: list[str] | None = None, queries: list[str] | None = None):
-    return DocumentationInspectService().inspect(fake, tables=tables, queries=queries)
+def inspect_with(
+    fake: FakePort,
+    tables: list[str] | None = None,
+    queries: list[str] | None = None,
+    *,
+    include_query_sql: bool = False,
+):
+    return DocumentationInspectService().inspect(
+        fake, tables=tables, queries=queries, include_query_sql=include_query_sql
+    )
 
 
 def test_fake_port_signatures_match_production_port() -> None:
@@ -217,13 +225,18 @@ def test_index_failure_is_recorded_and_other_table_continues() -> None:
 
 
 def test_query_sql_exception_is_failed_not_blank_and_type_mapping_is_coarse() -> None:
-    document = inspect_with(port(queries=[
-        QueryInfo("Failed", "", "select"),
-        QueryInfo("Select", "SELECT 1", "select"),
-        QueryInfo("Action", "UPDATE T SET X=1", "action"),
-        QueryInfo("DDL", "CREATE TABLE T (X INT)", "ddl"),
-        QueryInfo("Other", "CALL X", "procedure"),
-    ]))
+    document = inspect_with(
+        port(
+            queries=[
+                QueryInfo("Failed", "", "select"),
+                QueryInfo("Select", "SELECT 1", "select"),
+                QueryInfo("Action", "UPDATE T SET X=1", "action"),
+                QueryInfo("DDL", "CREATE TABLE T (X INT)", "ddl"),
+                QueryInfo("Other", "CALL X", "procedure"),
+            ]
+        ),
+        include_query_sql=True,
+    )
     queries = {query.name: query for query in document.queries}
     assert queries["Failed"].sql.state == "failed"
     assert queries["Failed"].sql.reason
@@ -303,7 +316,11 @@ def _reduced_capabilities() -> InspectionCapabilities:
 
 
 def test_reduced_capabilities_map_only_their_dependent_facts_to_unavailable() -> None:
-    """T2: an ODBC-like port records its gaps as `unavailable`, never as fabricated values."""
+    """T2: an ODBC-like port records its gaps as `unavailable`, never as fabricated values.
+
+    The call opts in with ``include_query_sql=True`` (the default excludes SQL first), so
+    the existing ODBC SQL-unavailable expectation stays observable.
+    """
     fake = port(
         tables=[
             TableInfo(
@@ -327,7 +344,7 @@ def test_reduced_capabilities_map_only_their_dependent_facts_to_unavailable() ->
         query_parameters={"Q": [QueryParameterInfo("[p]", 4, "INTEGER")]},
         caps=_reduced_capabilities(),
     )
-    document = inspect_with(fake)
+    document = inspect_with(fake, include_query_sql=True)
     assert document.source.backend_identity == "ODBC"
     field = document.tables[0].fields[0]
     assert field.type.state == "observed" and field.type.value == "INTEGER"
@@ -349,6 +366,86 @@ def test_reduced_capabilities_map_only_their_dependent_facts_to_unavailable() ->
     assert document.queries[0].type.reason == "saved-query category is not exposed"
     assert document.queries[0].parameters.state == "observed"
     assert document.status == "partial"
+
+
+# ---------------------------------------------------------------------------
+# Saved-query SQL opt-in: include_query_sql (default false)
+# ---------------------------------------------------------------------------
+
+
+def test_query_sql_is_excluded_by_default_and_hidden_from_emitted_evidence() -> None:
+    """Default off: the emitted SQL fact is ``excluded``, not a gap and not the SQL text.
+
+    The exclusion is a deliberate output policy applied before any capability check, so
+    the emitted evidence never carries the SQL text even though ``get_queries`` (the
+    metadata enumeration that also supplies names/type) still returns it internally.
+    """
+    document = inspect_with(
+        port(
+            queries=[QueryInfo("Q", "SELECT secret FROM T", "select")],
+            query_parameters={"Q": []},
+        )
+    )
+    sql = document.queries[0].sql
+    assert sql.state == "excluded"
+    assert sql.reason and sql.reason.strip()
+    assert sql.provenance.object_kind == "query"
+    assert sql.provenance.object_name == "Q"
+    assert sql.provenance.property == "sql"
+    assert "SELECT secret FROM T" not in json.dumps(document.to_dict())
+    # Exclusion of the SQL fact is not a coverage failure and leaves query facts intact.
+    assert document.coverage.queries.excluded == {}
+    assert document.coverage.queries.unsupported == {}
+    assert document.coverage.queries.failed == {}
+    assert document.queries[0].type.state == "observed" and document.queries[0].type.value == "select"
+    assert document.queries[0].parameters.state == "observed"
+    assert document.status == "complete"
+
+
+def test_exclusion_wins_over_a_query_sql_capability_gap() -> None:
+    """R3: exclusion happens before the capability check, so ODBC reports excluded by default."""
+    document = inspect_with(
+        port(
+            queries=[QueryInfo("Q", "SELECT 1", "select")],
+            query_parameters={"Q": []},
+            caps=_reduced_capabilities(),
+        )
+    )
+    sql = document.queries[0].sql
+    assert sql.state == "excluded"
+    assert "not exposed" not in (sql.reason or "")
+    assert document.queries[0].type.state == "unavailable"
+    assert document.queries[0].type.reason == "saved-query category is not exposed"
+
+
+def test_include_query_sql_opt_in_preserves_observed_dao_sql() -> None:
+    """On: the DAO port keeps its existing observed/failed SQL semantics."""
+    observed = inspect_with(
+        port(queries=[QueryInfo("Q", "SELECT 1", "select")], query_parameters={"Q": []}),
+        include_query_sql=True,
+    )
+    assert observed.queries[0].sql.state == "observed"
+    assert observed.queries[0].sql.value == "SELECT 1"
+    failed = inspect_with(
+        port(queries=[QueryInfo("Q", "", "select")], query_parameters={"Q": []}),
+        include_query_sql=True,
+    )
+    assert failed.queries[0].sql.state == "failed"
+    assert failed.queries[0].sql.reason
+
+
+def test_include_query_sql_opt_in_keeps_odbc_sql_unavailable() -> None:
+    """On: an ODBC-capability port still reports the capability reason as ``unavailable``."""
+    document = inspect_with(
+        port(
+            queries=[QueryInfo("Q", "SELECT 1", "select")],
+            query_parameters={"Q": []},
+            caps=_reduced_capabilities(),
+        ),
+        include_query_sql=True,
+    )
+    assert document.queries[0].sql.state == "unavailable"
+    assert document.queries[0].sql.reason == "saved-query SQL is not exposed"
 
 
 def test_capability_reason_ignores_blank_reasons_and_unknown_capabilities() -> None:
