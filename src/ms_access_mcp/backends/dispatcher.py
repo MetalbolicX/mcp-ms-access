@@ -427,16 +427,33 @@ class ComDispatcher:
         this thread still owns them. The caller keeps the exception type, message,
         args, and its whole cause/context chain; the original STA-side traceback
         text rides along as a PEP 678 note so the diagnostic is not lost.
+
+        This runs inside the STA loop's exception handler, so it must never raise:
+        a pathological exception (for example a subclass whose ``add_note`` raises)
+        would otherwise kill the loop and strand every queued future until its
+        timeout. The note is diagnostic, not load-bearing, so a failure falls back
+        to clearing the tracebacks — which is what performs the ownership release —
+        and if even that fails the exception is left intact for the caller.
         """
         if exc.__traceback__ is None:
             return
-        sta_traceback = "".join(traceback.format_exception(exc))
-        for chained in _exception_chain(exc):
-            chained.__traceback__ = None
-        exc.add_note(
-            "STA thread traceback of the dispatched call, detached so the apartment "
-            f"releases its COM handles in the owning apartment:\n{sta_traceback}"
-        )
+        try:
+            sta_traceback = "".join(traceback.format_exception(exc))
+            for chained in _exception_chain(exc):
+                chained.__traceback__ = None
+            exc.add_note(
+                "STA thread traceback of the dispatched call, detached so the apartment "
+                f"releases its COM handles in the owning apartment:\n{sta_traceback}"
+            )
+        except Exception:
+            # Retry only the ownership-critical part: clear the tracebacks across
+            # the chain without adding a note. If that also fails, the caller still
+            # receives the original exception rather than losing the STA loop.
+            try:
+                for chained in _exception_chain(exc):
+                    chained.__traceback__ = None
+            except Exception:
+                pass
 
     def _release_com_safe(self) -> None:
         """Release all COM objects in order: ADO -> DAO -> Access Application.

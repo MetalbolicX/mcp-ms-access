@@ -22,6 +22,20 @@ class _DispatchedError(RuntimeError):
     """Exception type used to prove the caller still receives what the callback raised."""
 
 
+class _NoteHostileError(RuntimeError):
+    """Failure whose PEP 678 ``add_note`` is broken on purpose.
+
+    The dispatcher attaches the detached STA traceback text as a note before the
+    caller sees a failure. An exception that refuses that note must not be able to
+    take the STA loop down with it.
+    """
+
+    def add_note(self, note: str) -> None:
+        """Refuse every note, emulating a pathological exception subclass."""
+        msg = "add_note is hostile"
+        raise RuntimeError(msg)
+
+
 class _ApartmentObject:
     """Stand-in for an apartment-local COM proxy; records where it is released."""
 
@@ -215,5 +229,53 @@ def test_dispatch_stays_serialized_on_the_sta_thread_after_a_failing_call() -> N
 
         assert overlaps == [], "dispatched callbacks must never run concurrently"
         assert set(observed) == {sta_thread}
+    finally:
+        dispatcher.shutdown()
+
+
+def test_hostile_add_note_does_not_kill_the_sta_loop() -> None:
+    """A raise inside the traceback detach must never break dispatch.
+
+    ``_detach_sta_traceback`` formats the STA traceback and attaches it as a PEP 678
+    note before the caller sees the failure. If that note step raises out of the
+    dispatcher's exception handler, the STA loop dies and every later dispatch hangs
+    until its timeout — a self-inflicted outage one exception wide. The caller must
+    still receive the original exception, its apartment objects must still be
+    released on the owner thread, and the loop must keep serving later calls.
+    """
+    releases: list[tuple[str, int]] = []
+    dispatcher, sta_thread = _started_dispatcher()
+    # A dead STA loop would otherwise make this test wait the production 120 s
+    # timeout; the dispatcher exercises the same code path with a bounded wait.
+    dispatcher.DISPATCH_TIMEOUT = 2.0
+    try:
+
+        def _hostile_callback() -> None:
+            proxy = _ApartmentObject(releases, "hostile-proxy")
+            try:
+                raise ValueError(f"inner failure holding {proxy!r}")
+            except ValueError as inner:
+                raise _NoteHostileError("hostile failure") from inner
+
+        captured: BaseException | None = None
+        try:
+            dispatcher.call(_hostile_callback)
+        except _NoteHostileError as exc:
+            captured = exc
+
+        assert captured is not None, "the hostile failure must still reach its caller"
+        assert type(captured) is _NoteHostileError
+        assert captured.args == ("hostile failure",)
+        assert str(captured) == "hostile failure"
+        assert not getattr(captured, "__notes__", []), (
+            "the fallback detach must not attach a note when the full detach failed"
+        )
+
+        # The fallback still clears the STA tracebacks, so the apartment object is
+        # released by its owner; and the loop lives on to serve the next call.
+        assert dispatcher.call(threading.get_ident) == sta_thread, "the STA loop must survive"
+        del captured
+        gc.collect()
+        assert releases == [("hostile-proxy", sta_thread)]
     finally:
         dispatcher.shutdown()
