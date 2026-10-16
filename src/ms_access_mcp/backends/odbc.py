@@ -131,7 +131,11 @@ class OdbcAdapter:
     # ------------------------------------------------------------------ #
 
     def execute_query(self, sql: str, params: Any = None, limit: int | None = None) -> QueryResult:
-        """Execute a SELECT with parameter binding and an optional row limit."""
+        """Execute a SELECT with parameter binding and an optional row limit.
+
+        ``None`` or an empty sequence runs ``sql`` with no bind arguments; a
+        non-empty sequence binds each value (a ``None`` element binds as NULL).
+        """
         if not self._connected or self._conn is None:
             return QueryResult(success=False, rows=[], count=0, columns=[], error="Not connected")
 
@@ -149,7 +153,10 @@ class OdbcAdapter:
                         f"{sql[select_prefix.end():]}"
                     )
             cursor = self._conn.cursor()
-            cursor.execute(query_sql, params)
+            if params:
+                cursor.execute(query_sql, params)
+            else:
+                cursor.execute(query_sql)
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
             results = [dict(zip(columns, row)) for row in rows]

@@ -256,7 +256,9 @@ def query_data(path: str, sql: str, params: list[Any] | None = None, limit: int 
     Args:
         path: Absolute path to the .accdb or .mdb file.
         sql: SQL query string (SELECT statement).
-        params: Optional list of parameter values for parameterized queries.
+        params: Optional list of parameter values. ODBC binds non-empty values;
+            the DAO backend rejects non-empty params and reports an error
+            directing callers to ODBC. Omit or pass an empty list for plain SQL.
         limit: Optional maximum number of rows to return.
     """
     db = _new_db(readonly=True)

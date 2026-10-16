@@ -128,7 +128,7 @@ class TestOdbcAdapterQueryLimit:
             def __init__(self):
                 self.executed: list[tuple[str, object]] = []
 
-            def execute(self, query, params):
+            def execute(self, query, params=None):
                 self.executed.append((query, params))
 
             def fetchall(self):

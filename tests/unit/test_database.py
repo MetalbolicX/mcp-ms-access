@@ -174,6 +174,72 @@ class TestQueryDataLimitForwarding:
         )
 
 
+class TestQueryDataFailurePropagation:
+    """A failed backend QueryResult must become Err, never a successful empty Ok."""
+
+    def test_failed_query_result_becomes_err(self):
+        from ms_access_mcp.models import QueryResult
+
+        class FailingAdapter:
+            def execute_query(self, sql, params=None, limit=None):
+                return QueryResult(
+                    success=False,
+                    rows=[],
+                    count=0,
+                    columns=[],
+                    error=(
+                        "DAO backend does not support query parameters; "
+                        "use the ODBC backend for parameterized queries"
+                    ),
+                )
+
+        db = DatabaseUseCases()
+        db._connections["default"] = FailingAdapter()
+
+        result = db.query_data("SELECT 1", params=["x"])
+
+        assert isinstance(result, Err)
+        assert "ODBC" in result.message
+
+    def test_failed_query_error_is_password_safe(self):
+        from ms_access_mcp.models import QueryResult
+
+        class FailingAdapter:
+            def execute_query(self, sql, params=None, limit=None):
+                return QueryResult(
+                    success=False,
+                    rows=[],
+                    count=0,
+                    columns=[],
+                    error="connect failed;PWD=sekret;DBQ=x",
+                )
+
+        db = DatabaseUseCases()
+        db._connections["default"] = FailingAdapter()
+
+        result = db.query_data("SELECT 1")
+
+        assert isinstance(result, Err)
+        assert "sekret" not in result.message
+        assert "PWD=" not in result.message
+
+    def test_successful_query_result_still_maps_to_ok(self):
+        from ms_access_mcp.models import QueryResult
+
+        class OkAdapter:
+            def execute_query(self, sql, params=None, limit=None):
+                return QueryResult(success=True, rows=[{"id": 1}], count=1, columns=["id"])
+
+        db = DatabaseUseCases()
+        db._connections["default"] = OkAdapter()
+
+        result = db.query_data("SELECT id FROM Users")
+
+        assert isinstance(result, Ok)
+        assert result.data == [{"id": 1}]
+        assert result.rowcount == 1
+
+
 class TestResultEnvelopes:
     """Test result envelope types."""
 

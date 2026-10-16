@@ -574,6 +574,49 @@ class TestRowCrud:
         assert result.rows == []
         assert result.count == 0
 
+    # -- Parameter contract (DAO has no binding; non-empty params fail closed) --
+
+    @pytest.mark.parametrize("params", [[1], [None], ("a", "b")], ids=["int", "none-element", "tuple"])
+    def test_execute_query_rejects_nonempty_params_without_executing_sql(
+        self, adapter: DaoAdapter, dispatcher: FakeDispatcher, params: list
+    ):
+        result = adapter.execute_query("SELECT id FROM t WHERE id = ?", params=params)
+
+        assert result.success is False
+        assert result.rows == []
+        assert result.count == 0
+        assert result.columns == []
+        assert result.error is not None and "ODBC" in result.error
+        # No recordset was ever opened, so no SQL ran.
+        assert dispatcher.db.last_recordset is None
+
+    @pytest.mark.parametrize("params", [None, []], ids=["none", "empty"])
+    def test_execute_query_preserves_none_and_empty_params(
+        self, adapter: DaoAdapter, dispatcher: FakeDispatcher, params: list | None
+    ):
+        dispatcher.db.recordset_rows = [{"id": 1}]
+
+        result = adapter.execute_query("SELECT id FROM t", params=params)
+
+        assert result.success is True
+        assert result.rows == [{"id": 1}]
+
+    def test_execute_query_rejects_params_even_when_disconnected(self):
+        adapter = _make_adapter(FakeDispatcher())  # disconnected
+
+        result = adapter.execute_query("SELECT 1", params=[1])
+
+        assert result.success is False
+        assert result.error is not None and "ODBC" in result.error
+
+    def test_iter_query_rejects_nonempty_params(self, adapter: DaoAdapter):
+        chunks = adapter.iter_query("SELECT id FROM t", params=[1])
+
+        with pytest.raises(DaoOperationError) as exc_info:
+            next(chunks)
+
+        assert "ODBC" in str(exc_info.value)
+
     def test_insert_data_happy_path(self, adapter: DaoAdapter, dispatcher: FakeDispatcher):
         dispatcher.db.records_affected = 3
 

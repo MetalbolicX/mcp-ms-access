@@ -583,12 +583,17 @@ class DatabaseUseCases:
 
         Args:
             sql: SQL SELECT statement
-            params: Optional query parameters
+            params: Optional query parameters. ODBC binds non-empty values
+                unchanged; the DAO backend rejects a non-empty sequence with an
+                explicit error directing callers to ODBC. ``None`` and empty
+                sequences keep the plain-SQL path.
             limit: Optional row limit
             connection_name: Connection to use
 
         Returns:
-            Ok with rows and rowcount, or Err
+            Ok with rows and rowcount, or Err. A backend ``QueryResult`` that
+            reports ``success=False`` is propagated as ``Err`` with a sanitized
+            message, never as a successful empty ``Ok``.
         """
         adapter = self._get_adapter(connection_name)
         if adapter is None:
@@ -599,6 +604,8 @@ class DatabaseUseCases:
                 return _err(f"{type(adapter).__name__} does not support query_data")
             result = method(sql, params=params, limit=limit)
             if isinstance(result, QueryResult):
+                if result.success is False:
+                    return _err(strip_password(str(result.error or "query failed")))
                 return _ok(data=result.rows, rowcount=result.count)
             if isinstance(result, dict):
                 if "rows" in result:

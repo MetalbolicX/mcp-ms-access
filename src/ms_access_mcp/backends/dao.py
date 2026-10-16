@@ -22,6 +22,11 @@ from .script import parse_script_lines
 
 logger = logging.getLogger(__name__)
 
+DAO_PARAMS_UNSUPPORTED_ERROR = (
+    "DAO backend does not support query parameters; "
+    "use the ODBC backend for parameterized queries"
+)
+
 
 # ============================================================================= #
 # DaoSession — context manager for short-lived DAO handles
@@ -337,8 +342,20 @@ class DaoAdapter:
     # -------------------------------------------------------------------------- #
 
     def execute_query(self, sql: str, params: list | None = None, limit: int | None = None) -> QueryResult:
-        """Execute a SQL SELECT via DAO OpenRecordset with an optional row limit."""
-        _ = params
+        """Execute a SQL SELECT via DAO OpenRecordset with an optional row limit.
+
+        DAO cannot bind parameters. Any non-empty ``params`` fails closed with an
+        explicit error directing callers to the ODBC backend, before any SQL runs;
+        ``None`` and ``[]`` keep the existing no-parameter behavior.
+        """
+        if params:
+            return QueryResult(
+                success=False,
+                rows=[],
+                count=0,
+                columns=[],
+                error=DAO_PARAMS_UNSUPPORTED_ERROR,
+            )
         if not self._dispatcher.is_connected():
             return QueryResult(
                 success=False,
@@ -421,8 +438,11 @@ class DaoAdapter:
 
         The recordset is retained in this method's closure between dispatcher
         calls, but every COM operation (including Close) runs inside ``call``.
+
+        DAO cannot bind parameters: any non-empty ``params`` raises before SQL runs.
         """
-        _ = params
+        if params:
+            raise DaoOperationError(DAO_PARAMS_UNSUPPORTED_ERROR)
         if chunk <= 0:
             msg = "chunk must be positive"
             raise ValueError(msg)

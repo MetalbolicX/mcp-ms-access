@@ -113,8 +113,18 @@ class CrudBackendProtocol(Protocol):
     delete_data, and execute_query with compatible signatures.
     """
 
-    def execute_query(self, sql: str, params: tuple | None = None) -> Any:
-        """Execute a SELECT query and return results."""
+    def execute_query(
+        self,
+        sql: str,
+        params: list[Any] | tuple[Any, ...] | None = None,
+        limit: int | None = None,
+    ) -> Any:
+        """Execute a SELECT query and return results.
+
+        ``params=None`` or an empty sequence runs ``sql`` unchanged; a non-empty
+        sequence binds its values (a ``None`` element binds as NULL). ``limit``
+        caps returned rows where the backend supports it.
+        """
         ...
 
     def insert_data(self, table_name: str, data: dict | list[dict]) -> Any:
