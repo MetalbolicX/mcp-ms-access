@@ -57,6 +57,15 @@ class TestExecuteQueryParamsContract:
         assert result.success is True
         assert cursor.executed == [("SELECT id FROM t",)]
 
+    def test_empty_tuple_params_execute_plain_sql(self):
+        """An empty tuple is a no-bind call: ``cursor.execute(sql)``, no arguments."""
+        adapter, cursor = _adapter([(1,)])
+
+        result = adapter.execute_query("SELECT id FROM t", params=())
+
+        assert result.success is True
+        assert cursor.executed == [("SELECT id FROM t",)]
+
     def test_nonempty_params_bind_sequence(self):
         adapter, cursor = _adapter([(1,)])
 

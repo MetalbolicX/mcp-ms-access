@@ -7,7 +7,7 @@ an optional parameter list for parameterized `SELECT` statements.
 
 | Caller input | Behaviour |
 |---|---|
-| `params` omitted, `None`, or `[]` | The SQL runs with no bind values. This is the plain-SQL path and is unchanged. |
+| `params` omitted, `None`, `[]`, or `()` | The SQL runs with no bind values. This is the plain-SQL path and is unchanged. |
 | non-empty `params` on the **ODBC** backend | Each value binds to its `?` placeholder. A `None` element binds as SQL `NULL` (it is still a parameter, not "no parameters"). |
 | non-empty `params` on the **DAO** backend | The request fails closed with an explicit error directing callers to ODBC. No SQL runs. |
 
@@ -21,6 +21,11 @@ DAO backend does not support query parameters; use the ODBC backend for paramete
 
 `None` and `[]` are not rejected: they preserve the historical no-parameter
 DAO behavior, so existing callers keep working.
+
+The DAO backend checks `params` **before** the connection state. A non-empty
+`params` reached through a disconnected DAO backend therefore reports the
+unsupported-bind error above, not `Not connected`; only `None` and `[]` (or an
+empty tuple) on a disconnected backend fall through to `Not connected`.
 
 ## Failure propagation
 
@@ -50,10 +55,10 @@ ms-access-mcp query --backend dao "SELECT * FROM [Orders] WHERE [CustomerID] = ?
 # Error: DAO backend does not support query parameters; use the ODBC backend for parameterized queries
 ```
 
-Proposed `--param` help text for the CLI parser:
+The `--param` CLI help text, as shipped:
 
 ```
-Parameter values for ? placeholders (ODBC backend only; the DAO backend rejects parameterized queries)
+Query parameters; a non-empty binding list requires the ODBC backend (DAO rejects parameter bindings)
 ```
 
 ## MCP usage
