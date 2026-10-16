@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -30,6 +31,23 @@ DEFAULT_DB_VERSION = 128  # dbVersion120 — .accdb / ACE format
 # Jet 4 .mdb format constants
 JET4_DB_VERSION = 64  # dbVersion40
 JET4_DB_LOCALE = ";LANGID=0x0409;CP=1252;COUNTRY=0"  # same locale as default
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """Return ``exc`` plus every exception reachable through its cause/context chain."""
+    chain: list[BaseException] = []
+    pending: list[BaseException] = [exc]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        chain.append(current)
+        for linked in (current.__cause__, current.__context__):
+            if linked is not None:
+                pending.append(linked)
+    return chain
 
 
 class ComDispatcher:
@@ -377,6 +395,11 @@ class ComDispatcher:
                     except concurrent.futures.InvalidStateError:
                         pass
                 except Exception as e:
+                    # This traceback still holds the frames of the callback that
+                    # failed, and those frames hold the apartment's COM handles.
+                    # Detach it here, while this thread still owns them, so the
+                    # caller never inherits an apartment-local reference.
+                    self._detach_sta_traceback(e)
                     try:
                         future.set_exception(e)
                     except concurrent.futures.InvalidStateError:
@@ -386,6 +409,34 @@ class ComDispatcher:
             # ownership truly lies; _release_com_safe nulls the references.
             self._release_com_safe()
             pythoncom.CoUninitialize()
+
+    @staticmethod
+    def _detach_sta_traceback(exc: BaseException) -> None:
+        """Detach an STA-thread traceback before the exception reaches the caller.
+
+        An exception traceback keeps every frame it crossed alive, and the frames of
+        a dispatched callback hold the apartment's COM handles in their locals (and
+        in values still on their value stack). Handing such a traceback to a caller
+        transfers ownership of those handles to a thread that does not own them: the
+        caller's reference counting or garbage collection then performs the
+        ``Release`` outside the owning apartment, after ``CoUninitialize`` may
+        already have torn that apartment down — the reported
+        "Win32 exception occurred releasing IUnknown" release fault.
+
+        Formatting and detaching the traceback here releases those handles while
+        this thread still owns them. The caller keeps the exception type, message,
+        args, and its whole cause/context chain; the original STA-side traceback
+        text rides along as a PEP 678 note so the diagnostic is not lost.
+        """
+        if exc.__traceback__ is None:
+            return
+        sta_traceback = "".join(traceback.format_exception(exc))
+        for chained in _exception_chain(exc):
+            chained.__traceback__ = None
+        exc.add_note(
+            "STA thread traceback of the dispatched call, detached so the apartment "
+            f"releases its COM handles in the owning apartment:\n{sta_traceback}"
+        )
 
     def _release_com_safe(self) -> None:
         """Release all COM objects in order: ADO -> DAO -> Access Application.
