@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -102,25 +103,59 @@ class InspectionPort(Protocol):
     def close(self) -> None: ...
 
 
-@dataclass
-class _OpenDatabaseDispatcher:
-    """Minimal dispatcher view allowing SchemaInspector to use an open handle."""
+class _OwnerThreadDispatcher:
+    """Dispatcher view that runs every inspection COM call on the owner thread.
 
-    current_db: Any
+    ``SchemaInspector`` drives every DAO read through ``call`` and reads ``current_db``
+    inside the dispatched unit, so routing those through the real dispatcher keeps the
+    apartment-affine DAO handle on the STA thread that opened it instead of letting a
+    caller thread drive COM directly.
+
+    The view is reentrancy-safe: when the caller already is the owner thread --
+    ``inspect_open_database`` dispatches the whole extraction as one unit -- the
+    operation runs inline. Enqueuing there would ask the owner thread to service a call
+    it is itself blocked on, so the inline branch preserves that single dispatched unit
+    instead of deadlocking until ``DISPATCH_TIMEOUT``.
+    """
+
+    def __init__(self, dispatcher: Any) -> None:
+        self._dispatcher = dispatcher
+
+    @property
+    def current_db(self) -> Any:
+        """Return the dispatcher's live DAO handle (read inside the dispatched unit)."""
+        return self._dispatcher.current_db
 
     def is_connected(self) -> bool:
-        return True
+        """Forward the dispatcher's live-connection state to ``SchemaInspector``."""
+        return self._dispatcher.is_connected()
 
-    def call(self, operation: Any) -> Any:
-        return operation()
+    def call(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
+        """Run ``operation`` on the owner thread, inline when already on it."""
+        if self._is_owner_thread():
+            return operation(*args, **kwargs)
+        return self._dispatcher.call(operation, *args, **kwargs)
+
+    def _is_owner_thread(self) -> bool:
+        """Report whether the current thread is the dispatcher's STA thread."""
+        # ComDispatcher's STA thread is the authority here; a dispatcher double without
+        # one (an inline recorder) takes the normal ``call`` path. Read via getattr so
+        # the dependency stays explicit and private access stays audited by ruff.
+        owner = getattr(self._dispatcher, "_thread", None)
+        return owner is not None and owner is threading.current_thread()
 
 
 class DaoInspectionPort:
-    """Thin adapter over SchemaInspector for a caller-owned open DAO handle."""
+    """Thin adapter over SchemaInspector for a dispatcher-owned open DAO handle.
 
-    def __init__(self, database: Any) -> None:
-        self._database = database
-        self._inspector = SchemaInspector(_OpenDatabaseDispatcher(database))
+    Every read is routed through the dispatcher, so the DAO handle is only ever
+    touched on the thread that owns it; the port never stores a caller-thread proxy
+    reference whose release would land outside the owning apartment.
+    """
+
+    def __init__(self, dispatcher: Any) -> None:
+        self._dispatcher = _OwnerThreadDispatcher(dispatcher)
+        self._inspector = SchemaInspector(self._dispatcher)
 
     def capabilities(self) -> InspectionCapabilities:
         return InspectionCapabilities()
@@ -144,7 +179,16 @@ class DaoInspectionPort:
         return self._inspector.get_query_parameters(query_name)
 
     def close(self) -> None:
-        self._database.Close()
+        """Close the dispatcher's live DAO handle on its owner thread."""
+        self._dispatcher.call(self._close_current_database)
+
+    def _close_current_database(self) -> None:
+        """Close the live handle; nothing to release when the dispatcher has none."""
+        database = self._dispatcher.current_db
+        if database is None:
+            return None
+        database.Close()
+        return None
 
 
 # Access ODBC exposes user tables and linked-table synonyms through SQLTables; saved
@@ -400,9 +444,13 @@ def open_inspection_port(dispatcher: Any) -> DaoInspectionPort:
     asks the dispatcher to reopen the already-open database with DAO
     ``ReadOnly=True`` before metadata is read. Every other tool keeps its existing
     open semantics; only this path requests the read-only reopen.
+
+    The returned port routes every COM read through the dispatcher, so the DAO handle
+    is only ever touched on the STA thread that owns it -- whether a caller drives the
+    port directly or the whole extraction runs inside one dispatched unit.
     """
     dispatcher.reopen_dao_database_read_only()
-    return DaoInspectionPort(dispatcher.current_db)
+    return DaoInspectionPort(dispatcher)
 
 
 def open_odbc_inspection_port(adapter: Any) -> OdbcInspectionPort:
@@ -455,6 +503,9 @@ def inspect_open_database(
     ``include_query_sql`` defaults to ``False``: the emitted saved-query SQL fact is then
     ``excluded`` before any capability check, so no SQL text reaches evidence. Passing
     ``True`` restores the observing behavior (DAO observed/failed, ODBC unavailable).
+
+    The DAO extraction is dispatched as a single unit, so every COM read it performs
+    happens on the dispatcher's owner thread.
     """
     adapter = getattr(database, "_adapter", None)
     dispatcher = getattr(adapter, "_dispatcher", None)
