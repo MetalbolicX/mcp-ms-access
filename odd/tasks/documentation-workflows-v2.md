@@ -88,31 +88,71 @@ note (a documentation path calling generic
 8. Forms/reports enter as **inventory + declared text** (control/section/
    event listing + `SaveAsText` source), not as rendered semantics; deep
    control-tree semantics stay out of v2.
+9. **Raw source text is opt-in** (R1, mirrors the v1 `include_query_sql`
+   contract): by default, app-logic evidence carries the catalogue — names,
+   modules, procedure listings, control/section/event inventories, macro
+   action trees where cheap — plus a content hash per source object; full
+   `SaveAsText`/VBA source enters the evidence payload only when the caller
+   explicitly opts in (proposed: `include_app_logic_source`, CLI
+   `--include-app-logic-source`). Opt-in source still counts against the
+   existing 32 MiB evidence / 16 MiB Markdown caps — above-limit stays
+   `Err`, never truncation.
+10. **Surface is the existing `documentation_inspect` operation extended**
+    (R2): new arguments gate app-logic families (default OFF keeps every v1
+    call byte-identical); the `analysis` profile does not grow a new tool
+    and CLI/MCP keep the same single inspect entrypoint and permission
+    semantics.
+11. **Markdown reports show catalogues, not code** (R3): application-logic
+    sections list modules/procedures, form/report inventories, and macro
+    action trees; opt-in raw source is referenced by evidence ID (and
+    hash), never inlined in the Markdown. Reports stay readable and bounded
+    regardless of code volume.
+12. **Child-shutdown invariant for the spawned `MSACCESS.EXE`** (hardening
+    discovery, L3): the T4b supervisor kills the owned child on deadline;
+    once the child hosts `Access.Application`, a kill can orphan `MSACCESS.
+    EXE` holding a lock on the offline copy (the v1 "unreachable in
+    production" argument no longer holds). The v2 child must reap its own
+    Access instance by captured PID on every exit path — graceful
+    close/quit first, then PID-scoped kill (precedent: plan-030 PID capture
+    at connect, plan-031 `kill_access_processes` PID-scoped, never `/IM`);
+    the offline copy is scratch-owned so lock residue is bounded to the
+    disposable copy, never the original.
 
 ## Resolved decisions (user, 2026-10-17)
 
 - D1 = **A**: disciplined instantiation-level reader (offline copy,
-  `AutomationSecurity=3`, no writes, close-without-save, supervision).
-- D2 = **all four families** in the first slice: VBA modules; forms +
+  `AutomationSecurity=3`, no writes, close-without-save, supervision).- D2 = **all four families** in the first slice: VBA modules; forms +
   reports inventory; named macros + AutoKeys; references + startup
   properties (DAO-readable). Table data macros remain probe-gated and
   separate (agreement 5).
 - D3 = **offline copy only**: the reader never opens the original.
 - D4 = **degrade to `unavailable`**: missing VBProject trust never blocks
   other categories; the prerequisite is named in coverage.
+- R1 = **catalogue + opt-in source** (agreement 9).
+- R2 = **extend `documentation_inspect`**, default-off arguments, no new
+  tool (agreement 10).
+- R3 = **catalogues in Markdown**, raw source only via evidence-ID
+  reference (agreement 11).
 
 ## Proposed slices (definition-level; execution order S1→S4, TDD)
 
 - S1 — Reader skeleton: offline-copy acquisition, `AutomationSecurity=3`
   open, close-without-save, supervision hooks, per-fact `method` metadata,
-  boundary-guard test (no `get_object_metadata`/`get_database_statistics`
-  in the documentation path).
-- S2 — VBA modules + references/startup properties (D4 degrade path first:
-  trust-refusal → `unavailable`; then observed facts).
+  **child-shutdown invariant (agreement 12): PID-captured Access reap on
+  every exit path incl. the deadline-kill path**, boundary-guard test (no
+  `get_object_metadata`/`get_database_statistics` in the documentation
+  path).
+- S2 — Inspect extension wiring (R2): default-off app-logic arguments on
+  `documentation_inspect` + CLI/MCP surfaces + pins proving a
+  default-off call emits byte-identical v1 evidence; VBA modules +
+  references/startup properties (D4 degrade path first: trust-refusal →
+  `unavailable`; then observed facts); catalogue+hash shape per R1.
 - S3 — Forms + reports inventory + declared text (SaveAsText, UTF-16-LE);
-  named macros + AutoKeys action trees via the proven AXL dialect.
-- S4 — Report sections + spec sync + coverage matrix rows; table data-macro
-  read probe (disposable fixture, gate recorded either way).
+  named macros + AutoKeys action trees via the proven AXL dialect; opt-in
+  source payload path with cap arithmetic (R1).
+- S4 — Report catalogue sections (R3) + evidence-ID/hash referencing +
+  spec sync + coverage matrix rows; table data-macro read probe
+  (disposable fixture, gate recorded either way).
 
 Runtime qualification is operator-gated, as in v1 (T11 pattern).
 
@@ -128,3 +168,12 @@ Runtime qualification is operator-gated, as in v1 (T11 pattern).
   families + probe-gated data macros, D3=offline copy only, D4=degrade to
   `unavailable`. Agreements ACCEPTED; slices S1–S4 proposed; implementation
   remains unstarted pending explicit authorization.
+- L3 (2026-10-17): refinement round. Design gap found by parent: the T4b
+  deadline-kill path can orphan the child-spawned `MSACCESS.EXE` (v1's
+  "unreachable in production" no-grandchildren argument breaks once the
+  worker hosts Access.Application) → agreement 12 (child-shutdown PID reap
+  invariant). User accepted R1 catalogue+opt-in source, R2 extend
+  `documentation_inspect` (default-off, v1 byte-identical), R3 catalogues
+  in Markdown (no inlined code). Slices rewritten to carry these.
+  Delivered stack + fix + this definition pushed: main `9330821` on
+  origin.
