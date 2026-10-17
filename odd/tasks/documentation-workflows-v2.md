@@ -121,10 +121,14 @@ note (a documentation path calling generic
 ## Resolved decisions (user, 2026-10-17)
 
 - D1 = **A**: disciplined instantiation-level reader (offline copy,
-  `AutomationSecurity=3`, no writes, close-without-save, supervision).- D2 = **all four families** in the first slice: VBA modules; forms +
+  `AutomationSecurity=3`, no writes, close-without-save, supervision).
+- D2 = **all four families** in the first slice: VBA modules; forms +
   reports inventory; named macros + AutoKeys; references + startup
-  properties (DAO-readable). Table data macros remain probe-gated and
-  separate (agreement 5).
+  properties. Correction (L4): references/startup are NOT engine-level —
+  no reader exists in this codebase and project references have no DAO
+  path; both come from the same instantiation-level reader
+  (`Application.References` / `CurrentProject.AllProperties`). Table data
+  macros remain probe-gated and separate (agreement 5).
 - D3 = **offline copy only**: the reader never opens the original.
 - D4 = **degrade to `unavailable`**: missing VBProject trust never blocks
   other categories; the prerequisite is named in coverage.
@@ -177,3 +181,12 @@ Runtime qualification is operator-gated, as in v1 (T11 pattern).
   in Markdown (no inlined code). Slices rewritten to carry these.
   Delivered stack + fix + this definition pushed: main `9330821` on
   origin.
+- L4 (2026-10-17): parent correction — D2's "(DAO-readable)" note on
+  references/startup was wrong (grep: no reader in the codebase;
+  `Access.Application.References` has no DAO equivalent). Both families
+  move under the instantiation-level reader; their fact-read paths join the
+  S1 validation probes. Remaining refinement agenda for the user: copy
+  lifecycle/location + cleanup, production dialog supervision (v1 kept the
+  watcher test-only), catalogue evidence layout (hash/ID format, flag
+  precedence `include_app_logic_source` without `include_app_logic`), and
+  v2 runtime-acceptance scenarios (v1 Q1–Q7 pattern).
