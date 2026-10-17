@@ -1,7 +1,9 @@
 # Synthetic documentation fixtures
 
 Status: generator, expected manifest, the opt-in raw-readback integration suite, and
-the opt-in documentation-pipeline qualification suite are implemented. The pipeline
+the opt-in documentation-pipeline qualification suite are implemented. A separate opt-in
+suite with its own helper-built fixture qualifies a genuine SQLite-backed
+`dbAttachedODBC` link (see the SQLite ODBC link fixture section). The pipeline
 suite qualifies engine-level read-only protection for both the DAO and ODBC inspection
 opens, exercises the ODBC inspection path with engine-level refusal plus no-write
 evidence, and qualifies filtered
@@ -210,6 +212,133 @@ and asserts no MSACCESS.EXE process survives, no `.laccdb` remains, and the mark
 exists only beside the copy (not beside the session original and nowhere else in the
 session tree or repository).
 
+## SQLite ODBC link fixture (`db/fixtures/sqlite-odbc-*`)
+
+The genuine non-Access-linked fixture is built on demand by the opt-in integration suite
+through `tests/helpers/sqlite_odbc_link_worker.py`, not by
+`generate_documentation_fixtures.py`. It is a disposable, repository-confined root
+`db/fixtures/sqlite-odbc-<uuid>/` holding:
+
+- `remote.sqlite` — a SQLite database with one table `remote_items`
+  (`id INTEGER PRIMARY KEY`, `label TEXT NOT NULL`) and exactly two rows,
+  `(1, 'alpha')` and `(2, 'beta')`;
+- `linked.accdb` — a plain ACE database with a **local** control table `local_items`
+  (one row, primary key `PK_local_items`) and a genuine DSN-less ODBC link
+  `remote_items_link` (`SourceTableName = remote_items`, stored `Attributes` `0x20020000`
+  = `dbAttachedODBC` `0x20000000` with `dbAttachSavePWD` `0x00020000`);
+- `inventory.json` — the per-build SHA-256 of both files and the expected remote rows.
+
+No password-protected Access file is required for this case (the separate
+`protected-link-*` stored-credential fixture below does build one), no DSN or system data
+source is created, and no `Access.Application` is launched (the ACE DAO engine
+`DAO.DBEngine.120` and the Access ODBC driver are used directly). Only a local `TABLE`
+and a linked `SYNONYM` exist in the fixture, so the fail-closed unknown-table-type path
+is not exercised here and remains unit-proven. The helper's `build` command also accepts
+`--database-style relative`, which stores `Database=remote.sqlite` so the driver's
+completed string fits under ACE's 254-character persistence cut and the stored `Connect`
+keeps its `PWD` segment; that style is used only by the stored-credential suite, and its
+steps run with CWD pinned to the fixture root because the driver resolves the relative
+value against the process CWD.
+
+The suite runs under the validated dialog watcher (`tests/helpers/dialog_watcher.py`,
+unit-proven in `tests/unit/test_dialog_watcher.py`), so it cannot be stopped by a driver
+connection dialog. The deliberate locked linked read raises the driver's own
+`SQLite3 ODBC Driver Connect` window (class `#32770`) owned by the helper's process tree;
+the watcher observes exactly that one expected dialog, closes it with `WM_CLOSE`, and the
+read is then refused (DAO `5003151`). Every other helper and public-CLI step must observe
+zero dialogs from its own process tree; an unexpected dialog, a repeat past the dismissal
+cap, or a hung step is closed/terminated and fails the run with the dialog's
+title/class/owner recorded. The per-step census is helper build `0`, `prove-contact` `0`,
+`prove-isolation` `1` (the expected driver dialog), `catalog-types` `0`, and `0` for each
+locked inspect/render run. Every subprocess CWD is pinned inside the fixture root, so a
+relative `Database=` path cannot resolve against the repository root and leave a stray
+source file.
+
+### Prerequisites, invocation, and skips
+
+Windows with ACE DAO (pywin32), the Access ODBC driver, and the x64 `SQLite3 ODBC Driver`
+registered with the ODBC installer are required; the suite builds the fixture itself, so
+the driver must already be installed but the tests configure nothing system-wide. Run it
+explicitly on Windows:
+
+```powershell
+$env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
+.venv/Scripts/python.exe -m pytest tests/integration/test_documentation_sqlite_odbc_link.py -q
+```
+
+Without `ACCESS_DOCUMENTATION_FIXTURES_TEST=1` (or off Windows, or without ACE DAO, or
+without the SQLite ODBC driver) the module skips cleanly with a reason. The helper's
+`environment` command reports the same reasons and exits 3 when unsupported.
+
+### Retention and cleanup
+
+Generated binary and JSON outputs under `db/fixtures/sqlite-odbc-*` are **retained as
+evidence**: the suite creates a new root per session and never deletes it, and the helper
+refuses to overwrite an existing root. The helper exposes a guarded `cleanup` command
+that removes exactly one self-created direct child of `db/fixtures/`, but no cleanup runs
+as part of the suite and deletion is separately authorized.
+
+### Qualification and limits
+
+The suite qualifies the shipped inspection path only (no production source changes); its
+observed evidence is recorded in [workflow specification](documentation-workflows.md)
+§7.2 (SQLite ODBC link subsection). Its scope limits are deliberate: the exclusive
+`share=0` source lock plus the zero-dialog observation proves the qualifying DAO and ODBC
+inspections performed no **source-file open** and that no SQLite-driver connect attempt
+surfaced through ACE while they ran — still not every contact form, so the claim is
+paired with the classification-before-read unit proofs in
+`tests/unit/test_odbc_inspection_port.py`. The absolute-path fixture's stored `Connect`
+has no `PWD` segment because ACE persists only the first 254 characters of the driver's
+completed string, so that truncation — not credential filtering — is the reason a
+positive runtime redaction of a stored credential is qualified by the separate
+`protected-link` fixture (and the relative-database SQLite build) described below, not
+here; sanitization itself stays unit-proven. Rendering the emitted
+evidence is offline and deterministic, and the source bytes (`remote.sqlite`,
+`linked.accdb`) are asserted unchanged around the locked runs. Every public-CLI and helper
+invocation runs as its own short-lived, timeout-bounded subprocess under the dialog
+watcher, so no warmed COM or ODBC handle crosses between the DAO and ODBC inspections and
+no step can block on a dialog or hang.
+
+## Stored-credential link fixture (`db/fixtures/protected-link-*`)
+
+The non-vacuous stored-credential qualification (S4a/T5) uses a second on-demand fixture
+built by the opt-in suite through `tests/helpers/protected_link_worker.py` (not by
+`generate_documentation_fixtures.py`). It is a disposable, repository-confined root
+`db/fixtures/protected-link-<uuid>/` holding:
+
+- `backend.accdb` — a disposable ACE database created with the fake password in the DAO
+  `CreateDatabase` locale (`;LANGID=0x0409;CP=1252;COUNTRY=0;pwd=canary-7f3a`,
+  `dbVersion120`) and one `secret_items` row. The password is real: an unprotected DAO
+  open is refused (DAO `5003031`).
+- `frontend.accdb` — a disposable ACE database with a local control table `local_items`
+  (one row, primary key `PK_local_items`) and a `dbAttachedTable` link `link_items`
+  (`Attributes` `0x40000000`, `SourceTableName = secret_items`) whose `Connect` is
+  `;PWD=canary-7f3a;DATABASE=<backend absolute path>`; ACE stores it verbatim and
+  normalizes the scheme to `MS Access`;
+- `inventory.json` — the per-build SHA-256 of both files and the expected backend row.
+
+No DSN or system data source is created, no `Access.Application` is launched, and every
+helper command performs at most one DAO `DBEngine.120` dispatch/release cycle in its own
+process. The helper emits only booleans, counts, hex attribute masks, and connection-string
+key names, so the raw `Connect` and the credential never reach its stdout. The suite runs
+under the validated dialog watcher with `PYTHONFAULTHANDLER` stripped, holds the backend
+under an exclusive `share=0` lock while the public DAO and Access-ODBC inspections and
+both offline renders run, and requires every step to exit 0 with zero dialogs. Positive
+controls (stored credential present, unprotected open refused, linked read returns the
+row) are observed in a new process before any pipeline run; an unprotected open is also
+re-verified after the run. Rendered `db/fixtures/protected-link-*` roots are retained as
+evidence, and the helper's guarded `cleanup` command removes exactly one self-created
+direct child of `db/fixtures/`; no cleanup runs as part of the suite. Exact opt-in run:
+
+```powershell
+$env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
+.venv/Scripts/python.exe -m pytest tests/integration/test_documentation_stored_credential_link.py -q
+```
+
+The relative-database SQLite build used by the same suite remains under
+`db/fixtures/sqlite-odbc-*` and is documented in the SQLite fixture section above and in
+[workflow specification](documentation-workflows.md) §7.2.
+
 ## Test and qualification boundaries
 
 Pure CLI/manifest tests need no ACE: `tests/unit/test_generate_documentation_fixtures.py`
@@ -253,7 +382,12 @@ expected manifest.
 Link creation intentionally contacts the local sentinel during construction.
 Hash equality or lack of lock files cannot establish that later inspection never
 contacts it. That claim needs access-observation evidence during the inspection
-window, which is outside this initial suite's proof.
+window, which is outside this initial suite's proof. The SQLite ODBC link fixture suite
+supplies exactly that access-observation evidence for its own source: it holds the
+SQLite file under an exclusive Windows lock across the public inspections **and** runs each
+of them under a validated dialog watcher, so those inspections could not have opened the
+source file and surfaced no SQLite-driver connect attempt through ACE (see the SQLite ODBC
+link fixture section for the retained limits of that proof).
 
 The opt-in suite `tests/integration/test_documentation_pipeline_e2e.py` qualifies the
 documentation pipeline against the same synthetic fixtures through the public CLI

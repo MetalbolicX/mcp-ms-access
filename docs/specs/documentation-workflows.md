@@ -9,18 +9,21 @@
 > extraction, field-default
 > honesty, query categories including update/delete, linked-table metadata rendering,
 > save gating, engine-level read-only inspection open (DAO and ODBC), linked-source isolation
-> (DAO lock-probe), ODBC link classification with no linked-source contact, the
+> (DAO lock-probe), ODBC link classification with no linked-source contact, a genuine
+> SQLite-backed `dbAttachedODBC` DAO link with its Access ODBC `SYNONYM` (locked-source
+> inspection, explicit linked gaps, and offline rendering), the
 > bounded-resource profile (byte caps and the 120-second whole-inspection deadline),
 > and the non-execution invariants are also qualified — see §7.2 for
 > the exact per-claim scope and evidence citations, including the ACE/ODBC row, its
-> capability table, the filtered-inspection subsection, the bounded-resource subsection,
-> and the startup-code non-execution subsection.
+> capability table, the SQLite ODBC link subsection, the filtered-inspection subsection,
+> the bounded-resource subsection, and the startup-code non-execution subsection.
 >
 > **Still NOT QUALIFIED / unclaimed:** legacy Jet 3 and Jet 4 `.mdb` format fixtures
-> (excluded by program scope S2); a runtime fixture for an ODBC-attached DAO link
-> (`dbAttachedODBC`, `Attributes` `0x20000000`) — the classifier recognizes the bit and
-> the passive enumerator excludes it (unit-tested), but no built fixture creates one and
-> none may be created here (retain-gap-proceed, ledger L8); **VBA/macro execution beyond
+> (excluded by program scope S2); any ODBC-attached source (`dbAttachedODBC`, `Attributes`
+> `0x20000000`) **other than the qualified SQLite case** — a genuine SQLite-backed DAO
+> link and its Access ODBC `SYNONYM` are now runtime-qualified for that one driver/source
+> combination (§7.2, SQLite ODBC link subsection), but no other ODBC driver or
+> non-Access source is claimed; **VBA/macro execution beyond
 > the `startup.accdb` fixture** — the delivered named-macro/AutoKeys objects are
 > name-observable and proven non-executing, and the table **data-macro tripwire is
 > accept-blocked** (not implemented; ledger L25, §7.2, and `documentation-fixtures.md`),
@@ -360,8 +363,8 @@ Support is declared per format/runtime, never inferred from suffix. Every cell b
 |---|---|---|
 | Jet 3 (`.mdb`) | DAO / Access runtime combination to be specified and tested | **NOT QUALIFIED** |
 | Jet 4 (`.mdb`) | DAO / Access runtime combination to be specified and tested | **NOT QUALIFIED** |
-| ACE (`.accdb`) | DAO backend; Northwind 8-table closed fixture (2026-10-08) and the synthetic fixture suite (`core`/`sentinel`/`linked`/`startup`), Windows/ACE | **PARTIALLY QUALIFIED (fixture scope).** Covered, each with its scope and evidence: schema/relationships/saved queries (Northwind 8-table closed fixture, ledger T11 of `odd/tasks/documentation-workflows.md`; synthetic fixture `test_inspect_core_covers_exactly_manifest_tables_and_queries`); index-derived composite PKs and the genuine unique index (`test_inspect_core_primary_keys_and_unique_index`); field-default honesty — DAO `Field.DefaultValue` as `observed` stored expressions, defaultless fields `observed` empty, a `None` producer mapped to `unavailable` at the seam (`test_inspect_core_field_defaults_are_read_from_dao`; unit `test_field_default_value_is_read_from_dao_and_nul_stripped`, `test_field_default_none_maps_to_unavailable_while_real_defaults_stay_observed`); query categories including update/delete (32/48/64 → `action`, 80/96 → `ddl`; unit `test_maps_dao_update_type_48_to_action_category`); saved-query parameter metadata from DAO `QueryDef.Parameters` (`test_inspect_core_query_parameters_are_read_from_dao`: `[pCustomerID]` `observed` type `4`/`Long Integer`, parameterless `observed` empty, a non-exposing port `unavailable`); linked-table local catalogue metadata reaching evidence and rendering as `- Linked table: <name> → <file>/<source-table>` (`test_finding_inspect_linked_local_link_metadata_absent_from_evidence`, now passing); save gating (`test_save_gating_contract_on_report_copies`); engine-level read-only inspection open (`test_inspect_open_is_engine_read_only_and_refuses_write`: the read-only handle refuses `UPDATE` with `Operation must use an updateable query.`); linked-source isolation under an exclusive lock probe (`test_inspect_linked_succeeds_while_sentinel_is_exclusively_locked`); filtered inspection (`test_inspect_filtered_tables_returns_exactly_the_requested_subset`, `test_inspect_filtered_queries_returns_exactly_the_requested_query`, `test_inspect_combined_table_and_query_filters_scope_both_axes`, `test_inspect_unknown_requested_name_is_a_hard_error`); startup-code non-execution over the extended executable-vectors fixture (`test_startup_code_is_never_executed_by_the_pipeline[dao]`; name-observability `test_startup_fixture_is_observable_and_never_executed`; plus the doubly gated control run `test_control_run_executes_marker_under_isolation` that proves the fixture genuinely executes under isolation); non-execution invariants after inspect → render → save (`test_non_execution_invariants_after_inspect_render_save`); deterministic rendering and Mermaid cardinality rules (`test_render_database_is_deterministic`, `test_render_mermaid_relationship_cardinality_matches_documented_rules`); and bounded resources — the evidence/Markdown/report byte caps plus the 120-second whole-inspection deadline, qualified at fixture scope (§6.3, with its named deadline, runtime-guard, and real-worker tests). The cell stays PARTIALLY QUALIFIED because three claims inside the ACE/DAO scope remain unproven. **NOT QUALIFIED (DAO scope):** **ODBC-attached links at runtime** — `SchemaInspector.get_table_link_metadata` now recognizes both attached bits (`0x40000000` ACE/Jet and `0x20000000` `dbAttachedODBC`) and `get_passive_tables` lists either as linked without reading its fields (unit `test_odbc_attached_table_is_recognized_as_linked`, `test_odbc_attached_table_is_also_enumerated_passively`), but no built fixture creates a `dbAttachedODBC` DAO link, so its end-to-end runtime behavior remains unexercised; **VBA/macro execution beyond the `startup.accdb` fixture** (only the single control run executes code); and **table data-macro execution** (the `DmlTripWire` tripwire is accept-blocked/not implemented — see the startup-code subsection and ledger L25). Cosmetic gaps intentionally left open, not qualification claims: nullable-FK cardinality rendering, the pywin32 `IUnknown`/`0x80010108` teardown stderr banner, and the `source.path`/`source.format` placeholders. |
-| ACE (`.accdb`) | ODBC backend (`Microsoft Access Driver (*.mdb, *.accdb)`), synthetic-fixture pipeline suite (`test_inspect_core_via_odbc_exposes_odbc_metadata_with_honest_unavailable_gaps`), Windows, 2026-10-08 | **PARTIALLY QUALIFIED (inspection only)**: `documentation inspect --backend odbc` reads the same built `core.accdb` fixture copy through the Access ODBC driver, produces evidence, and that evidence renders offline (database report). ODBC-visible facts are `observed` with the driver's own values (never the DAO equivalent): eight user tables including `Sales Notes`; SQLColumns type names/sizes (`INTEGER` 10, `VARCHAR`, `CURRENCY` — not DAO `Long Integer`/`Currency`); SQLStatistics index names, columns, and uniqueness including composite `PK_OrderLines` order; three row-returning saved queries as `VIEW` rows. ODBC-invisible properties are `unavailable` with a per-capability reason and are never fabricated: `field_required`/`field_allow_zero_length` (SQLColumns reports `NULLABLE` for every column and has no `AllowZeroLength` equivalent), `primary_key` (`SQLPrimaryKeys` unsupported IM001 and SQLStatistics does not flag the primary index, so reported indexes carry `is_primary=false` and every table records a `coverage.tables.unsupported` reason), `relationships` (`SQLForeignKeys` unsupported IM001; `MSysRelationships` unreadable), `query_sql`/`query_type` (only `VIEW` rows are visible), and a linked table's `Connect`/`SourceTableName` (ODBC reports `SYNONYM` without the target). Declared query parameters are `observed` through `SQLProcedureColumns` (`[pCustomerID]`, ODBC SQL data type `4` = `INTEGER`; parameterless queries report a driver-known empty, distinct from `unavailable`). Action queries (`qryUpdateOrderStatus`, `qryDeleteDraftOrders`) are not `VIEW` rows and are invisible to ODBC, so the ODBC query catalogue covers the three row-returning queries only. The test asserts the source copy's sha256 is unchanged before and after and that no `core.accdb.*` lock file remains; the ODBC open is a separate engine-level read-only connection (see below), and T4's engine-level read-only qualification is now per-backend rather than DAO-scoped. ODBC classifies every listed table by its `SQLTables` type before any column or index read: a `SYNONYM` (linked table) is never passed to `SQLColumns` or `SQLStatistics`, so the linked source is **not contacted** over ODBC either. The linked table is reported as an explicit coverage `unsupported` gap with empty fields/indexes and an `unavailable` primary key, proved by `test_inspect_linked_via_odbc_does_not_contact_the_linked_source` (which holds the fixture sentinel exclusively and asserts the linked table is neither failed nor observed-empty); the unit `test_linked_synonym_is_not_read_and_reports_explicit_gap` additionally asserts no catalog call ever targets it, and a table type that cannot be classified is refused the same way (fail closed). The ODBC open is a separate engine-level read-only connection (`OdbcAdapter.open_readonly_inspection_connection` → `pyodbc.connect(..., readonly=True)`, qualified on ACEODBC `16.0.20326.20022` x64): a narrow UPDATE is refused with driver error `-3035` "Operation must use an updateable query.", the adapter's own CRUD connection is untouched and still works, and a controlled writable copy proves the ordinary CRUD path still writes (`test_odbc_inspection_open_is_engine_read_only_and_refuses_write`). Startup-code non-execution is qualified for this backend by `test_startup_code_is_never_executed_by_the_pipeline[odbc]`: the full inspect → render → save cycle over `startup.accdb` through the Access ODBC driver exits 0, carries `StartupNotes` in evidence, and leaves the source hash unchanged with no lock residue, no new MSACCESS.EXE process, and no `*marker*` file. Filtered inspection is also qualified for ODBC (see the filtered-inspection subsection): an explicit request-order `--tables` subset over ODBC selects exactly the requested tables with the untouched view-only query scope, `--queries` selects exactly the requested row-returning `VIEW` query with the table scope untouched, both axes combine, and an unknown name is the same hard exit-1 `Err` as DAO (`test_inspect_filtered_tables_via_odbc_returns_exactly_the_requested_subset`, `test_inspect_filtered_queries_via_odbc_returns_exactly_the_requested_view`, `test_inspect_combined_table_and_query_filters_via_odbc_scope_both_axes`, `test_inspect_unknown_requested_name_via_odbc_is_a_hard_error`). Selecting only `LocalNotes` in `linked.accdb` while the sentinel is exclusively locked never contacts the filtered-out linked source (`test_inspect_filtered_out_linked_source_is_not_contacted_via_odbc`). The explicit empty-list selection, which the repeatable CLI flags cannot express, is exercised over a real ODBC port through the public application inspect interface and the public MCP tool with a transport-parity assertion against the CLI ODBC run (`test_inspect_empty_selection_via_odbc_is_select_none_and_transport_parity`): `[]` selects no table/query (empty `run.scope` and `coverage`, with the relationship `unavailable` gap keeping the document `partial`) while `None` selects every eligible object. NOT COVERED: VBA/macro execution beyond the startup fixture, and table data-macro execution (accept-blocked; ledger L25). |
+| ACE (`.accdb`) | DAO backend; Northwind 8-table closed fixture (2026-10-08) and the synthetic fixture suite (`core`/`sentinel`/`linked`/`startup`), Windows/ACE | **PARTIALLY QUALIFIED (fixture scope).** Covered, each with its scope and evidence: schema/relationships/saved queries (Northwind 8-table closed fixture, ledger T11 of `odd/tasks/documentation-workflows.md`; synthetic fixture `test_inspect_core_covers_exactly_manifest_tables_and_queries`); index-derived composite PKs and the genuine unique index (`test_inspect_core_primary_keys_and_unique_index`); field-default honesty — DAO `Field.DefaultValue` as `observed` stored expressions, defaultless fields `observed` empty, a `None` producer mapped to `unavailable` at the seam (`test_inspect_core_field_defaults_are_read_from_dao`; unit `test_field_default_value_is_read_from_dao_and_nul_stripped`, `test_field_default_none_maps_to_unavailable_while_real_defaults_stay_observed`); query categories including update/delete (32/48/64 → `action`, 80/96 → `ddl`; unit `test_maps_dao_update_type_48_to_action_category`); saved-query parameter metadata from DAO `QueryDef.Parameters` (`test_inspect_core_query_parameters_are_read_from_dao`: `[pCustomerID]` `observed` type `4`/`Long Integer`, parameterless `observed` empty, a non-exposing port `unavailable`); linked-table local catalogue metadata reaching evidence and rendering as `- Linked table: <name> → <file>/<source-table>` (`test_finding_inspect_linked_local_link_metadata_absent_from_evidence`, now passing); save gating (`test_save_gating_contract_on_report_copies`); engine-level read-only inspection open (`test_inspect_open_is_engine_read_only_and_refuses_write`: the read-only handle refuses `UPDATE` with `Operation must use an updateable query.`); linked-source isolation under an exclusive lock probe (`test_inspect_linked_succeeds_while_sentinel_is_exclusively_locked`); filtered inspection (`test_inspect_filtered_tables_returns_exactly_the_requested_subset`, `test_inspect_filtered_queries_returns_exactly_the_requested_query`, `test_inspect_combined_table_and_query_filters_scope_both_axes`, `test_inspect_unknown_requested_name_is_a_hard_error`); startup-code non-execution over the extended executable-vectors fixture (`test_startup_code_is_never_executed_by_the_pipeline[dao]`; name-observability `test_startup_fixture_is_observable_and_never_executed`; plus the doubly gated control run `test_control_run_executes_marker_under_isolation` that proves the fixture genuinely executes under isolation); non-execution invariants after inspect → render → save (`test_non_execution_invariants_after_inspect_render_save`); deterministic rendering and Mermaid cardinality rules (`test_render_database_is_deterministic`, `test_render_mermaid_relationship_cardinality_matches_documented_rules`); and bounded resources — the evidence/Markdown/report byte caps plus the 120-second whole-inspection deadline, qualified at fixture scope (§6.3, with its named deadline, runtime-guard, and real-worker tests). The cell stays PARTIALLY QUALIFIED because two claims inside the ACE/DAO scope remain unproven. **NOT QUALIFIED (DAO scope):** **VBA/macro execution beyond the `startup.accdb` fixture** (only the single control run executes code); and **table data-macro execution** (the `DmlTripWire` tripwire is accept-blocked/not implemented — see the startup-code subsection and ledger L25). The former **ODBC-attached links at runtime** gap is now runtime-qualified for one source only: a genuine SQLite-backed `dbAttachedODBC` DAO link inspected while its source is exclusively locked (SQLite ODBC link subsection; `test_locked_dao_inspection_needs_no_source_open_and_reports_linked_gaps`). `SchemaInspector.get_table_link_metadata` recognizes both attached bits (`0x40000000` ACE/Jet and `0x20000000` `dbAttachedODBC`) and `get_passive_tables` lists either as linked without reading its fields (unit `test_odbc_attached_table_is_recognized_as_linked`, `test_odbc_attached_table_is_also_enumerated_passively`). Cosmetic gaps intentionally left open, not qualification claims: nullable-FK cardinality rendering, the pywin32 `IUnknown`/`0x80010108` teardown stderr banner, and the `source.path`/`source.format` placeholders. |
+| ACE (`.accdb`) | ODBC backend (`Microsoft Access Driver (*.mdb, *.accdb)`), synthetic-fixture pipeline suite (`test_inspect_core_via_odbc_exposes_odbc_metadata_with_honest_unavailable_gaps`), Windows, 2026-10-08 | **PARTIALLY QUALIFIED (inspection only)**: `documentation inspect --backend odbc` reads the same built `core.accdb` fixture copy through the Access ODBC driver, produces evidence, and that evidence renders offline (database report). ODBC-visible facts are `observed` with the driver's own values (never the DAO equivalent): eight user tables including `Sales Notes`; SQLColumns type names/sizes (`INTEGER` 10, `VARCHAR`, `CURRENCY` — not DAO `Long Integer`/`Currency`); SQLStatistics index names, columns, and uniqueness including composite `PK_OrderLines` order; three row-returning saved queries as `VIEW` rows. ODBC-invisible properties are `unavailable` with a per-capability reason and are never fabricated: `field_required`/`field_allow_zero_length` (SQLColumns reports `NULLABLE` for every column and has no `AllowZeroLength` equivalent), `primary_key` (`SQLPrimaryKeys` unsupported IM001 and SQLStatistics does not flag the primary index, so reported indexes carry `is_primary=false` and every table records a `coverage.tables.unsupported` reason), `relationships` (`SQLForeignKeys` unsupported IM001; `MSysRelationships` unreadable), `query_sql`/`query_type` (only `VIEW` rows are visible), and a linked table's `Connect`/`SourceTableName` (ODBC reports `SYNONYM` without the target). Declared query parameters are `observed` through `SQLProcedureColumns` (`[pCustomerID]`, ODBC SQL data type `4` = `INTEGER`; parameterless queries report a driver-known empty, distinct from `unavailable`). Action queries (`qryUpdateOrderStatus`, `qryDeleteDraftOrders`) are not `VIEW` rows and are invisible to ODBC, so the ODBC query catalogue covers the three row-returning queries only. The test asserts the source copy's sha256 is unchanged before and after and that no `core.accdb.*` lock file remains; the ODBC open is a separate engine-level read-only connection (see below), and T4's engine-level read-only qualification is now per-backend rather than DAO-scoped. ODBC classifies every listed table by its `SQLTables` type before any column or index read: a `SYNONYM` (linked table) is never passed to `SQLColumns` or `SQLStatistics`, so the linked source is **not contacted** over ODBC either. The linked table is reported as an explicit coverage `unsupported` gap with empty fields/indexes and an `unavailable` primary key, proved by `test_inspect_linked_via_odbc_does_not_contact_the_linked_source` (which holds the fixture sentinel exclusively and asserts the linked table is neither failed nor observed-empty); the units `test_list_tables_does_not_read_columns_for_a_linked_synonym` and `test_linked_table_indexes_are_refused_without_a_statistics_read` additionally assert no catalog call ever targets it, and a table type that cannot be classified is refused the same way (fail closed; `test_unclassified_table_type_is_not_read_and_fails_closed`). The ODBC open is a separate engine-level read-only connection (`OdbcAdapter.open_readonly_inspection_connection` → `pyodbc.connect(..., readonly=True)`, qualified on ACEODBC `16.0.20326.20022` x64): a narrow UPDATE is refused with driver error `-3035` "Operation must use an updateable query.", the adapter's own CRUD connection is untouched and still works, and a controlled writable copy proves the ordinary CRUD path still writes (`test_odbc_inspection_open_is_engine_read_only_and_refuses_write`). Startup-code non-execution is qualified for this backend by `test_startup_code_is_never_executed_by_the_pipeline[odbc]`: the full inspect → render → save cycle over `startup.accdb` through the Access ODBC driver exits 0, carries `StartupNotes` in evidence, and leaves the source hash unchanged with no lock residue, no new MSACCESS.EXE process, and no `*marker*` file. Filtered inspection is also qualified for ODBC (see the filtered-inspection subsection): an explicit request-order `--tables` subset over ODBC selects exactly the requested tables with the untouched view-only query scope, `--queries` selects exactly the requested row-returning `VIEW` query with the table scope untouched, both axes combine, and an unknown name is the same hard exit-1 `Err` as DAO (`test_inspect_filtered_tables_via_odbc_returns_exactly_the_requested_subset`, `test_inspect_filtered_queries_via_odbc_returns_exactly_the_requested_view`, `test_inspect_combined_table_and_query_filters_via_odbc_scope_both_axes`, `test_inspect_unknown_requested_name_via_odbc_is_a_hard_error`). Selecting only `LocalNotes` in `linked.accdb` while the sentinel is exclusively locked never contacts the filtered-out linked source (`test_inspect_filtered_out_linked_source_is_not_contacted_via_odbc`). The explicit empty-list selection, which the repeatable CLI flags cannot express, is exercised over a real ODBC port through the public application inspect interface and the public MCP tool with a transport-parity assertion against the CLI ODBC run (`test_inspect_empty_selection_via_odbc_is_select_none_and_transport_parity`): `[]` selects no table/query (empty `run.scope` and `coverage`, with the relationship `unavailable` gap keeping the document `partial`) while `None` selects every eligible object. A genuine SQLite-backed link is recognised as a `SYNONYM` at runtime and refused a column/index read while the source is exclusively locked (`test_locked_odbc_inspection_recognizes_synonym_gap_without_source_open`, `test_offline_render_of_odbc_synonym_exposes_no_link_target`; SQLite ODBC link subsection). NOT COVERED: VBA/macro execution beyond the startup fixture, and table data-macro execution (accept-blocked; ledger L25). |
 
 #### ODBC capability table (Access ODBC driver, `core.accdb` fixture)
 
@@ -387,6 +390,178 @@ Probed before implementation; the pipeline test asserts every row. ODBC-visible 
 > index). Where a reported index has `is_primary=false`, that means **not asserted**,
 > not that it is a secondary index; primary keys are per-table `unavailable` over ODBC
 > with the `coverage.tables.unsupported` reason.
+
+#### SQLite ODBC link qualification (ACE/DAO link and Access ODBC `SYNONYM`)
+
+This closes the "genuine `dbAttachedODBC` DAO link at runtime" gap for **one** source: a
+disposable SQLite database reached through the x64 `SQLite3 ODBC Driver`. It is not a
+claim of general ODBC-source support; another driver/source combination stays
+unqualified until it has its own controlled evidence.
+
+Fixture and operator controls (helper `tests/helpers/sqlite_odbc_link_worker.py`; suite
+`tests/integration/test_documentation_sqlite_odbc_link.py`): the helper builds a confined
+`db/fixtures/sqlite-odbc-<uuid>/` root holding `remote.sqlite` (`remote_items`, exactly
+two rows `(1, "alpha")`, `(2, "beta")`) and a plain ACE `linked.accdb` with a local
+control `local_items` table and a genuine DSN-less ODBC link `remote_items_link`
+(`SourceTableName = remote_items`, `Attributes` `0x20020000` = `dbAttachedODBC`
+`0x20000000` | `dbAttachSavePWD` `0x00020000`). The SQLite link fixture itself needs
+no password-protected Access file (the separate stored-credential qualification below
+builds one), no `Access.Application` is launched, and the tests create no DSN and no
+system or machine-wide configuration; the driver must already be installed
+(prerequisites below).
+
+The positive controls are validated before source isolation is trusted
+(`test_deliberate_contact_proves_a_genuine_odbc_link`,
+`test_exclusive_lock_refuses_linked_reads_then_release_restores_them`,
+`test_runtime_catalog_separates_local_table_from_linked_synonym`), and every helper and
+public-CLI step runs under the validated dialog watcher `tests/helpers/dialog_watcher.py`
+(its own rules are unit-proven in `tests/unit/test_dialog_watcher.py`):
+
+| Control | Observed qualification evidence |
+|---|---|
+| Genuine link | stored `Attributes` carry `dbAttachedODBC` and `dbAttachSavePWD`; a deliberate read through the link returns exactly `[[1, "alpha"], [2, "beta"]]`, matching a direct driver read; `local_items` holds one row |
+| Watcher and tripwire validity | the deliberate *locked* linked read makes the driver raise its own `SQLite3 ODBC Driver Connect` window (class `#32770`) owned by the helper's process tree; the watcher observes exactly that one dialog, closes it with `WM_CLOSE`, and the read is then refused (DAO `5003151`), with the linked read returning both rows again after release. A missing dialog fails the control loudly, so the watcher's detection ability can never pass vacuously; the watcher also has a real in-process `MessageBoxW` positive control and a forged recycled-pid rejection case |
+| Runtime classification | raw Access ODBC `SQLTables` reports `local_items` `TABLE` and `remote_items_link` `SYNONYM`; this fixture carries no unclassified user table type, so the fail-closed unknown-type path stays unit-only (`test_unclassified_table_type_is_not_read_and_fails_closed`) |
+
+With the source lock held, every public-CLI run exits 0 **and raises zero dialogs from its
+own process tree**: DAO inspect, ODBC inspect, and a `--tables local_items` DAO subset,
+plus offline renders of the DAO evidence (twice, to assert determinism) and of the ODBC
+evidence. The watcher auto-closes any dialog it does see and fails that run with its
+title/class/owner recorded, and a step that hangs is bounded and terminated. The
+qualifying runs therefore performed no source-file open and made no SQLite-driver connect
+attempt through ACE. The per-step census asserted by
+`test_dialog_census_per_step_and_zero_for_every_locked_cli_run` is helper build `0`,
+`prove-contact` `0`, `prove-isolation` `1` (the expected driver dialog), `catalog-types`
+`0`, and `0` for each of the DAO/ODBC/filtered inspections and the three renders. The CWD
+of every launched subprocess is pinned inside the fixture root, so a relative `Database=`
+path cannot resolve against the repository root and leave a stray source file.
+
+- DAO (`test_locked_dao_inspection_needs_no_source_open_and_reports_linked_gaps`): the
+  link is evidence `kind: "linked"` with empty fields/indexes, an `unavailable` primary
+  key whose reason is the shipped linked-table gap, `source_table_name = remote_items`,
+  and `coverage.tables.unsupported`; it is never `failed`. `local_items` keeps its
+  observed `["id", "note"]` fields, `observed` primary key `["id"]`, and
+  `PK_local_items`.
+- ODBC (`test_locked_odbc_inspection_recognizes_synonym_gap_without_source_open`): the
+  `SYNONYM` is evidence `kind: "linked"` with empty fields/indexes, `connect` and
+  `source_table_name` `None` (the driver exposes no target), and the same explicit
+  `unavailable` primary-key gap; `local_items` keeps its `["id", "note"]` columns with
+  `observed` types and `unavailable` `required` facts.
+- Filtered (`test_filtered_dao_inspection_selects_only_the_local_control`): `--tables
+  local_items` selects exactly that table, the linked source is absent, and the link-free
+  subset is `complete` with an empty `coverage.tables.unsupported`.
+
+Credential behavior on the absolute-path build: the link is created with a fake
+`PWD=canary-7f3a` credential and `dbAttachSavePWD`, and the stored `Connect` carries
+**no `PWD` segment at all** (`pwd_segment_present` is `False`). The observed root cause
+is *not* credential filtering by ACE: the driver's completed connection string echoes the
+credential, but ACE persists only the **first 254 characters** of it, and with a
+225-character absolute `Database=` value the `pwd` key sits past that cut (a longer path
+truncates the `Database` value mid-value, proving truncation). What
+`test_stored_link_credential_is_dropped_and_streams_stay_clean` asserts here is
+therefore only the observable outcome: the canary and any `PWD=` segment are absent from
+the sanitized emitted `Connect`, from every captured stdout/stderr stream, and from the
+rendered Markdown. A *positive* runtime redaction of a **stored** credential needs a
+link whose stored metadata really carries one; that is qualified separately in the
+stored-credential subsection below, and credential sanitization also stays unit-proven
+at the connection-string seam (§5.3). Offline rendering keeps the linked gap visible
+(`test_offline_render_keeps_linked_gaps_without_credentials`: `partial`, exactly one
+`coverage.tables.unsupported`, `Linked table: remote_items_link` and the gap reason in
+Markdown, byte-identical repeated renders), and the ODBC `SYNONYM` renders "unknown
+source" with no target and no credential
+(`test_offline_render_of_odbc_synonym_exposes_no_link_target`).
+
+**No-contact proof limits (do not overstate).** The exclusive `share=0` lock plus the
+zero-dialog observation proves the qualifying inspection performed no **source-file
+open** and that **no SQLite-driver connect attempt surfaced through ACE** while it ran.
+It is still not proof against every contact form: a live attempt on an unlocked source
+raises no dialog, and a swallowed failed attempt or another contact form would look
+identical, so this is *not* exhaustive "no attempted contact" proof. The claim is paired
+with the shipped classification-before-read unit assertions
+(`test_list_tables_does_not_read_columns_for_a_linked_synonym`,
+`test_linked_table_indexes_are_refused_without_a_statistics_read`), and source absence or
+non-recreation is deliberately **not** used as an isolation oracle. The watcher observes
+only the process tree each step launches (creation-time-guarded descendants) and ignores
+and never closes any foreign window, so an unrelated process's dialog is out of scope by
+construction. Prerequisites: Windows,
+ACE DAO (`DAO.DBEngine.120`) via pywin32, and the x64 `SQLite3 ODBC Driver` registered
+with the ODBC installer; missing Windows/ACE/driver or an unset
+`ACCESS_DOCUMENTATION_FIXTURES_TEST` skips the module with a reason. The helper records the
+per-build `remote.sqlite` and `linked.accdb` SHA-256 hashes in `inventory.json`, and the
+locked runs assert both files are byte-identical before and after. Observed runtime here
+is ACE 16 with SQLite ODBC DBMS `3.43.2`, x64 Windows. Generated fixture roots (SQLite
+database, ACE database, `inventory.json`) are **retained** at `db/fixtures/sqlite-odbc-*`
+as evidence; the suite never cleans up, and the helper's guarded `cleanup` command is
+separately authorized. Exact opt-in run:
+
+```powershell
+$env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
+.venv/Scripts/python.exe -m pytest tests/integration/test_documentation_sqlite_odbc_link.py -q
+```
+
+The run is unattended: it never waits for a human to dismiss a driver dialog. The suite
+itself detects every dialog owned by a step's process tree, closes it automatically, and
+fails that step with the dialog's title/class/owner if it was not the one expected
+deliberate-locked-read control.
+
+#### Stored-credential runtime redaction qualification (S4a/T5)
+
+This closes the stored-credential runtime redaction sub-gap for two fixture kinds with a
+**non-vacuous** stored credential. Helper `tests/helpers/protected_link_worker.py`; suite
+`tests/integration/test_documentation_stored_credential_link.py`, opt-in via
+`ACCESS_DOCUMENTATION_FIXTURES_TEST=1`. Windows and ACE DAO are required; the ODBC kind
+also requires the x64 `SQLite3 ODBC Driver`; every missing prerequisite skips with a
+reason. Nothing here changes production code.
+
+Two fixture kinds carry the fake `canary-7f3a` credential in a linked `TableDef.Connect`
+observed **in a new process before any pipeline run**:
+
+- **(b) Access link (`dbAttachedTable`, `0x40000000`).** A disposable backend is created
+  with the credential in the DAO `CreateDatabase` locale
+  (`;LANGID=0x0409;CP=1252;COUNTRY=0;pwd=canary-7f3a`, `dbVersion120`) and one
+  `secret_items` row; the front-end stores `;PWD=canary-7f3a;DATABASE=<backend absolute
+  path>` on a `link_items` link. `test_protected_access_link_stores_the_credential_in_a_new_process`
+  is the positive control: the stored `Connect` contains the canary
+  (`stored_connect_has_canary`), an unprotected DAO open of the backend is refused (DAO
+  `5003031`), and a read through the link returns the protected row.
+- **(a) SQLite ODBC link with a relative `Database=`.** `tests/helpers/sqlite_odbc_link_worker.py`
+  is built with `--database-style relative`, so the driver's completed string fits under
+  ACE's 254-character cut and the stored `Connect` retains `PWD` verbatim
+  (`connect_length` 223) instead of being truncated away (root cause above).
+  `test_sqlite_relative_link_stores_the_credential_with_pinned_cwd` is the positive
+  control: `stored_connect_contains_canary` and `stored_connect_has_pwd_segment` are
+  true and a linked read returns both rows with CWD pinned to the fixture root (the
+  relative value is resolved against the process CWD).
+
+With the *source* file held under an exclusive `share=0` lock (the protected backend for
+kind (b), `remote.sqlite` for kind (a)), the suite runs the public CLI `documentation
+inspect --backend dao` and `--backend odbc`, then `documentation render` on each emitted
+evidence. Every subprocess runs under `tests/helpers/dialog_watcher.py` with a bounded
+timeout and `PYTHONFAULTHANDLER` stripped, and each run must exit 0 and observe **zero**
+dialogs:
+
+- `test_protected_access_link_credential_never_reaches_documentation_output` and
+  `test_sqlite_relative_link_credential_never_reaches_documentation_output`: the canary
+  and any `PWD=` segment are absent from the evidence JSON, stdout, stderr, and the
+  rendered Markdown. The live link stays `kind: "linked"` with empty fields/indexes and
+  the explicit `unavailable` gap; the local control keeps its `["id", "note"]` fields
+  (and, for DAO, its `observed` `["id"]` primary key). Non-credential connect metadata
+  the backend exposes is preserved: the Access link emits `MS Access;DATABASE=<backend>`,
+  and the ODBC link emits `ODBC;Driver={SQLite3 ODBC Driver};Database=remote.sqlite;...`
+  with the credential pair removed. Access ODBC reports either link as a `SYNONYM` with
+  `connect`/`source_table_name` `None`. Source/backend bytes are unchanged.
+- `test_protected_steps_are_dialog_free` and `test_sqlite_relative_steps_are_dialog_free`:
+  the per-step dialog census is `0` everywhere, so the suite is unattended.
+- `test_protected_backend_still_refuses_an_unprotected_open_after_the_runs`: after the
+  pipeline, the protected backend still refuses an unprotected DAO open (DAO `5003031`)
+  and the stored credential is still present, so the redaction claim cannot be vacuous.
+
+Exact opt-in run:
+
+```powershell
+$env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
+.venv/Scripts/python.exe -m pytest tests/integration/test_documentation_stored_credential_link.py -q
+```
 
 #### Filtered-inspection qualification (DAO and ODBC, synthetic-fixture pipeline suite)
 
@@ -519,10 +694,12 @@ confined to the scratch directory with no surviving MSACCESS.EXE process and no
 qualification stays scoped to the inspection open: the DAO path reopens the existing
 handle read-only, and the ODBC path opens a separate read-only handle, while the
 ordinary tool connections remain write-capable. The matrix is finalized in the §7.2
-cells above: ACE/DAO stays PARTIALLY QUALIFIED for ODBC-attached links, VBA/macro
-execution beyond this fixture, and table data-macro execution; ACE/ODBC stays PARTIALLY
-QUALIFIED for VBA/macro execution beyond the startup fixture and table data-macro
-execution (filtered ODBC inspection is qualified by the filtered-inspection subsection).
+cells above: ACE/DAO stays PARTIALLY QUALIFIED for VBA/macro execution beyond this
+fixture and table data-macro execution; ACE/ODBC stays PARTIALLY QUALIFIED for VBA/macro
+execution beyond the startup fixture and table data-macro execution (filtered ODBC
+inspection is qualified by the filtered-inspection subsection, and the genuine
+SQLite-backed `dbAttachedODBC` link plus its Access ODBC `SYNONYM` by the SQLite ODBC
+link subsection).
 
 #### Unreachable-by-class execution vectors (documented, no fixture)
 
@@ -545,9 +722,12 @@ reintroduce the only inventoried route to instantiation-level code.
 
 - **Legacy Jet 3 / Jet 4 `.mdb`.** Excluded by program scope (S2); existing legacy
   rejection/conversion behavior is unchanged and no `.mdb` work was performed.
-- **Genuine `dbAttachedODBC` DAO-link runtime.** Retained unqualified by explicit user
-  disposition (retain-gap-proceed, ledger L8); the classifier and passive enumerator are
-  unit-tested, but no real non-Access ODBC source exists in this environment.
+- **ODBC-attached links other than the qualified SQLite case.** A genuine SQLite-backed
+  `dbAttachedODBC` DAO link and its Access ODBC `SYNONYM` are qualified at fixture scope
+  (SQLite ODBC link subsection; ledger L5–L6 of
+  `odd/tasks/sqlite-odbc-link-qualification.md`). No other ODBC driver or non-Access
+  source is claimed: each source/driver combination needs its own controlled evidence
+  (§7.2 initial-status rule), and the fail-closed unknown-table-type path stays unit-only.
 - **Encrypted (password-protected) ODBC read-only reopen.** Unit-only evidence
   (`test_odbc_readonly_open_pins_readonly_and_reuses_recorded_target_and_password` and
   its neighbours); no encrypted runtime fixture exists, so the engine-level refusal is
