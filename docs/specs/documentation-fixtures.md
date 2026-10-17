@@ -3,7 +3,9 @@
 Status: generator, expected manifest, the opt-in raw-readback integration suite, and
 the opt-in documentation-pipeline qualification suite are implemented. A separate opt-in
 suite with its own helper-built fixture qualifies a genuine SQLite-backed
-`dbAttachedODBC` link (see the SQLite ODBC link fixture section). The pipeline
+`dbAttachedODBC` link (see the SQLite ODBC link fixture section). Another opt-in suite
+qualifies the DAO and ODBC read-only inspection reopen on a genuine password-protected
+`.accdb` (see the encrypted-database fixture section). The pipeline
 suite qualifies engine-level read-only protection for both the DAO and ODBC inspection
 opens, exercises the ODBC inspection path with engine-level refusal plus no-write
 evidence, and qualifies filtered
@@ -13,9 +15,10 @@ execute the fixture, and a doubly gated control run proves the same fixture genu
 executes when deliberately opened under isolation. The fixture was extended with a
 never-auto-run named macro (`ManualMarker`) and an `AutoKeys` macro group (loaded under a
 neutral name and renamed last); both are name-observable through DAO `Containers("Scripts")`.
-A table data-macro DML tripwire was **not** added: the client data-macro import format
-could not be established within the bounded attempt budget (see the blocked-tripwire
-section below).
+A table data-macro tripwire is **not** part of the generated fixture set: it is built on
+demand by the opt-in suite through `tests/helpers/datamacro_worker.py`, which arms
+`AfterInsert`/`AfterUpdate`/`AfterDelete` macros and proves the documentation pipeline
+never fires them (see the table-data-macro tripwire section below).
 
 ## Generate
 
@@ -149,44 +152,50 @@ The `AutoKeys` group holds one submacro keyed to `Ctrl+Shift+F12`; without Acces
 keyboard input it never runs, which is why it can be loaded and renamed during the build
 without executing anything.
 
-### Data-macro DML tripwire: not implemented (blocked)
+### Table data-macro tripwire: armed, non-execution qualified
 
-T5's accepted scope also asked for a `DmlTripWire` table whose Before Change table data
-macro (`SetField TrippedAt = Now()` when `TrippedAt` is null) would arm an engine-level
-DML tripwire, created with `Application.LoadFromText` `acTableDataMacro` (AcObjectType
-`12`) from hand-authored XML, plus a doubly gated deliberate-DML control that proves
-whether DAO DML fires table data macros on this runtime. **This was not implemented:**
-the client data-macro import text format could not be established within the bounded
-attempt budget, and no such fixture is committed.
+The table data-macro tripwire is **not** part of the generated fixture set above: it is
+built on demand by the opt-in suite through `tests/helpers/datamacro_worker.py` (not by
+`generate_documentation_fixtures.py`). It is a disposable, repository-confined root
+`db/fixtures/datamacro-<uuid>/` holding `tripwire.accdb` plus the provenance input
+`tblTripwire.datamacro.xml` and the Access round-trip `tblTripwire.roundtrip.txt`.
 
-Seven controlled `--build` runs were executed (each opening Access.Application exactly as
-the normal build does), probing roughly 65 bounded encodings: unprefixed and `axl:`-prefixed
-`<DataMacro>`/`<EventDataMacro>`/`<DataMacros>`/`<TableDataMacro>` roots; the Access
-application-part namespaces `2009/11`, `2010/12`, and `2011/07`; `Event`/`Name`/`Table`
-attributes and an `<Event>` child; `Action` with `Name`/`ActionName`; arguments with and
-without an `<Arguments>` wrapper and named `Field`/`Name`/`Value`; bracketed and bare field
-references; `Now()` and `=Now()`; element-per-action form; an `<axl:Table>` CSDL wrapper; a
-UTF-16 (BOM) encoding pass; and the `Version`/`ColumnsShown`/`Begin`/`Action`/`Argument`
-frame. Every one failed. The exact observed errors are:
+The table data-macro tripwire was previously not buildable because the client import
+format was unknown. It is now established against a real Access build (probe
+`db/fixtures/datamacro-probe-0327ea09-9b4a-4c47-ac2f-8027eeaa67fd`): Access's own
+`SaveAsText acTableDataMacro` output is ground truth, serialized as UTF-16 LE with a BOM,
+a CRLF after the `<?xml ...?>` declaration, and no trailing newline, with a `<DataMacros>`
+root of `<DataMacro Event="...">` elements.
 
-- ObjectName `DmlTripWire` with any probe encoding:
-  `Microsoft Access cannot interpret the text you are pasting as a data macro. Correct the
-  text and then try again.` (HRESULT `-2146824418`), for every candidate; and
-- ObjectName `DmlTripWire.BeforeChange`: the database engine could not find that object
-  (`jeterr40.chm` `5003011`), so the event is not encoded in the ObjectName;
-- pre-import `SaveAsText acTableDataMacro, "DmlTripWire"` on a table without a data macro
-  fails with `Reserved Error` (`-2146825338`), so Access exposes no skeleton to seed the
-  format from;
-- the shipped Access application-part template `accessparts.xml` only ever contains
-  empty `<axl:DataMacro Event="..." />` elements, and the machine has no Access fixture
-  with a populated table data macro to export as ground truth.
+`build` creates `tblTripwire` (`ID` AutoNumber primary key, `Note` TEXT(50)) and
+`tblTripwireLog` (`ID` AutoNumber primary key, `Event` TEXT(50)) through DAO, inserts
+exactly one seed row into `tblTripwire` *before* any macro exists so the log starts empty,
+then loads ONE three-event XML through `Application.LoadFromText` (`acTableDataMacro` =
+12) in a hidden, macro-disabled `Access.Application` and re-exports it with `SaveAsText`.
+The build fails loudly unless all three `AfterInsert`/`AfterUpdate`/`AfterDelete` events
+with `CreateRecord`/`SetField` round-trip, so an unarmed tripwire can never pass as
+"nothing executed".
 
-The import is loud: the generator raises when the tripwire XML cannot be round-tripped,
-so a build can never silently produce an unarmed tripwire. Because the tripwire could not
-be armed, the `DmlTripWire` table, the hand-authored XML provenance source, and the
-doubly gated `test_documentation_datamacro_control.py` deliberate-DML control were not
-added. This remains an explicit, unqualified gap; the named macro and AutoKeys vector is
-implemented and observationally proven instead.
+`fire --event insert|update|delete` performs exactly one corresponding write on
+`tblTripwire` through DAO, and `count` reads both table counts and the ordered log events
+read-only. The suite `tests/integration/test_documentation_datamacro_tripwire.py` proves
+each event live on its own byte-copy first
+(`test_tripwire_positive_controls_fire_each_event_on_byte_copies`), then proves the full
+public pipeline never fires any of them on the original
+(`test_documentation_pipeline_inspects_tripwire_fixture_without_firing_data_macros`); the
+fixture build itself is asserted by `test_tripwire_fixture_is_self_built_and_armed`.
+Building the fixture requires the full `Access.Application` (not only ACE DAO). Windows
+with ACE DAO and Microsoft Access is required; the suite skips with a reason off Windows,
+without ACE DAO, without `Access.Application`, or without the opt-in. Exact opt-in run:
+
+```bash
+ACCESS_DOCUMENTATION_FIXTURES_TEST=1 .venv/Scripts/python.exe -m pytest tests/integration/test_documentation_datamacro_tripwire.py -q
+```
+
+Scope: only the three armed table events (`AfterInsert`, `AfterUpdate`, `AfterDelete`) on
+this ACE/Access build. Named data macros, the `BeforeChange`/`BeforeDelete` events, and
+data-macro *reporting* in evidence are not claimed. Generated roots
+`db/fixtures/datamacro-*` are retained as evidence; the suite never deletes a root.
 
 ### Non-execution proof and the control run
 
@@ -338,6 +347,64 @@ $env:ACCESS_DOCUMENTATION_FIXTURES_TEST = '1'
 The relative-database SQLite build used by the same suite remains under
 `db/fixtures/sqlite-odbc-*` and is documented in the SQLite fixture section above and in
 [workflow specification](documentation-workflows.md) §7.2.
+
+## Encrypted database fixture (`db/fixtures/encrypted-db-*`)
+
+The password-protected qualification (S2-S5 of
+[the encrypted-reopen task](../../odd/tasks/encrypted-reopen-and-data-macros.md)) uses a
+third on-demand fixture built by the opt-in suite through
+`tests/helpers/encrypted_db_worker.py` (not by
+`generate_documentation_fixtures.py`). It is a disposable, repository-confined root
+`db/fixtures/encrypted-db-<uuid>/` holding:
+
+- `encrypted.accdb` — a disposable ACE database created with the fake password in the DAO
+  `CreateDatabase` locale (`;LANGID=0x0409;CP=1252;COUNTRY=0;pwd=canary-e9c4`,
+  `dbVersion120`) and one `local_items` row (`id`, `note`, primary key `PK_local_items`).
+  The password is real: an unprotected DAO open is refused (`5003031`) and an unprotected
+  ODBC open is refused (`-1905`/`42000`).
+- `.ms-access-mcp.json` — the fixture-local credential store. The password reaches the
+  inspection path only through the shipped resolver (`credentials.resolve_password`), the
+  same route the documentation worker child uses; `documentation inspect` has no password
+  flag and the interactive `credentials set` uses console `getpass`, so the suite writes
+  the entry with the shipped writer (`credentials.write_entry(..., local=True)`, what
+  `credentials set --local` calls). The password is never passed on argv or in the
+  environment.
+- `inventory.json` — the per-build SHA-256 of `encrypted.accdb`, the local table, and the
+  credential store location.
+
+The helper exposes `environment`, `build`, `verify`, `probe-write-odbc`,
+`probe-write-dao`, and a guarded `cleanup`; each command is its own short-lived process
+performing at most one DAO `DBEngine.120` dispatch/release cycle, no `Access.Application`
+is launched, no DSN or registry value is written, and generated state is confined to the
+fixture root. `build` creates the protected database and the local credential entry;
+`verify` reports the positive controls in a fresh process (stored password resolves,
+unprotected open refused, protected read returns the row).
+
+The opt-in suite `tests/integration/test_documentation_encrypted_reopen.py` drives the
+public CLI on that fixture: `documentation inspect --backend odbc|dao|auto` each succeed
+and list `local_items`, the read-only inspection connection refuses a probe insert at the
+engine level on both shipped seams, the fake password never appears in raw streams,
+on-disk evidence, or rendered Markdown, a wrong or missing stored password fails closed,
+and every step observes zero dialogs with the source bytes unchanged. The exact per-claim
+scope, observed error codes, and limits are recorded in
+[workflow specification](documentation-workflows.md) §7.2 (encrypted-reopen subsection).
+
+Windows with ACE DAO (pywin32) and the Access ODBC driver
+(`Microsoft Access Driver (*.mdb, *.accdb)`) is required; the suite skips cleanly with a
+reason off Windows, without ACE DAO, without the driver, or without the opt-in. Exact
+opt-in run:
+
+```bash
+ACCESS_DOCUMENTATION_FIXTURES_TEST=1 .venv/Scripts/python.exe -m pytest tests/integration/test_documentation_encrypted_reopen.py -q
+```
+
+Generated fixture roots `db/fixtures/encrypted-db-*` are **retained as evidence**: the
+suite creates a new root per session and never deletes it, and the helper refuses to
+overwrite an existing root. The helper's guarded `cleanup` command removes exactly one
+self-created direct child of `db/fixtures/`; no cleanup runs as part of the suite and
+deletion is separately authorized. The claim is scoped to this ACE source, this ACE/DAO
+build, and this Access ODBC driver build, and to the fixture: other encryption schemes
+(for example legacy Jet `.mdb` files or workgroup security) stay unqualified.
 
 ## Test and qualification boundaries
 
