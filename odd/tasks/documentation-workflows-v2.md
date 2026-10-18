@@ -428,7 +428,17 @@ integrity checking. No production changes, commit, or push.
   includes attempts 1-3); scratch roots removed.
 - T4 | S2,S5 | worker + live | content-read qualification: corrected 1-based
   References enumeration with separated Count/Item diagnostics; SaveAsText
-  form/report/macro reads; VBProject trust refusal → `unavailable`.
+  form/report/macro reads; VBProject trust refusal → `unavailable`. GATE
+  PASSED 2026-10-17 (exit 0, 9/9 cells, 13/13 checks): References fully
+  readable under ForceDisable (name/path/GUID/version; the archived spike
+  failure was the 0-based indexing defect); SaveAsText exports for form,
+  report, and macro all succeed under ForceDisable (UTF-16-LE BOM, hashed);
+  this host has VBProject trust enabled (trust_enabled_observed=true, no
+  settings changed) so the refusal-degradation path is proven by unit fakes
+  in T7, not live. Evidence archived in
+  `odd/evidence/documentation-v2-content-reads-20261017.zip` (104 text files,
+  206,889 bytes, SHA-256 `7d4006a6e539721b3f0efe375261e234ee253a096ef53f15b6863546d9f9ce64`);
+  scratch root removed, no locks or survivors, originals hash-matched.
 - T5 | S2,S5 | worker + live | embedded event-macro canary fixture with
   positive control; rerun startup matrix; AutoKeys stays unsupported
   (no input synthesis).
@@ -557,3 +567,17 @@ integrity checking. No production changes, commit, or push.
   roots removed after verification. Design consequence for T7: BOTH layers
   are available — Job Object kill-on-close for supervisor death AND the T2
   PID-scoped kill net for deadline/crash; the reader will register both.
+- L13 (2026-10-17): T4 GATE PASSED (exit 0, 9/9 cells, 13/13 checks,
+  116.8s). References: readable under ForceDisable with 1-based
+  enumeration and separated Count/Item diagnostics — the archived
+  0x800A01C4 error is confirmed as the spike probe's 0-based indexing
+  defect, not a ForceDisable denial. SaveAsText: form/report/macro all
+  export under ForceDisable (UTF-16-LE BOM; form 5,130 B; report 156,382 B;
+  macro captured earlier). Trust: host has VBProject trust enabled
+  (trust_enabled_observed=true, settings_changed=false); the D4 refusal
+  path moves to T7 unit fakes. Archived
+  `documentation-v2-content-reads-20261017.zip` (sha 7d4006a6…e64);
+  scratch removed with zero locks/survivors; 11 canonical hashes matched.
+  The conditional low-security positive control was unnecessary because
+  the ForceDisable exports themselves are the positive reads (non-vacuity
+  via DAO fixture-inventory proof). Next: T5 embedded event-macro canary.
