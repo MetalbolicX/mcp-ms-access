@@ -712,3 +712,20 @@ integrity checking. No production changes, commit, or push.
   tools + cheap inline pid guard in read_process_identity. Pre-merge
   hardening candidates: A2, A9 (small), A3 (medium). Merge decision is
   the user's.
+- L20 (2026-10-18): user enabled RDD ("I enable RDD, so you can review or
+  apply the advisories"). Hardening applied first (b44f5e5: A2 verified job
+  assignment, A9 PID fail-fast guard, A3 field-aware tasklist liveness,
+  A8 wording in contract+spec, flaky grace assertion pinned; full suite
+  2033 passed / 3 skipped; qualify exit 0). Native lifecycle then run:
+  assess medium (RDD on); first inspect blocked on managed_assets_outdated
+  -> provider sync initially failed (codegraph MCP probe timeout; revived
+  via MCP connect, sync clean) -> fresh inspect READY -> facade START
+  REFUSED with lens_context_budget_exceeded: the accumulated 19-commit
+  branch exceeds the reviewer context budget; no review authority was
+  created (terminal for this scope). The contract-consistent path is
+  per-slice native candidates (work-unit commit or PR slice, never the
+  whole branch). Decision pending with the user: split into slice-sized
+  native reviews (proposed: T2+process_identity; T6; T7+session;
+  T8+docs+hardening) or accept L19's independent adversarial review plus
+  the applied hardening as the review basis. Merge/push remain the
+  user's decisions.
