@@ -465,7 +465,13 @@ integrity checking. No production changes, commit, or push.
   parent expanded the delegated surfaces mid-task with
   documentation_runtime.py + its test (mechanically required by R2).
 - T7 | S2,S3,S4 | worker | Tier 2 reader using T2 protocol + T3–T5 gates:
-  offline copy, ForceDisable, opt-in source, caps, catalogue facts.
+  offline copy, ForceDisable, opt-in source, caps, catalogue facts. Delivered
+  `de714c2`: reader orchestrator with injectable COM boundary; COM session in
+  `backends/access/app_logic_session.py` (architecture guard compliance —
+  parent relocation after the guard caught win32com in application/);
+  `include_app_logic_source` wired CLI/MCP→runtime→worker with usage-Err
+  precedence; caps enforced; default-off byte-identity preserved; 2009 unit
+  tests green, ruff clean, pyright 0/0/0. Live qualification deferred to T9.
 - T8 | S3 | worker | rendering catalogue sections, prompts, spec sync (R3).
 - T9 | S4,S5 | parent + independent verify | final gates: qualify.py,
   opt-in integration, independent review, coverage matrix docs.
@@ -624,3 +630,15 @@ integrity checking. No production changes, commit, or push.
   of Tier 2 per L5. Remaining: T7 Tier 2 reader (both containment layers,
   References 1-based, SaveAsText, trust-refusal unit fakes, embedded-macro
   vector recorded unqualified), T8 rendering/spec, T9 final gates.
+- L16 (2026-10-17): T7 delivered in `de714c2`. Worker delivered the reader
+  with fakes-only strict TDD (RED 20 failures → GREEN 144 focused). Parent
+  corrections folded in: (a) two strict fakes in test_odbc_inspection_port.py
+  refreshed for the T6/T7 facade kwargs (a T6 regression its focused set
+  missed); (b) the architecture guard caught win32com in application/ — the
+  production COM session moved to backends/access/app_logic_session.py with
+  VBA_TRUST_PREREQUISITE/VbaTrustRefusedError re-exported through the
+  application seam; (c) ruff D docstrings added for the backends module.
+  Final gates: full unit suite 2009 passed / 3 skipped, ruff clean, pyright
+  0/0/0 on changed modules. Remaining: T8 rendering catalogue sections +
+  prompts + spec sync; T9 live qualification gates + independent review +
+  coverage matrix + README.
