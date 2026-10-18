@@ -258,11 +258,22 @@ class DaoInspectionPort:
         return objects
 
     def _read_database_properties(self) -> dict[str, str]:
-        """Read every database-level DAO property as a name -> string mapping."""
+        """Read every database-level DAO property as a name -> string mapping.
+
+        Per-property isolation (live T9 evidence): some database properties are
+        unreadable in this open mode (e.g. ``Connection`` raises DAO 5003251), and
+        one unreadable value must not erase the whole catalogue — the same
+        discipline the fixture probes use. Unreadable properties are omitted;
+        allowlisted startup properties that do not exist on a database are simply
+        absent from the mapping.
+        """
         database = self._dispatcher.current_db
         properties: dict[str, str] = {}
         for prop in database.Properties:
-            properties[_engine_text(prop.Name)] = _engine_text(prop.Value)
+            try:
+                properties[_engine_text(prop.Name)] = _engine_text(prop.Value)
+            except Exception:  # noqa: BLE001 - one unreadable value never erases the rest
+                continue
         return properties
 
     def close(self) -> None:

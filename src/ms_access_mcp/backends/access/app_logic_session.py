@@ -59,7 +59,9 @@ class ComAccessSession:
 
     def access_application_pid(self) -> int:
         """Return the PID owning the Access main window handle."""
-        return _window_process_id(int(self._application.hWndAccessApp))
+        # Live dispatch evidence (T3/T4 spikes): hWndAccessApp is a METHOD on the
+        # dynamic Access.Application dispatch, not a property.
+        return _window_process_id(int(self._application.hWndAccessApp()))
 
     def open_current_database(self, path: str) -> None:
         """Open the given database file in this instance."""
@@ -74,9 +76,14 @@ class ComAccessSession:
         self._application.Quit()
 
     def current_project_object_names(self, collection: str) -> list[str]:
-        """List object names in a CurrentProject collection (1-based)."""
+        """List object names in a CurrentProject collection.
+
+        AccessObject collections (AllForms/AllReports/AllMacros/AllModules) are
+        0-based (live T4 evidence); only the VBE collections (VBComponents,
+        References) are 1-based.
+        """
         items = getattr(self._application.CurrentProject, collection)
-        return [str(items[index].Name) for index in range(1, int(items.Count) + 1)]
+        return [str(items[index].Name) for index in range(int(items.Count))]
 
     def save_as_text(self, object_type: int, name: str, destination: str) -> None:
         """Export one object to a text file via SaveAsText."""
