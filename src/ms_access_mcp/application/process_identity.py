@@ -123,7 +123,11 @@ def read_process_identity(
     ``tasklist`` exposes no creation time, so the probe uses PowerShell's
     ``StartTime.ToFileTime()``: the same 1601-epoch 100 ns ticks the worker announces.
     ``ProcessName`` carries no extension, so the image is normalized to ``NAME.EXE``.
+    A PID that is not a positive integer is refused before any probe runs.
     """
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        msg = f"process identity probe requires a positive integer PID; got {pid!r}"
+        raise ValueError(msg)
     run = _resolve_runner(runner)
     script = (
         "$p = Get-Process -Id " + str(pid) + " -ErrorAction Stop; "
@@ -155,13 +159,42 @@ def process_is_alive(
 
     A failed probe reports True (still alive): cleanup cannot be *proved* established by
     an unreadable liveness check, and the supervisor treats that as an explicit failure.
+    The parse is field-aware -- the PID must sit in the PID column next to an
+    ``MSACCESS.EXE`` image column -- so a banner or another numeric column that merely
+    contains the digits is never read as liveness.
     """
     run = _resolve_runner(runner)
     try:
         result = run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], timeout)
     except Exception:  # noqa: BLE001 - see the docstring: unknown liveness is not "gone"
         return True
-    return str(pid) in (result.stdout or "")
+    return _tasklist_row_matches_access_pid(result.stdout or "", pid)
+
+
+def _tasklist_row_matches_access_pid(stdout: str, pid: int) -> bool:
+    """True when one row carries exactly ``pid`` in the PID column of ``MSACCESS.EXE``.
+
+    Accepts the ``/FO CSV`` shape this module requests and the default table shape:
+    column 1 is the image and column 2 is the PID, so digits appearing anywhere else
+    (memory footprint, a "No tasks" banner) can never be mistaken for liveness.
+    """
+    expected_pid = str(pid)
+    for line in stdout.splitlines():
+        # ``/FO CSV /NH`` always quotes the image column; the default table shape does not,
+        # and the table's memory column contains a comma, so a bare comma is not a delimiter.
+        stripped = line.strip()
+        fields = (
+            [field.strip().strip('"') for field in stripped.split(",")]
+            if stripped.startswith('"')
+            else stripped.split()
+        )
+        if len(fields) < 2:
+            continue
+        if fields[0].casefold() != ACCESS_IMAGE_NAME.casefold():
+            continue
+        if fields[1] == expected_pid:
+            return True
+    return False
 
 
 def terminate_verified_access(

@@ -1,6 +1,6 @@
 # ODD feature: documentation-workflows-v2 â€” IMPLEMENTATION AUTHORIZED
 
-Status: COMPLETE 2026-10-18 (L18) — all nine tasks closed (T5 blocked-with-evidence by design). Runtime qualification is fixture-scope on the measured Access 16.0 host. Merge/push/PR are the user’s decisions.
+Status: COMPLETE 2026-10-18 (L18) ï¿½ all nine tasks closed (T5 blocked-with-evidence by design). Runtime qualification is fixture-scope on the measured Access 16.0 host. Merge/push/PR are the userï¿½s decisions.
 Branch: `feat/documentation-v2-app-logic` from `main` @ `7a51681`.
 
 ## Goal
@@ -396,7 +396,9 @@ integrity checking. No production changes, commit, or push.
    changes; no synthetic input; dialogs are observed, never accepted.
 4. **Object access.** Read-only APIs only (`SaveAsText`, `CurrentProject`
    enumerations, DAO properties). No design-view opens, no mutating `DoCmd`.
-   VBA/macro text is untrusted evidence: scrubbed, labeled, opt-in (R1).
+   VBA/macro text is untrusted evidence: opt-in and labeled (R1); secret
+   scrubbing applies at the error/reason boundary (as in v1), while embedded
+   opt-in source stays raw untrusted text â€” the include_query_sql precedent.
 5. **Process ownership.** The worker captures the Access PID, creation time,
    and image immediately after dispatch and acknowledges the supervisor
    BEFORE opening the armed copy. The supervisor owns the kill net for

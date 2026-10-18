@@ -39,6 +39,8 @@ from ms_access_mcp.application.documentation_worker import (
 from ms_access_mcp.application.process_identity import (
     AccessTermination,
     list_msaccess_pids,
+    process_is_alive,
+    read_process_identity,
     terminate_verified_access,
 )
 from ms_access_mcp.errors import AccessMcpError
@@ -715,7 +717,10 @@ def test_ack_frame_is_recorded_and_the_owned_access_pid_is_terminated() -> None:
     assert call["creation"] == ACCESS_CREATION
     assert call["image"] == ACCESS_IMAGE
     assert call["baseline_pids"] == frozenset({999})
-    assert 0.0 < call["grace_seconds"] <= 0.05
+    # Float-boundary tolerance: grace = max(deadline - now, 0) can exceed the
+    # injected 0.05 by scheduler epsilon; the pin is "bounded by the injected
+    # grace", not exact float equality at the boundary.
+    assert 0.0 < call["grace_seconds"] <= 0.05 + 1e-6
 
 
 def test_v1_response_without_ack_frames_decodes_unchanged_and_never_fires_the_kill_net() -> None:
@@ -791,6 +796,58 @@ class _CommandRunner:
 
 def _taskkill_calls(runner: _CommandRunner) -> list[list[str]]:
     return [call for call in runner.calls if call[0] == "taskkill"]
+
+
+class _RawTasklistRunner:
+    """Returns one fixed ``tasklist`` stdout so the liveness parse can be probed directly."""
+
+    def __init__(self, stdout: str) -> None:
+        self.calls: list[list[str]] = []
+        self.stdout = stdout
+
+    def __call__(self, args: Any, timeout: float) -> subprocess.CompletedProcess[str]:
+        call = [str(argument) for argument in args]
+        self.calls.append(call)
+        return subprocess.CompletedProcess(call, 0, self.stdout, "")
+
+
+@pytest.mark.parametrize("pid", [0, -1, True, "123", 1.0])
+def test_read_process_identity_rejects_a_pid_that_is_not_a_positive_integer(pid: Any) -> None:
+    runner = _CommandRunner()
+
+    with pytest.raises(ValueError):
+        read_process_identity(pid, runner=runner)  # type: ignore[arg-type]
+
+    assert runner.calls == []
+
+
+def test_process_is_alive_matches_the_pid_column_of_a_real_shaped_tasklist_row() -> None:
+    runner = _RawTasklistRunner(_tasklist_line())
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is True  # type: ignore[arg-type]
+    assert runner.calls == [["tasklist", "/FI", f"PID eq {ACCESS_PID}", "/FO", "CSV", "/NH"]]
+
+
+def test_process_is_alive_parses_the_default_tasklist_table_columns() -> None:
+    runner = _RawTasklistRunner(f"MSACCESS.EXE    {ACCESS_PID} Console       1     100,000 K\n")
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is True  # type: ignore[arg-type]
+
+
+def test_process_is_alive_ignores_pid_digits_outside_the_pid_column() -> None:
+    runner = _RawTasklistRunner(
+        f'"MSACCESS.EXE","{ACCESS_PID + 1}","Console","1","{ACCESS_PID} K"\n'
+    )
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is False  # type: ignore[arg-type]
+
+
+def test_process_is_alive_is_not_alive_when_only_a_banner_mentions_the_pid() -> None:
+    runner = _RawTasklistRunner(
+        f'INFO: No tasks are running which match the PID eq {ACCESS_PID} criteria.\n'
+    )
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is False  # type: ignore[arg-type]
 
 
 def test_list_msaccess_pids_parses_tasklist_csv_and_never_kills() -> None:

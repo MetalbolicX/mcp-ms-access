@@ -250,12 +250,14 @@ class AppLogicReader:
             # Announce the owned instance before the armed open so the supervisor can
             # reap Access even when this worker is killed at the whole-inspection deadline.
             self._emit_identity(identity.pid, identity.creation, identity.image)
-            job = self._assign_job(identity.pid)
+            job, job_failure = self._assign_verified_job(identity)
             if job is None:
                 warnings.append(
                     "Job Object assignment for the owned Access process failed; the "
                     "inspection proceeds with the supervisor PID-scoped kill net only"
                 )
+                if job_failure is not None:
+                    warnings.append(job_failure)
             session.open_current_database(copy_path)
             content = self._read_content(session, workdir, include_source)
         finally:
@@ -270,6 +272,34 @@ class AppLogicReader:
                     job.close()
         content.warnings[:0] = warnings
         return content
+
+    def _assign_verified_job(
+        self, identity: AccessProcessIdentity
+    ) -> tuple[JobHandle | None, str | None]:
+        """Assign the captured PID to the job only while its live identity still matches.
+
+        The PID is re-read through the same production identity reader immediately before
+        the assignment call, so a recycled PID is never handed to ``OpenProcess``. Any
+        mismatch or unreadable re-read degrades exactly like a failed assignment -- the
+        supervisor PID-scoped kill net remains the containment -- and the reason is
+        returned so the reader can record it.
+        """
+        live = self._identity_reader(identity.pid)
+        if live is None:
+            return None, (
+                f"Job Object assignment for owned Access PID {identity.pid} was skipped "
+                "because the live process identity is unreadable at assignment time; the "
+                "supervisor PID-scoped kill net remains the only containment"
+            )
+        if live.creation != identity.creation or live.image.casefold() != identity.image.casefold():
+            return None, (
+                f"Job Object assignment for owned Access PID {identity.pid} was skipped "
+                f"because the live process identity changed since capture (creation="
+                f"{live.creation}, image={live.image!r} vs creation={identity.creation}, "
+                f"image={identity.image!r}); the supervisor PID-scoped kill net remains "
+                "the only containment"
+            )
+        return self._assign_job(identity.pid), None
 
     def _capture_identity(self, session: AccessSession) -> AccessProcessIdentity:
         pid = session.access_application_pid()

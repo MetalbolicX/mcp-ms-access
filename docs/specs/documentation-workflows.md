@@ -891,7 +891,10 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   (VBA modules, form/report/macro source catalogues, engine-level inventories, references,
   startup properties) plus `### Limitations` / `### Coverage notes`. Non-observed facts are
   visible limitation lines (`unavailable`/`failed`) or coverage notes (`excluded`), and the
-  Markdown never contains raw source. Agreement 9 is fully closed: every source object
+  Markdown never contains raw source. Secret scrubbing applies at the error/reason
+  boundary as in v1; embedded opt-in source stays raw untrusted text (the
+  include_query_sql precedent) and is referenced by evidence ID + sha256 only.
+  Agreement 9 is fully closed: every source object
   family — form/report/macro exports and VBA modules — always carries `sha256`/`bytes`
   (VBA digests are over the UTF-8 encoding of the module source, since modules have no
   `SaveAsText` file); an earlier known-gap note about missing VBA digests is superseded

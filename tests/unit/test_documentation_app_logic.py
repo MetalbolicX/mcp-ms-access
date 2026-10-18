@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -188,6 +189,7 @@ def _reader(
     scratch_root: Path,
     events: list[Any] | None = None,
     identity: AccessProcessIdentity | None = None,
+    identity_reader: Callable[[int], AccessProcessIdentity | None] | None = None,
     job: Any = "default",
     job_factory_fails: bool = False,
 ) -> AppLogicReader:
@@ -203,6 +205,8 @@ def _reader(
         return _FakeJob(log) if job == "default" else job
 
     def read_identity(pid: int) -> AccessProcessIdentity | None:
+        if identity_reader is not None:
+            return identity_reader(pid)
         if identity is None:
             return AccessProcessIdentity(pid=pid, creation=CREATION, image="MSACCESS.EXE")
         return identity
@@ -292,6 +296,69 @@ def test_reader_proceeds_with_a_pid_kill_net_warning_when_job_assignment_fails(t
     assert "open" in session.events
     assert content.warnings
     assert any("job" in warning.lower() for warning in content.warnings)
+
+
+def test_reader_assigns_the_job_when_the_live_identity_still_matches(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+    reader = _reader(session, scratch_root=tmp_path)
+
+    content = reader.read(str(source))
+
+    assert session.events.count("job_assign") == 1
+    assert content.warnings == []
+
+
+def test_reader_skips_job_assignment_when_the_creation_time_changed_since_capture(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+    reads = iter(
+        [
+            AccessProcessIdentity(pid=PID, creation=CREATION, image="MSACCESS.EXE"),
+            AccessProcessIdentity(pid=PID, creation=CREATION + 1, image="MSACCESS.EXE"),
+        ]
+    )
+    reader = _reader(session, scratch_root=tmp_path, identity_reader=lambda _pid: next(reads))
+
+    content = reader.read(str(source))
+
+    assert "job_assign" not in session.events
+    assert "open" in session.events
+    assert any("identity" in warning.lower() for warning in content.warnings)
+    assert any("kill net" in warning.lower() for warning in content.warnings)
+
+
+def test_reader_skips_job_assignment_when_the_live_image_changed_since_capture(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+    reads = iter(
+        [
+            AccessProcessIdentity(pid=PID, creation=CREATION, image="MSACCESS.EXE"),
+            AccessProcessIdentity(pid=PID, creation=CREATION, image="WINWORD.EXE"),
+        ]
+    )
+    reader = _reader(session, scratch_root=tmp_path, identity_reader=lambda _pid: next(reads))
+
+    content = reader.read(str(source))
+
+    assert "job_assign" not in session.events
+    assert any("identity" in warning.lower() for warning in content.warnings)
+
+
+def test_reader_skips_job_assignment_when_the_live_identity_is_unreadable(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+    reads = iter([AccessProcessIdentity(pid=PID, creation=CREATION, image="MSACCESS.EXE"), None])
+    reader = _reader(session, scratch_root=tmp_path, identity_reader=lambda _pid: next(reads))
+
+    content = reader.read(str(source))
+
+    assert "job_assign" not in session.events
+    assert any("unreadable" in warning.lower() for warning in content.warnings)
 
 
 # ---------------------------------------------------------------------------
