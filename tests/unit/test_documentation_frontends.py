@@ -240,3 +240,21 @@ def test_documentation_inspect_passes_the_source_opt_in_to_the_service(monkeypat
     analysis.documentation_inspect("db.accdb", include_app_logic=True, include_app_logic_source=True)
 
     assert seen == [(False, False), (True, True)]
+
+
+def test_documentation_prompts_describe_the_app_logic_catalogue_and_its_opt_ins() -> None:
+    """T8/R1/R3: guidance names the catalogue, the source-flag precedence, and the unqualified vectors."""
+    import asyncio
+
+    server = build_server("core")
+    for prompt_name, path in (("document_database", "db.accdb"), ("generate_er_documentation", "er.accdb")):
+        text = asyncio.run(server.get_prompt(prompt_name, {"path": path})).messages[0].content.text
+        assert "include_app_logic" in text
+        assert "--include-app-logic" in text
+        assert "include_app_logic_source" in text
+        assert "--include-app-logic-source" in text
+        assert "AutoKeys" in text
+        # The source flag without the catalogue flag is an error, and raw code is never inline.
+        assert "is an error" in text.lower()
+        assert "never inlined" in text.lower()
+        assert "unqualified" in text.lower()

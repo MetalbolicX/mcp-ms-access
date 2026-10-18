@@ -343,8 +343,15 @@ class AppLogicReader:
                     "type": session.vba_module_type(index),
                     "procedures": session.vba_procedures(index),
                 }
+                # Agreement 9: a content hash per source object, always. The VBA
+                # module source has no SaveAsText file, so the digest is over the
+                # UTF-8 encoding of the CodeModule text (same scheme as exports).
+                module_text = session.vba_module_source(index)
+                encoded = module_text.encode("utf-8")
+                value["sha256"] = hashlib.sha256(encoded).hexdigest()
+                value["bytes"] = len(encoded)
                 if include_source:
-                    value["source"] = session.vba_module_source(index)
+                    value["source"] = module_text
                 fact: FactStatus[Any] = FactStatus.observed(value, provenance)
             except Exception as error:  # noqa: BLE001 - a failed module read is its own fact
                 fact = FactStatus.failed(_reason(error), provenance)

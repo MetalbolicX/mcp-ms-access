@@ -387,6 +387,35 @@ def test_vba_modules_carry_name_type_and_procedures(tmp_path: Path) -> None:
     assert module.content.value["procedures"] == ["Main"]
 
 
+def test_vba_modules_always_carry_source_digest_and_bytes_without_source(tmp_path: Path) -> None:
+    """Agreement 9: every source object carries a content hash + byte size.
+
+    The VBA module source is hashed over its UTF-8 encoding (same scheme as the
+    export families); the raw ``source`` stays opt-in-only.
+    """
+    source = _source(tmp_path)
+    text = "Sub Main()\nEnd Sub\n"
+    session = _FakeSession(
+        objects=_default_objects(),
+        exports=_default_exports(),
+        vba_modules=[{"name": "modMain", "type": "Standard", "procedures": ["Main"], "source": text}],
+    )
+    reader = _reader(session, scratch_root=tmp_path)
+
+    content = reader.read(str(source))
+
+    module = next(item for item in content.content if item.category == "vba_module")
+    encoded = text.encode("utf-8")
+    assert module.content.value["sha256"] == hashlib.sha256(encoded).hexdigest()
+    assert module.content.value["bytes"] == len(encoded)
+    assert "source" not in module.content.value
+
+    opt_in = reader.read(str(source), include_source=True)
+    module_opt = next(item for item in opt_in.content if item.category == "vba_module")
+    assert module_opt.content.value["source"] == text
+    assert module_opt.content.value["sha256"] == module.content.value["sha256"]
+
+
 # ---------------------------------------------------------------------------
 # 5. References: 1-based enumeration and separated per-property diagnostics
 # ---------------------------------------------------------------------------

@@ -851,6 +851,80 @@ reintroduce the only inventoried route to instantiation-level code.
 
 Qualification records engine version/bitness, host requirements, passive/read-only evidence, QueryDefs SQL availability, relationship/index fidelity, fixture results, and failure behavior. No qualification means unsupported/unknown coverage, never implied support.
 
+## 8. v2 application reverse engineering (unit-implemented; runtime gates at T9)
+
+> **Status:** every item in §8.1 is implemented and covered by unit tests
+> (`application/documentation_app_logic.py`, `application/documentation_render.py`,
+> `application/documentation_worker.py`, `backends/access/app_logic_session.py`).
+> **RUNTIME NOT QUALIFIED until T9.** No live `Access.Application` app-logic read is
+> claimed here; the T3–T5 live gates qualified containment and content reads at fixture
+> scope only, and §8.3 records exactly what is and is not qualified. Absence of a claim
+> is never implied support.
+
+### 8.1 Implemented at unit level
+
+- **App-logic inventory + content reader.** `documentation_inspect` accepts the
+  default-off opt-ins `include_app_logic` and `include_app_logic_source` (CLI
+  `--include-app-logic`, `--include-app-logic-source`; MCP arguments of the same names).
+  Tier 1 reads the DAO `Containers` (Forms, Reports, Scripts, Modules) and the allowlisted
+  startup database properties; Tier 2 (`documentation_app_logic.AppLogicReader`) reads VBA
+  modules, `SaveAsText` form/report/macro exports, and `Application.References` from one
+  disposable Access instance. The new fact categories are additive to
+  `access.documentation.evidence/1`, and a default-off call keeps the v1 evidence bytes
+  (S4).
+- **Containment design.** Both T3 layers are registered. The worker assigns the owned
+  Access PID to a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so supervisor
+  death reaps Access through the handle close; the supervisor's T2 PID+creation-scoped
+  kill net covers the deadline and crash paths. Kills are PID-scoped (`/IM` is never
+  used), and a failed Job Object assignment degrades to the kill net with a visible
+  warning rather than a partial `Ok` (contract 6).
+- **Flag contract.** Raw source is opt-in and never default: `include_app_logic_source`
+  without `include_app_logic` is an `Err` (precedence is checked before any read). Raw
+  code is never rendered inline in Markdown — reports reference it by evidence ID and
+  hash — and opt-in source still counts against the existing 32 MiB evidence / 16 MiB
+  Markdown caps (above the cap stays an `Err`, never truncation).
+- **Scratch copy.** One unique disposable directory per inspection, under the
+  `ACCESS_MCP_DOC_SCRATCH_DIR` override when set (otherwise the system temp directory).
+  The original is never opened by `Access.Application`, and the copy is removed in a
+  `finally`.
+- **Catalogue-only rendering.** The report gains a labeled `## Application logic` section
+  (VBA modules, form/report/macro source catalogues, engine-level inventories, references,
+  startup properties) plus `### Limitations` / `### Coverage notes`. Non-observed facts are
+  visible limitation lines (`unavailable`/`failed`) or coverage notes (`excluded`), and the
+  Markdown never contains raw source. Known evidence-shape gap: VBA module content records
+  `type`/`procedures`/`source` but no per-module digest, so the renderer names the missing
+  VBA sha256/bytes as a limitation instead of fabricating a hash (form/report/macro
+  catalogues do carry `sha256`/`bytes`).
+
+### 8.2 Control-flow gate outcomes (evidence archives)
+
+| Gate | Outcome | Evidence archive |
+|---|---|---|
+| T3 containment (Job Object + PID kill net) | GATE PASSED, 9/9 cells | `odd/evidence/documentation-v2-containment-20261017.zip` (sha `d5eb52eb…f81`) |
+| T4 content reads (References 1-based, `SaveAsText` form/report/macro, VBA-trust read) | GATE PASSED, 9/9 cells / 13/13 checks | `odd/evidence/documentation-v2-content-reads-20261017.zip` (sha `7d4006a6…e64`) |
+| T5 embedded event macros | BLOCKED-with-evidence (L14); vector stays UNQUALIFIED | `odd/evidence/documentation-v2-embedded-blocked-20261017.zip` (sha `c37f7640…0d4`) |
+
+### 8.3 App-logic coverage matrix (fixture scope, measured runtime only)
+
+All rows are fixture scope on the single measured Access 16.0 runtime on this host. When a
+vector was exercised, its entry function was **suppressed at fixture scope on the qualified
+runtime**; this section does not claim that arbitrary databases, hostile inputs, or other
+runtimes are safe.
+
+| Vector | Status |
+|---|---|
+| AutoExec `RunCode` → VBA | QUALIFIED (fixture scope) |
+| Startup-form `OnLoad` expression → VBA | QUALIFIED (fixture scope) |
+| AutoExec `OpenQuery` (non-VBA action) | QUALIFIED (fixture scope) |
+| Embedded event macros | UNQUALIFIED (blocked, L14; ground truth unavailable) |
+| AutoKeys | UNSUPPORTED (no input synthesis; never claimed suppressed) |
+| `SaveAsText` / References / VBA-trust reads | QUALIFIED (T4) |
+| Any other Access runtime/version | UNQUALIFIED (single-host scope; facts report `unavailable`) |
+
+> **No security overclaim.** Every suppression statement in this document is bounded to
+> "suppressed at fixture scope on the qualified runtime". Nothing here claims that an
+> arbitrary or unsupported database is safe to open.
+
 ## Agreement-to-section map
 
 | Agreement | Spec section(s) |

@@ -517,11 +517,13 @@ class ContentObjectEvidence:
 
     ``content`` is the per-fact state. For a form/report/macro an observed value carries
     the export ``sha256`` (of the decoded UTF-16-LE BOM ``SaveAsText`` text, encoded as
-    UTF-8) and its ``bytes`` size; the raw ``source`` text is embedded only under the
-    explicit ``include_app_logic_source`` opt-in (R1). For a vba_module the observed
-    value carries the module ``type``, its ``procedures`` where readable, and again the
-    raw ``source`` only on opt-in. A whole family that cannot be read at all is a single
-    entry with the family scope name whose ``content`` is ``unavailable``/``failed``.
+    UTF-8) and its ``bytes`` size; for a vba_module the observed value carries the
+    module ``type``, its ``procedures`` where readable, and the ``sha256``/``bytes`` of
+    the module source's UTF-8 encoding (agreement 9: a content hash per source
+    object, always). The raw ``source`` text is embedded only under the explicit
+    ``include_app_logic_source`` opt-in (R1). A whole family that cannot be read at
+    all is a single entry with the family scope name whose ``content`` is
+    ``unavailable``/``failed``.
     """
 
     category: str
@@ -556,8 +558,8 @@ class ContentObjectEvidence:
             if not isinstance(value.get("bytes"), int) or isinstance(value["bytes"], bool):
                 raise ValueError("Observed form/report/macro content requires a byte size integer")
         else:
-            if set(value) - {"type", "procedures", "source"}:
-                raise ValueError("Observed vba_module content carries only type, procedures, and source")
+            if set(value) - {"type", "procedures", "source", "sha256", "bytes"}:
+                raise ValueError("Observed vba_module content carries only type, procedures, sha256, bytes, and source")
             if "type" in value and (not isinstance(value["type"], str) or not value["type"]):
                 raise ValueError("Observed vba_module type must be a non-empty string")
             procedures = value.get("procedures")
