@@ -1,9 +1,9 @@
-# ODD feature: documentation-workflows-v2 — DEFINED (awaiting implementation authorization)
+# ODD feature: documentation-workflows-v2 — IMPLEMENTATION AUTHORIZED
 
-Status: DEFINITION COMPLETE 2026-10-17 — user accepted all four decisions
-(D1=A, D2=all families, D3=offline copy, D4=degrade-to-unavailable).
-Agreements below are ACCEPTED. Implementation starts only on explicit
-user authorization (definition-first preference, Engram obs-34abb3cda74c8c4a).
+Status: IMPLEMENTATION AUTHORIZED 2026-10-17 (L10: user "Execute the
+recommended order"). Definition, both feasibility spikes, and the six-phase
+remediation order are the specification; execution follows the Tasks section.
+Branch: `feat/documentation-v2-app-logic` from `main` @ `7a51681`.
 
 ## Goal
 
@@ -214,6 +214,155 @@ Access.Application is unproven and is the premise of the whole tier.
 - **Safety:** copies only, original fixtures and `db/northwind.accdb`
   hash-checked unchanged; no commits from the spike.
 
+## Feasibility result (2026-10-17): fixture-scope PASS, production safety unqualified
+
+The authorized matrix completed with process exit **0** in **290.2 seconds**.
+An independent read-only verifier accepted the protocol PASS with no blockers;
+this is a feasibility result, not approval to implement or a general security
+claim. A purpose-built equivalent fixture carried separate AutoExec and
+startup-form VBA marker functions (rather than modifying the canonical fixture).
+
+| Cell | N | Security readback | AutoExec VBA marker | Form OnLoad VBA marker | Observed dialogs | Cell cleanup |
+| --- | --- | --- | --- | --- | --- | --- |
+| Positive control | 3 | 1 | Fired 3/3 | Fired 3/3 | None | Graceful 3/3 |
+| ForceDisable, unchanged copy | 3 | 3 | Absent 3/3 | Absent 3/3 | None | Graceful 3/3 |
+| ForceDisable, DAO StartupForm deletion | 3 | 3 | Absent 3/3 | Absent 3/3 | None sampled | Graceful 3/3 |
+
+All nine `child_returncode` values were 0; their stdout/stderr files were
+empty. No cell timed out. No lock files or new MSACCESS processes remained;
+all 11 original fixture/Northwind file hashes matched. The builder alone
+needed an identity-verified PID kill after its 20-second Quit grace period;
+this must not be reported as nine-plus-one graceful exits. The watcher saw
+owned windows in positive-control/unchanged-copy runs; the deletion runs
+started the observer without sampling any windows (weaker dialog evidence).
+
+### What this allows us to conclude
+
+- A copy opened under `AutomationSecurity=3` suppressed the two tested VBA
+  entry functions on this host. Both positive controls were non-vacuous.
+- DAO can read the real `StartupForm` database property and remove it on a
+  disposable copy; deletion succeeded in all three deletion runs. Startup
+  properties therefore belong in the Tier 1 candidate surface, not in the
+  earlier blanket assertion that they require Access.Application.
+- Tier 2 remains a viable planning candidate. The unmodified-copy recipe
+  was clean at the measured scope, so destructive neutralization of startup
+  metadata is not justified as a default by this experiment.
+
+### Missing proof: do not promote PASS into a no-execution guarantee
+
+- AutoExec contained **RunCode calling VBA**; OnLoad was an expression
+  calling VBA. Neither used a pure macro-action canary. A macro engine
+  could execute actions while blocking VBA and leave these markers absent.
+  General macro-action non-execution remains unresolved.
+- AutoKeys was not triggered (no keyboard input); named macro absence was
+  not a positive control. Form/report SaveAsText, VBProject/trust access,
+  table data-macro reads, and cross-version behavior were not qualified.
+- The References probe failed in all nine cells with COM scode
+  `0x800A01C4` (invalid ordinal). Its Count/item operations shared one
+  exception boundary; this is an unresolved probe/dispatch issue, not
+  evidence that ForceDisable denies References.
+- No deadline/crash cell ran. Cleanup after killing the Python owner is
+  still unproven: its `finally` cannot reap Access once that owner is dead.
+  Future runtime ownership must cover the captured Access PID outside the
+  child, not merely promise child-side cleanup.
+
+At the first-spike closure, the next planning gate was pure macro-action
+suppression: the two VBA markers alone were insufficient. L8 authorized
+that follow-up; its bounded result is recorded below. Production
+implementation remains unauthorized.
+
+Authorized follow-up (L8; experiment only, not implementation): an
+AutoExec macro performs a non-VBA action, for example OpenQuery on a saved
+append query that adds one known row to a dedicated log table in the
+throwaway copy. A matching low-security positive control must demonstrate
+the row insertion; under ForceDisable the row count/content must stay
+unchanged. An independent DAO read observes the row rather than relying on
+another VBA callback. Macro action syntax and startup-form embedded-macro
+coverage must be qualified rather than assumed. Keep the same unique D:
+copy, ownership, timeout, dialog, original-integrity, and cleanup boundaries.
+If a non-VBA action executes, ForceDisable alone is not a passive-reader
+recipe; stop Tier 2 at the planning gate instead of weakening the contract.
+
+### Retained evidence and cleanup
+
+The archive contains 100 text evidence/harness files, including both failed
+pre-matrix build attempts; it contains no Access databases or bytecode:
+[`documentation-v2-feasibility-20261017.zip`](../evidence/documentation-v2-feasibility-20261017.zip)
+(76,979 bytes; SHA-256
+`e07f536d70d25ce7323d6507097c887ea2d2955281080d3ca0287ef9a00120de`).
+The exact scratch root was removed after independent verification and archive
+integrity checking. No production files changed; no commit or push performed.
+
+## Non-VBA follow-up result (L8-L9): fixture-scope PASS
+
+The authorized follow-up completed exit **0** in **143.7 seconds** on
+Access **16.0**. Independent read-only verifier `mvd9o49p-5-wtks` accepted
+PASS with no blockers (Engram #9960); no live rerun was needed.
+
+The actual SaveAsText export confirms AutoExec's sole action was OpenQuery
+on `qryAppendCanary`. DAO independently confirmed the saved append SQL
+inserts exactly `(ProbeID=1, Label='NON_VBA_AUTOEXEC')` into a local table.
+There were no VBA modules, forms, StartupForm property, RunCode actions,
+SetWarnings actions, or automatic dialog acceptance. The builder loaded a
+neutral macro name, captured/inspected its real export, then armed AutoExec
+last; it never reopened the armed fixture through Access.
+
+| Cell | N | Security readback | DAO rows before | DAO rows after |
+| --- | --- | --- | --- | --- |
+| Positive control | 3 | 1 | Empty 3/3 | Exact single canary row 3/3 |
+| ForceDisable, unchanged copy | 3 | 3 | Empty 3/3 | Empty 3/3 |
+
+All six Access child exits and all 12 independent DAO observer exits were
+0. Access stdout/stderr and DAO stderr were empty; DAO stdout contained
+structured observations. AutoExec was still present after every run, so
+absence of the macro cannot explain the ForceDisable result. Six cell
+instances exited gracefully; no timeout, lock, residual owned process,
+new MSACCESS process, or changed original hash was observed (11 files).
+The window observers started without error but sampled no windows; report
+"no dialogs observed", not a guarantee that every possible dialog was
+observable. The builder's final identity lookup raced with process exit;
+its guarded kill was skipped. Do not count it as a proven graceful exit or
+as an actual kill.
+
+### Planning consequence and remaining boundaries
+
+- The earlier VBA-only gap is now addressed by a **non-VBA OpenQuery
+  canary**, with a non-vacuous positive control. Together, the experiments
+  support continuing Tier 2 design for this measured runtime.
+- This is **not** universal suppression of arbitrary macro actions,
+  embedded event macros, AutoKeys keyboard triggers, external side effects,
+  or other Access versions/settings. No host Trust Center settings were
+  changed. Absence of action-query dialogs is a host observation, not a
+  portable contract.
+- An untouched-copy ForceDisable recipe passed both experiments. Removing
+  startup metadata is not supported as a necessary default; retaining
+  original metadata also preserves what the reader is supposed to inspect.
+- Content extraction (SaveAsText for forms/reports, VBProject trust,
+  References) and cleanup after owner death remain unqualified. In
+  particular, no claim about killing a hung owner or opening the copy
+  engine-read-only follows from these successful startup tests.
+
+Remaining actionable planning steps (no production implementation authorized):
+1. Specify the worker/supervisor ownership contract: original never opened
+   by Access, security readback before open, exact Access PID ownership,
+   graceful exit and supervisor-owned cleanup after owner death, D: copy
+   lifecycle, and explicit unsupported-runtime handling.
+2. Define catalogue/source-read acceptance scenarios for each accepted
+   family, including missing-trust degradation and independent References
+   diagnostics; no raw source by default and no source execution.
+3. Pin default-off CLI/MCP arguments, source-flag precedence, per-fact
+   evidence schema compatibility, size caps, and catalogue-only rendering.
+4. Reconcile this evolving definition into one execution-ready plan only
+   after the remaining contracts are agreed. These experiments do not
+   authorize a production writer or additional live probes automatically.
+
+Evidence archive:
+[`documentation-v2-nonvba-feasibility-20261017.zip`](../evidence/documentation-v2-nonvba-feasibility-20261017.zip)
+contains 83 text/harness files, no databases or bytecode; 66,107 bytes;
+SHA-256 `da65dbf51411be90da283244d03532bdf1a2d2687af4505ef432e5dce87a3b49`.
+The exact D: scratch root was removed after verification and archive
+integrity checking. No production changes, commit, or push.
+
 ## Log
 
 - L1 (2026-10-17): "Get the memory of the project to continue with the next
@@ -252,3 +401,55 @@ Access.Application is unproven and is the premise of the whole tier.
   startup options are believed to be DAO database properties (Tier 1),
   references are not — confirmation is a spike observation, not a fact
   yet. Spike execution NOT yet authorized.
+- L6 (2026-10-17): user authorized the live feasibility test: "Yes, do it".
+  Experiment only; no production implementation, commits, or push authorized
+  by this reply. Scratch root: `db/fixtures/e2e-v2-spike-20261017-db3efa7e`.
+  DAO-only preflight observed the Scripts/Modules inventories and successfully
+  created/read/deleted `StartupForm` on a disposable copy (original had no
+  StartupForm property); this does not yet establish Access startup behavior.
+  Parent pre-launch audit corrected fail-open process ownership and vacuous
+  verdict gates in the scratch harness. First launch exited 20 during fixture
+  creation: DAO 5003292, "Syntax error in field definition." Zero matrix cells
+  ran; canonical hashes unchanged; no Access process remained. Preserved the
+  full attempt under `attempt-1-ddl-failure`; bracketed the scratch-only
+  reserved `[Note]` column. Second build passed DAO DDL but exited 20 on
+  "CoInitialize has not been called" before Access creation; preserved it
+  under `attempt-2-com-init-failure`. Balanced a new COM apartment around
+  the Access build phase (DAO had already uninitialized its own apartment)
+  and launched the fresh build/matrix. These are harness-preparation failures,
+  not startup-vector results. Results pending at that point; see L7.
+- L7 (2026-10-17): live matrix completed exit 0, fixture-scope PASS;
+  independent verifier `mvd7n3md-3-u5h5` accepted with no blockers and the
+  limitations recorded above (Engram #9957). User: "Review the delivered
+  subagent output and continue." Parent verified observations, archived
+  text evidence/harness, and removed the exact disposable scratch root.
+  Tier 2 planning remains viable; general macro-action non-execution,
+  References, content reads, and owner-death cleanup remain unqualified.
+  No production implementation, commit, or push.
+- L8 (2026-10-17): user: "yes" to authorizing the additional isolated
+  non-VBA AutoExec marker-row test. Scope: a new disposable D: fixture with
+  no VBA callbacks; AutoExec invokes a saved append query to a local canary
+  table. Three low-security positive controls must insert the known row;
+  three ForceDisable runs must leave the DAO-observed row set unchanged
+  to support this recipe. Preserve exact exits/streams, dialogs, captured
+  process identities, hashes, and cleanup evidence. No Trust Center changes,
+  external queries, production changes, commit, or push. Scratch root:
+  `db/fixtures/e2e-v2-spike-nonvba-20261017-90be035e`. Prepared the harness
+  from the prior verified archive, added independent pre/post DAO row
+  observers, and observed 18 synthetic verdict checks pass. Pure-macro
+  fixture: `CanaryRows`, `qryAppendCanary`, and AutoExec's sole OpenQuery
+  action; no VBA, StartupForm, RunCode, SetWarnings, or automatic dialog
+  acceptance. Live matrix launched; results were pending at that point.
+- L9 (2026-10-17): follow-up completed exit 0, 143.7 seconds, six runs:
+  non-VBA OpenQuery canary inserted exactly one expected row in all three
+  low-security controls and zero rows in all three ForceDisable runs.
+  Independent verifier accepted fixture-scope PASS (Engram #9960), with
+  remaining claims boundaries recorded above. User: "Review the delivered
+  subagent output and continue." Parent archived the text evidence,
+  removed the exact scratch root, and recorded the next planning steps.
+  No production implementation, commit, or push.
+- L10 (2026-10-17): user: "Execute the recommended order" — the six-phase
+  remediation order is authorized as implementation. Branch
+  `feat/documentation-v2-app-logic` from `main` @ `7a51681`. ODD tracking
+  added (Specs S1–S5, contract, Tasks T1–T9). Work-unit commits on the
+  feature branch; push/PR remain the user's decisions.
