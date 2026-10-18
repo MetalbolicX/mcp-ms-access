@@ -689,3 +689,24 @@ integrity checking. No production changes, commit, or push.
   app-logic evidence exists; er without app-logic stays byte-identical.
   Remaining: T9 final gates (qualify.py, live opt-in integration on
   fixtures, independent review, coverage matrix honesty rows).
+- L19 (2026-10-18): post-completion adversarial security code review
+  (user: "Did you review it?"). Native assess remains structurally
+  unavailable (RDD off -> terminal stop; inspect confirmed the 29-path
+  surface). Full line-level review executed by independent reviewer
+  `mvdstwc5-g-dygm` over origin/main..HEAD: **zero blockers, 9
+  advisories**. Verified clean: original-never-opened, ack-before-open,
+  security readback gate, PID-scoped kill net (no /IM, baseline/creation/
+  image refusals, deadline-path Access reap), IPC frame anti-spoofing,
+  flag-precedence Err, evidence ingress validation + cell escaping, cap
+  arithmetic, af03b5f residual-indexing sweep. Advisories recorded:
+  A1 verify->taskkill PID-recycle TOCTOU (ms window, inherent); A2 job
+  assignment lacks creation re-verification (fixable: re-probe creation
+  before OpenProcess); A3 tasklist substring liveness parse (fail-safe
+  direction); A4 pre-cap memory materialization (deadline-bounded); A5
+  job-failure proceeds with warning (documented contract-6 tension);
+  A6 scratch default system temp (env override documented); A7 scratch
+  residue after hard kill (copy-bounded); A8 agreement-4 scrub wording vs
+  raw opt-in source (v1 include_query_sql precedent); A9 PATH-resolved
+  tools + cheap inline pid guard in read_process_identity. Pre-merge
+  hardening candidates: A2, A9 (small), A3 (medium). Merge decision is
+  the user's.
