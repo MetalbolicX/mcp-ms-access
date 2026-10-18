@@ -363,6 +363,76 @@ SHA-256 `da65dbf51411be90da283244d03532bdf1a2d2687af4505ef432e5dce87a3b49`.
 The exact D: scratch root was removed after verification and archive
 integrity checking. No production changes, commit, or push.
 
+## Specs (implementation anchors)
+
+- S1 (authorization): user: "Execute the recommended order" — the six-phase
+  order of record: (1) supported safety contract; (2) process containment
+  first; (3) qualify content-reading operations; (4) close targeted
+  startup-coverage gaps; (5) implement behind agreed opt-ins; (6) final
+  release gates. Order is mandatory: 5 requires 2+3+4 gates passed.
+- S2 (contract): the "v2 safety and support contract" section below is
+  normative for all implementation tasks.
+- S3 (agreements): D1–D4, R1–R3, and agreements 1–12 above are binding.
+- S4 (v1 preservation): default-off app-logic arguments; a default v1
+  `documentation_inspect` call emits byte-identical evidence; existing caps
+  (120 s / 32 MiB / 16 MiB) and pinned `Err` texts/exit semantics unchanged
+  (`tests/unit/test_documentation_runtime.py:314-393`).
+- S5 (qualification evidence): every live gate needs a non-vacuous positive
+  control, unchanged original hashes, zero owned survivors/locks, and
+  PID+creation-scoped kills only; no `/IM`, no baseline-diff kills, no
+  Trust Center changes, no synthetic input, no dialog auto-acceptance.
+
+## v2 safety and support contract (T1, normative)
+
+1. **Supported runtime.** App-logic qualification applies to the measured
+   Access 16.0 runtime on this host (build/bitness recorded in evidence).
+   Any other runtime reports app-logic facts `unavailable` naming the
+   prerequisite; it is never attempted (D4).
+2. **Source handling.** The original is never opened by `Access.Application`.
+   Each inspection uses one unique disposable copy under the D: scratch
+   convention, removed after evidence capture; qualification verifies
+   original hashes unchanged.
+3. **Open discipline.** `AutomationSecurity=3` is set and read back before
+   `OpenCurrentDatabase`; mismatch aborts without opening. `Visible=False`,
+   `UserControl=False`. No Trust Center, registry, or trusted-location
+   changes; no synthetic input; dialogs are observed, never accepted.
+4. **Object access.** Read-only APIs only (`SaveAsText`, `CurrentProject`
+   enumerations, DAO properties). No design-view opens, no mutating `DoCmd`.
+   VBA/macro text is untrusted evidence: scrubbed, labeled, opt-in (R1).
+5. **Process ownership.** The worker captures the Access PID, creation time,
+   and image immediately after dispatch and acknowledges the supervisor
+   BEFORE opening the armed copy. The supervisor owns the kill net for
+   deadline, crash, and exit paths. Kills are PID+creation-scoped only.
+6. **Degradation.** Security or cleanup uncertainty produces `Err`, never a
+   partial `Ok`. Missing VBProject trust degrades to `unavailable` (D4).
+7. **Claims boundary.** Qualification is fixture-scope on the supported
+   runtime. No claim of universal macro suppression or hostile-database
+   safety is made anywhere in code, docs, or reports.
+
+## Tasks
+
+- T1 | S2 | inline | author the contract section (this file).
+- T2 | S2,S4,S5 | worker | ownership protocol in
+  `application/documentation_runtime.py` + `documentation_worker.py`:
+  worker→parent Access-identity ack before armed open; parent-held kill net;
+  strict TDD on unit/fake level; no live Access.
+- T3 | S2,S5 | worker-prep + parent-launched live gates | containment
+  research: Job Object assignment for COM-launched MSACCESS; crash/deadline/
+  supervisor-death matrix on scratch copies.
+- T4 | S2,S5 | worker + live | content-read qualification: corrected 1-based
+  References enumeration with separated Count/Item diagnostics; SaveAsText
+  form/report/macro reads; VBProject trust refusal → `unavailable`.
+- T5 | S2,S5 | worker + live | embedded event-macro canary fixture with
+  positive control; rerun startup matrix; AutoKeys stays unsupported
+  (no input synthesis).
+- T6 | S3,S4 | worker | Tier 1 DAO inventory (Containers + startup
+  properties) behind default-off args; v1 byte-identity pins.
+- T7 | S2,S3,S4 | worker | Tier 2 reader using T2 protocol + T3–T5 gates:
+  offline copy, ForceDisable, opt-in source, caps, catalogue facts.
+- T8 | S3 | worker | rendering catalogue sections, prompts, spec sync (R3).
+- T9 | S4,S5 | parent + independent verify | final gates: qualify.py,
+  opt-in integration, independent review, coverage matrix docs.
+
 ## Log
 
 - L1 (2026-10-17): "Get the memory of the project to continue with the next
