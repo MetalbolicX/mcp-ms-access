@@ -185,3 +185,47 @@ def test_inspect_help_documents_the_app_logic_opt_in_and_its_default() -> None:
     assert action.const is True and action.default is False, action.default
     help_text = (action.help or "").lower()
     assert "default" in help_text and "app-logic" in help_text
+
+
+def test_inspect_forwards_the_source_opt_in_flag_and_defaults_off(capsys) -> None:
+    """Requirement 6/R1: ``--include-app-logic-source`` is store_true and defaults false."""
+    seen: list[bool] = []
+
+    def _capture(*_args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs["include_app_logic_source"])
+        return _FakeEvidence()
+
+    with patch.object(cli, "run_documentation_inspection", _capture):
+        assert _run_cli(["documentation", "inspect", "--db", "core.accdb", "--json"]) == 0
+        capsys.readouterr()
+        assert (
+            _run_cli(
+                [
+                    "documentation",
+                    "inspect",
+                    "--db",
+                    "core.accdb",
+                    "--include-app-logic",
+                    "--include-app-logic-source",
+                    "--json",
+                ]
+            )
+            == 0
+        )
+        capsys.readouterr()
+
+    assert seen == [False, True]
+
+
+def test_inspect_help_documents_the_source_opt_in_and_its_default() -> None:
+    """The source flag is discoverable, is store_true, states its default, names the scratch env."""
+    parser = cli.build_parser()
+    family = next(action for action in parser._actions if action.dest == "command").choices["documentation"]
+    actions = next(item for item in family._actions if item.dest == "documentation_action").choices
+    action = next(item for item in actions["inspect"]._actions if item.dest == "include_app_logic_source")
+    assert action.option_strings == ["--include-app-logic-source"]
+    assert action.const is True and action.default is False, action.default
+    help_text = (action.help or "").lower()
+    assert "default" in help_text and "source" in help_text
+    app_logic = next(item for item in actions["inspect"]._actions if item.dest == "include_app_logic")
+    assert "access_mcp_doc_scratch_dir" in (app_logic.help or "").lower()

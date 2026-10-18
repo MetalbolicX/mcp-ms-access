@@ -246,9 +246,11 @@ def test_worker_run_request_passes_the_flag_to_the_extraction_seam(monkeypatch: 
         queries: Any,
         include_query_sql: bool = False,
         include_app_logic: bool = False,
+        include_app_logic_source: bool = False,
     ) -> Any:
         seen["include_query_sql"] = include_query_sql
         seen["include_app_logic"] = include_app_logic
+        seen["include_app_logic_source"] = include_app_logic_source
         return EvidenceDoc(
             run=RunMetadata("run-1", "1.0", [], []),
             source=SourceEvidence("core.accdb", "accdb", "DAO", "offline", "closed"),
@@ -257,6 +259,10 @@ def test_worker_run_request_passes_the_flag_to_the_extraction_seam(monkeypatch: 
 
     monkeypatch.setattr(worker, "DatabaseUseCases", _FakeDatabase)
     monkeypatch.setattr(worker, "inspect_open_database", fake_inspect)
+    # The opted-in request also triggers the armed Tier 2 read; fake the reader so this
+    # unit test never instantiates Access.
+    monkeypatch.setattr(worker, "read_tier2_content", lambda *_a, **_k: object())
+    monkeypatch.setattr(worker, "apply_app_logic_content", lambda document, _content: document)
     request = decode_request(
         encode_request(
             build_request(
@@ -953,3 +959,70 @@ def test_an_unreadable_identity_that_already_exited_needs_no_kill() -> None:
     assert outcome.terminated is False
     assert outcome.exited is True
     assert _taskkill_calls(runner) == []
+
+
+# ---------------------------------------------------------------------------
+# T7: Tier 2 source opt-in plumbing and Err precedence
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_inspect_threads_the_source_opt_in_into_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The supervisor must carry ``include_app_logic_source`` into the worker request."""
+    from ms_access_mcp.application import documentation_runtime as runtime_module
+
+    real_build_request = runtime_module.build_request
+    seen: dict[str, Any] = {}
+
+    def capture(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return real_build_request(**kwargs)
+
+    monkeypatch.setattr(runtime_module, "build_request", capture)
+    records: list[subprocess.Popen[bytes]] = []
+    runtime = DocumentationRuntime(launcher=_launcher("ok", records), deadline_seconds=30)
+
+    runtime.inspect(
+        "fixture.accdb",
+        backend="dao",
+        allowed_dirs=[Path("C:/db")],
+        tables=None,
+        queries=None,
+        include_app_logic=True,
+        include_app_logic_source=True,
+    )
+
+    assert seen["include_app_logic"] is True
+    assert seen["include_app_logic_source"] is True
+
+
+def test_runtime_rejects_source_opt_in_without_app_logic_before_spawning() -> None:
+    """Requirement 6: source opt-in without the catalogue opt-in is a usage error.
+
+    The review must abort before any owned child is spawned, so no Access instance can
+    ever be created for a contradictory request.
+    """
+    records: list[subprocess.Popen[bytes]] = []
+    runtime = DocumentationRuntime(launcher=_launcher("ok", records), deadline_seconds=30)
+
+    with pytest.raises(AccessMcpError, match="include_app_logic"):
+        runtime.inspect(
+            "fixture.accdb",
+            backend="dao",
+            allowed_dirs=[Path("C:/db")],
+            tables=None,
+            queries=None,
+            include_app_logic_source=True,
+        )
+
+    assert records == []
+
+
+def test_runtime_facades_expose_the_source_opt_in_defaulting_off() -> None:
+    """The source opt-in is default-off at every facade seam."""
+    import inspect as inspect_module
+
+    from ms_access_mcp.application import documentation_runtime as runtime_module
+
+    for callable_object in (runtime_module.DocumentationRuntime.inspect, runtime_module.run_documentation_inspection):
+        parameter = inspect_module.signature(callable_object).parameters["include_app_logic_source"]
+        assert parameter.default is False

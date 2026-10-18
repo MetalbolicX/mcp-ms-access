@@ -176,8 +176,16 @@ class DocumentationRuntime:
         queries: list[str] | None,
         include_query_sql: bool = False,
         include_app_logic: bool = False,
+        include_app_logic_source: bool = False,
     ) -> EvidenceDoc:
         """Run one whole inspection in an owned child, or raise a safe ``AccessMcpError``."""
+        if include_app_logic_source and not include_app_logic:
+            msg = (
+                "Documentation inspection requires include_app_logic=True when "
+                "include_app_logic_source=True; raw source text is only meaningful with "
+                "the app-logic catalogue opt-in"
+            )
+            raise AccessMcpError(msg)
         request = build_request(
             db_path=db_path,
             backend=backend,
@@ -186,6 +194,7 @@ class DocumentationRuntime:
             queries=queries,
             include_query_sql=include_query_sql,
             include_app_logic=include_app_logic,
+            include_app_logic_source=include_app_logic_source,
         )
         request_bytes = encode_request(request)
         output_limit = documentation_limits.worker_output_limit()
@@ -422,6 +431,7 @@ def run_documentation_inspection(
     queries: list[str] | None = None,
     include_query_sql: bool = False,
     include_app_logic: bool = False,
+    include_app_logic_source: bool = False,
 ) -> EvidenceDoc:
     """Run one inspection through the default supervised runtime facade."""
     return DocumentationRuntime().inspect(
@@ -432,4 +442,5 @@ def run_documentation_inspection(
         queries=queries,
         include_query_sql=include_query_sql,
         include_app_logic=include_app_logic,
+        include_app_logic_source=include_app_logic_source,
     )

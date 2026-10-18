@@ -42,6 +42,7 @@ from typing import Any, NamedTuple
 from ..errors import AccessMcpError
 from .database import DatabaseUseCases, Err
 from .documentation import redact_connection_secrets
+from .documentation_app_logic import apply_app_logic_content, read_tier2_content
 from .documentation_inspect import inspect_open_database
 from .documentation_limits import REQUEST_MAX_BYTES, ensure_evidence_within_limit
 
@@ -59,6 +60,7 @@ def build_request(
     queries: list[str] | None,
     include_query_sql: bool = False,
     include_app_logic: bool = False,
+    include_app_logic_source: bool = False,
 ) -> dict[str, Any]:
     """Build the structured request handed to the child (no credentials, no executable)."""
     normalized_backend = str(backend).strip().casefold()
@@ -76,6 +78,7 @@ def build_request(
         "queries": None if queries is None else [str(name) for name in queries],
         "include_query_sql": bool(include_query_sql),
         "include_app_logic": bool(include_app_logic),
+        "include_app_logic_source": bool(include_app_logic_source),
     }
 
 
@@ -133,6 +136,11 @@ def decode_request(data: bytes) -> dict[str, Any]:
         msg = "Documentation worker request field 'include_app_logic' must be a boolean"
         raise AccessMcpError(msg)
     request["include_app_logic"] = include_app_logic
+    include_app_logic_source = request.get("include_app_logic_source", False)
+    if not isinstance(include_app_logic_source, bool):
+        msg = "Documentation worker request field 'include_app_logic_source' must be a boolean"
+        raise AccessMcpError(msg)
+    request["include_app_logic_source"] = include_app_logic_source
     return request
 
 
@@ -274,7 +282,16 @@ def _run_request(request: dict[str, Any]) -> dict[str, Any]:
             queries=request.get("queries"),
             include_query_sql=request.get("include_query_sql", False),
             include_app_logic=request.get("include_app_logic", False),
+            include_app_logic_source=request.get("include_app_logic_source", False),
         )
+        if request.get("include_app_logic", False):
+            # Tier 2 is the only armed read: the reader copies the source, opens the copy
+            # under ForceDisable, and announces the owned Access identity before the open.
+            content = read_tier2_content(
+                db_path,
+                include_source=request.get("include_app_logic_source", False),
+            )
+            document = apply_app_logic_content(document, content)
     finally:
         database.close_database()
     payload = document.to_dict()

@@ -592,6 +592,7 @@ def inspect_open_database(
     queries: list[str] | None,
     include_query_sql: bool = False,
     include_app_logic: bool = False,
+    include_app_logic_source: bool = False,
 ) -> EvidenceDoc:
     """Extract documentation evidence from an already-open ``DatabaseUseCases`` session.
 
@@ -631,6 +632,7 @@ def inspect_open_database(
                 queries=queries,
                 include_query_sql=include_query_sql,
                 include_app_logic=include_app_logic,
+                include_app_logic_source=include_app_logic_source,
             )
         )
     if not callable(getattr(adapter, "open_readonly_inspection_connection", None)):
@@ -643,6 +645,7 @@ def inspect_open_database(
         queries=queries,
         include_query_sql=include_query_sql,
         include_app_logic=include_app_logic,
+        include_app_logic_source=include_app_logic_source,
     )
 
 
@@ -657,6 +660,7 @@ class DocumentationInspectService:
         queries: list[str] | None,
         include_query_sql: bool = False,
         include_app_logic: bool = False,
+        include_app_logic_source: bool = False,
     ) -> EvidenceDoc:
         """Build evidence for the requested table/query subset.
 
@@ -675,7 +679,18 @@ class DocumentationInspectService:
         ``include_app_logic`` gates the additive Tier 1 engine-level inventory, defaulting
         to ``False``: the emitted evidence is then byte-identical to v1 (no new category,
         no new warning).
+
+        ``include_app_logic_source`` opts into embedding the raw (untrusted) Tier 2
+        source text. It is only meaningful together with ``include_app_logic``; a
+        contradictory request fails closed here as a usage error.
         """
+        if include_app_logic_source and not include_app_logic:
+            msg = (
+                "Documentation inspection requires include_app_logic=True when "
+                "include_app_logic_source=True; raw source text is only meaningful with "
+                "the app-logic catalogue opt-in"
+            )
+            raise AccessMcpError(msg)
         try:
             return self._inspect(
                 port,

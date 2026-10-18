@@ -498,24 +498,182 @@ class StartupPropertyEvidence:
         return cls(name=data["name"], method=data["method"], value=FactStatus.from_dict(data["value"]))
 
 
+# Instantiation-level (Tier 2) method metadata. Every Tier 2 fact records that it came
+# from an ``Access.Application`` instantiation, so evidence consumers can tell it apart
+# from the engine-level (DAO) Tier 1 facts (agreement 1 / the central v2 design tension).
+ACCESS_APPLICATION_METHOD = "access-application"
+
+# The additive Tier 2 content categories. ``form``/``report``/``macro`` carry a
+# ``SaveAsText`` catalogue entry; ``vba_module`` carries the VBE catalogue entry.
+_CONTENT_CATEGORIES = frozenset({"form", "report", "macro", "vba_module"})
+_SAVE_AS_TEXT_CATEGORIES = frozenset({"form", "report", "macro"})
+_REFERENCE_PROPERTIES = ("path", "guid", "major", "minor", "built_in")
+REFERENCE_PROPERTIES = _REFERENCE_PROPERTIES
+
+
+@dataclass
+class ContentObjectEvidence:
+    """One instantiation-level content catalogue fact (form/report/macro/vba_module).
+
+    ``content`` is the per-fact state. For a form/report/macro an observed value carries
+    the export ``sha256`` (of the decoded UTF-16-LE BOM ``SaveAsText`` text, encoded as
+    UTF-8) and its ``bytes`` size; the raw ``source`` text is embedded only under the
+    explicit ``include_app_logic_source`` opt-in (R1). For a vba_module the observed
+    value carries the module ``type``, its ``procedures`` where readable, and again the
+    raw ``source`` only on opt-in. A whole family that cannot be read at all is a single
+    entry with the family scope name whose ``content`` is ``unavailable``/``failed``.
+    """
+
+    category: str
+    name: str
+    method: str
+    content: FactStatus[dict[str, Any]]
+
+    def validate(self) -> None:
+        if self.category not in _CONTENT_CATEGORIES:
+            raise ValueError(f"Unknown content category: {self.category}")
+        if not self.name or not self.method:
+            raise ValueError("Content object name and method must be non-empty")
+        self.content.validate()
+        provenance = self.content.provenance
+        if (
+            provenance.object_kind != self.category
+            or provenance.object_name != self.name
+            or provenance.property != "content"
+        ):
+            raise ValueError("Content object provenance must identify this object")
+        if self.content.state != "observed":
+            return
+        value = self.content.value
+        if not isinstance(value, dict):
+            raise ValueError("Observed content must be an object")
+        if self.category in _SAVE_AS_TEXT_CATEGORIES:
+            allowed = {"sha256", "bytes", "source"}
+            if set(value) - allowed:
+                raise ValueError("Observed form/report/macro content carries only sha256, bytes, and source")
+            if not isinstance(value.get("sha256"), str) or not value["sha256"]:
+                raise ValueError("Observed form/report/macro content requires a sha256 string")
+            if not isinstance(value.get("bytes"), int) or isinstance(value["bytes"], bool):
+                raise ValueError("Observed form/report/macro content requires a byte size integer")
+        else:
+            if set(value) - {"type", "procedures", "source"}:
+                raise ValueError("Observed vba_module content carries only type, procedures, and source")
+            if "type" in value and (not isinstance(value["type"], str) or not value["type"]):
+                raise ValueError("Observed vba_module type must be a non-empty string")
+            procedures = value.get("procedures")
+            if procedures is not None and (
+                not isinstance(procedures, list) or any(not isinstance(name, str) or not name for name in procedures)
+            ):
+                raise ValueError("Observed vba_module procedures must be a list of non-empty strings")
+        if "source" in value and not isinstance(value["source"], str):
+            raise ValueError("Observed content source must be a string")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "category": self.category,
+            "name": self.name,
+            "method": self.method,
+            "content": self.content.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ContentObjectEvidence:
+        return cls(
+            category=data["category"],
+            name=data["name"],
+            method=data["method"],
+            content=FactStatus.from_dict(data["content"]),
+        )
+
+
+@dataclass
+class ReferenceEvidence:
+    """One instantiation-level project reference with separated per-property facts.
+
+    ``Application.References`` is enumerated 1-based; each property is read in its own
+    exception boundary so one unreadable property (for example the ``0x800A01C4``
+    invalid-ordinal COM failure recorded by the T4 probe) becomes a ``failed`` fact with
+    its diagnostics instead of erasing the rest of the reference.
+    """
+
+    name: str
+    method: str
+    path: FactStatus[str]
+    guid: FactStatus[str]
+    major: FactStatus[int]
+    minor: FactStatus[int]
+    built_in: FactStatus[bool]
+
+    def validate(self) -> None:
+        if not self.name or not self.method:
+            raise ValueError("Reference name and method must be non-empty")
+        for prop, fact in zip(_REFERENCE_PROPERTIES, (self.path, self.guid, self.major, self.minor, self.built_in)):
+            fact.validate()
+            provenance = fact.provenance
+            if (
+                provenance.object_kind != "reference"
+                or provenance.object_name != self.name
+                or provenance.property != prop
+            ):
+                raise ValueError(f"Reference {prop} provenance must identify this reference")
+        if self.major.state == "observed" and (not isinstance(self.major.value, int) or isinstance(self.major.value, bool)):
+            raise ValueError("Observed reference major version must be an integer")
+        if self.minor.state == "observed" and (not isinstance(self.minor.value, int) or isinstance(self.minor.value, bool)):
+            raise ValueError("Observed reference minor version must be an integer")
+        if self.built_in.state == "observed" and not isinstance(self.built_in.value, bool):
+            raise ValueError("Observed reference built_in must be a boolean")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "name": self.name,
+            "method": self.method,
+            "path": self.path.to_dict(),
+            "guid": self.guid.to_dict(),
+            "major": self.major.to_dict(),
+            "minor": self.minor.to_dict(),
+            "built_in": self.built_in.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ReferenceEvidence:
+        return cls(
+            name=data["name"],
+            method=data["method"],
+            path=FactStatus.from_dict(data["path"]),
+            guid=FactStatus.from_dict(data["guid"]),
+            major=FactStatus.from_dict(data["major"]),
+            minor=FactStatus.from_dict(data["minor"]),
+            built_in=FactStatus.from_dict(data["built_in"]),
+        )
+
+
 @dataclass
 class AppLogicEvidence:
-    """Engine-level app-logic inventory behind the default-off ``include_app_logic`` opt-in.
+    """App-logic inventory behind the default-off ``include_app_logic`` opt-in.
 
     v2 adds these facts **additively**: an :class:`EvidenceDoc` carries this object only
     when the caller explicitly opts in, so the default evidence payload keeps the v1
-    shape byte-for-byte (agreement 10). Every fact here is engine-level (DAO) and records
-    its ``method``; instantiation-level facts introduced later must carry their own
-    method so consumers can tell the two tiers apart.
+    shape byte-for-byte (agreement 10). ``containers``/``startup_properties`` are the
+    engine-level (DAO) Tier 1 facts and record their engine method; ``content`` and
+    ``references`` are the instantiation-level Tier 2 facts and record
+    :data:`ACCESS_APPLICATION_METHOD`, so consumers can tell the tiers apart.
     """
 
     containers: list[ContainerInventoryEvidence] = field(default_factory=list)
     startup_properties: list[StartupPropertyEvidence] = field(default_factory=list)
+    content: list[ContentObjectEvidence] = field(default_factory=list)
+    references: list[ReferenceEvidence] = field(default_factory=list)
 
     def validate(self) -> None:
         for item in self.containers:
             item.validate()
         for item in self.startup_properties:
+            item.validate()
+        for item in self.content:
+            item.validate()
+        for item in self.references:
             item.validate()
 
     def to_dict(self) -> dict[str, Any]:
@@ -523,6 +681,8 @@ class AppLogicEvidence:
         return {
             "containers": [item.to_dict() for item in self.containers],
             "startup_properties": [item.to_dict() for item in self.startup_properties],
+            "content": [item.to_dict() for item in self.content],
+            "references": [item.to_dict() for item in self.references],
         }
 
     @classmethod
@@ -530,6 +690,8 @@ class AppLogicEvidence:
         return cls(
             containers=[ContainerInventoryEvidence.from_dict(item) for item in data.get("containers", [])],
             startup_properties=[StartupPropertyEvidence.from_dict(item) for item in data.get("startup_properties", [])],
+            content=[ContentObjectEvidence.from_dict(item) for item in data.get("content", [])],
+            references=[ReferenceEvidence.from_dict(item) for item in data.get("references", [])],
         )
 
 
@@ -647,6 +809,12 @@ class EvidenceDoc:
         if self.app_logic is not None:
             facts.extend(item.objects for item in self.app_logic.containers)
             facts.extend(item.value for item in self.app_logic.startup_properties)
+            facts.extend(item.content for item in self.app_logic.content)
+            facts.extend(
+                fact
+                for reference in self.app_logic.references
+                for fact in (reference.path, reference.guid, reference.major, reference.minor, reference.built_in)
+            )
         has_fact_gap = any(fact.state not in ("observed", "excluded") for fact in facts)
         coverage_gaps = any(status.failed or status.unsupported for status in (self.coverage.tables, self.coverage.queries, self.coverage.relationships))
         return "partial" if has_fact_gap or coverage_gaps else "complete"

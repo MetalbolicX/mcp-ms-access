@@ -192,6 +192,10 @@ def test_run_request_passes_include_app_logic_through_to_the_inspection_service(
 
     monkeypatch.setattr(documentation_worker, "DatabaseUseCases", lambda **_kwargs: _FakeDatabase())
     monkeypatch.setattr(documentation_worker, "inspect_open_database", _fake_inspect)
+    # ``include_app_logic`` now also triggers the armed Tier 2 read; stub the reader so
+    # this preservation test never instantiates Access.
+    monkeypatch.setattr(documentation_worker, "read_tier2_content", lambda *_a, **_k: object())
+    monkeypatch.setattr(documentation_worker, "apply_app_logic_content", lambda document, _content: document)
 
     documentation_worker._run_request(
         {
@@ -207,3 +211,147 @@ def test_run_request_passes_include_app_logic_through_to_the_inspection_service(
 
     assert seen["include_app_logic"] is True
     assert seen["include_query_sql"] is False
+
+
+# ---------------------------------------------------------------------------
+# T7: Tier 2 source opt-in request field and reader invocation
+# ---------------------------------------------------------------------------
+
+
+def _source_request(include_app_logic_source: object = _MISSING) -> bytes:
+    request: dict[str, object] = {
+        "db_path": "core.accdb",
+        "backend": "dao",
+        "allowed_dirs": [],
+        "tables": None,
+        "queries": None,
+    }
+    if include_app_logic_source is not _MISSING:
+        request["include_app_logic_source"] = include_app_logic_source
+    return json.dumps(request).encode("utf-8")
+
+
+def test_build_request_carries_include_app_logic_source_defaulting_off() -> None:
+    request = build_request(db_path="core.accdb", backend="dao", allowed_dirs=[], tables=None, queries=None)
+    assert request["include_app_logic_source"] is False
+    opted_in = build_request(
+        db_path="core.accdb",
+        backend="dao",
+        allowed_dirs=[],
+        tables=None,
+        queries=None,
+        include_app_logic=True,
+        include_app_logic_source=True,
+    )
+    assert opted_in["include_app_logic_source"] is True
+
+
+def test_decode_request_defaults_include_app_logic_source_off_and_validates_a_boolean() -> None:
+    assert decode_request(_source_request())["include_app_logic_source"] is False
+    assert decode_request(_source_request(True))["include_app_logic_source"] is True
+    assert decode_request(_source_request(False))["include_app_logic_source"] is False
+
+
+@pytest.mark.parametrize("malformed", ["yes", 1, 0, None, [], {}])
+def test_decode_request_rejects_a_non_boolean_include_app_logic_source(malformed: object) -> None:
+    with pytest.raises(AccessMcpError, match="include_app_logic_source"):
+        decode_request(_source_request(malformed))
+
+
+def test_run_request_invokes_the_tier_two_reader_with_the_source_opt_in(monkeypatch) -> None:
+    from ms_access_mcp.application.database import Ok
+    from ms_access_mcp.application.documentation import (
+        Coverage,
+        EvidenceDoc,
+        RunMetadata,
+        SourceEvidence,
+    )
+
+    seen: dict[str, object] = {}
+    document = EvidenceDoc(
+        run=RunMetadata("run-1", "1.0", [], []),
+        source=SourceEvidence("core.accdb", "accdb", "DAO", "offline", "closed"),
+        coverage=Coverage(),
+    )
+
+    class _FakeDatabase:
+        def open_database(self, _path: str) -> object:
+            return Ok(data={})
+
+        def close_database(self) -> None:
+            return None
+
+    class _FakeContent:
+        warnings: list[str] = []
+
+    def _fake_reader(path: str, *, include_source: bool = False) -> _FakeContent:
+        seen["reader"] = (path, include_source)
+        return _FakeContent()
+
+    def _fake_apply(target: object, content: object) -> object:
+        seen["applied"] = (target, content)
+        return target
+
+    monkeypatch.setattr(documentation_worker, "DatabaseUseCases", lambda **_kwargs: _FakeDatabase())
+    monkeypatch.setattr(documentation_worker, "inspect_open_database", lambda *_a, **_k: document)
+    monkeypatch.setattr(documentation_worker, "read_tier2_content", _fake_reader)
+    monkeypatch.setattr(documentation_worker, "apply_app_logic_content", _fake_apply)
+
+    documentation_worker._run_request(
+        {
+            "db_path": "core.accdb",
+            "backend": "dao",
+            "allowed_dirs": [],
+            "tables": None,
+            "queries": None,
+            "include_query_sql": False,
+            "include_app_logic": True,
+            "include_app_logic_source": True,
+        }
+    )
+
+    assert seen["reader"] == ("core.accdb", True)
+    assert "applied" in seen
+
+
+def test_run_request_never_invokes_the_tier_two_reader_when_app_logic_is_off(monkeypatch) -> None:
+    """PRESERVE: default-off requests never instantiate Access, so no reader call happens."""
+    from ms_access_mcp.application.database import Ok
+    from ms_access_mcp.application.documentation import (
+        Coverage,
+        EvidenceDoc,
+        RunMetadata,
+        SourceEvidence,
+    )
+
+    called: list[str] = []
+    document = EvidenceDoc(
+        run=RunMetadata("run-1", "1.0", [], []),
+        source=SourceEvidence("core.accdb", "accdb", "DAO", "offline", "closed"),
+        coverage=Coverage(),
+    )
+
+    class _FakeDatabase:
+        def open_database(self, _path: str) -> object:
+            return Ok(data={})
+
+        def close_database(self) -> None:
+            return None
+
+    monkeypatch.setattr(documentation_worker, "DatabaseUseCases", lambda **_kwargs: _FakeDatabase())
+    monkeypatch.setattr(documentation_worker, "inspect_open_database", lambda *_a, **_k: document)
+    monkeypatch.setattr(documentation_worker, "read_tier2_content", lambda *_a, **_k: called.append("reader"))
+
+    documentation_worker._run_request(
+        {
+            "db_path": "core.accdb",
+            "backend": "dao",
+            "allowed_dirs": [],
+            "tables": None,
+            "queries": None,
+            "include_query_sql": False,
+            "include_app_logic": False,
+        }
+    )
+
+    assert called == []

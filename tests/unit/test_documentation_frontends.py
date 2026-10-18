@@ -215,3 +215,28 @@ def test_documentation_prompts_render_deterministically_and_use_real_tools():
     assert "no query extraction" not in er.lower()
     assert "--include-query-sql" in er
     assert "default" in er.lower()
+
+
+def test_documentation_inspect_source_opt_in_parameter_defaults_off() -> None:
+    """Requirement 6/R1: the MCP tool exposes the raw-source opt-in as a default-off boolean."""
+    schema = _tool_schema("analysis", "documentation_inspect")
+    assert "include_app_logic_source" in schema["properties"]
+    assert schema["properties"]["include_app_logic_source"]["default"] is False
+
+
+def test_documentation_inspect_passes_the_source_opt_in_to_the_service(monkeypatch) -> None:
+    """R1: the source opt-in reaches the inspection facade alongside the catalogue opt-in."""
+    from ms_access_mcp.mcp_tools import analysis
+
+    seen: list[tuple[bool, bool]] = []
+
+    def _capture(_path: str, **kwargs: object) -> EvidenceDoc:
+        seen.append((bool(kwargs["include_app_logic"]), bool(kwargs["include_app_logic_source"])))
+        return EvidenceDoc.from_dict(_minimal_evidence())
+
+    monkeypatch.setattr(analysis, "run_documentation_inspection", _capture)
+
+    analysis.documentation_inspect("db.accdb")
+    analysis.documentation_inspect("db.accdb", include_app_logic=True, include_app_logic_source=True)
+
+    assert seen == [(False, False), (True, True)]

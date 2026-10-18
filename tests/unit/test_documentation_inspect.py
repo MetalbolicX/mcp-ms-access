@@ -866,3 +866,44 @@ def test_startup_property_read_failure_is_failed_for_every_allowlisted_property(
     assert all(item.value.state == "failed" for item in app_logic.startup_properties)
     assert all("properties read failed" in (item.value.reason or "") for item in app_logic.startup_properties)
     assert all(item.objects.state == "observed" for item in app_logic.containers)
+
+
+# ---------------------------------------------------------------------------
+# T7: source opt-in precedence is validated at the extraction service seam
+# ---------------------------------------------------------------------------
+
+
+def test_service_rejects_source_opt_in_without_the_app_logic_opt_in() -> None:
+    """Requirement 6: raw source text is only meaningful with the catalogue opt-in.
+
+    The contradictory request fails closed at the service seam (the same seam that
+    validates unknown requested names) instead of silently reading nothing.
+    """
+    fake = _app_logic_port()
+    with pytest.raises(AccessMcpError, match="include_app_logic"):
+        DocumentationInspectService().inspect(
+            fake,
+            tables=None,
+            queries=None,
+            include_app_logic=False,
+            include_app_logic_source=True,
+        )
+    assert fake.app_logic_calls == []
+
+
+def test_service_accepts_the_source_opt_in_alongside_app_logic() -> None:
+    """PRESERVE: the opt-in pair is accepted; the service itself reads no Tier 2 content."""
+    fake = _app_logic_port()
+    document = DocumentationInspectService().inspect(
+        fake,
+        tables=None,
+        queries=None,
+        include_app_logic=True,
+        include_app_logic_source=True,
+    )
+    assert document.app_logic is not None
+
+
+def test_service_source_opt_in_defaults_off() -> None:
+    parameter = inspect.signature(DocumentationInspectService.inspect).parameters["include_app_logic_source"]
+    assert parameter.default is False

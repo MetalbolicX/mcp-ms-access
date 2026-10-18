@@ -1866,6 +1866,7 @@ def _cmd_documentation(args: argparse.Namespace) -> int:
                 queries=args.queries,
                 include_query_sql=args.include_query_sql,
                 include_app_logic=args.include_app_logic,
+                include_app_logic_source=args.include_app_logic_source,
             )
             payload = evidence.to_dict()
             payload["status"] = evidence.status
@@ -1925,8 +1926,18 @@ def _build_documentation_parser(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help=(
             "Include Tier 1 engine-level app-logic inventory (DAO Forms/Reports/Scripts/"
-            "Modules containers and startup database properties; default: off, so the "
-            "evidence stays byte-identical to v1)"
+            "Modules containers and startup database properties) plus the Tier 2 "
+            "instantiation-level content catalogue read from a disposable offline copy; "
+            "default: off, so the evidence stays byte-identical to v1. The copy is created "
+            "under $ACCESS_MCP_DOC_SCRATCH_DIR (default: the system temp directory)"
+        ),
+    )
+    inspect.add_argument(
+        "--include-app-logic-source",
+        action="store_true",
+        help=(
+            "Embed the raw (untrusted) Tier 2 source text in the app-logic evidence; "
+            "default: off (catalogue hash and size only). Requires --include-app-logic"
         ),
     )
     inspect.set_defaults(func=_cmd_documentation)

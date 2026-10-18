@@ -174,6 +174,7 @@ def documentation_inspect(
     connection_ref: str | None = None,
     include_query_sql: bool = False,
     include_app_logic: bool = False,
+    include_app_logic_source: bool = False,
 ) -> CallToolResult:
     """Inspect Access metadata into versioned documentation evidence.
 
@@ -183,8 +184,12 @@ def documentation_inspect(
 
     ``include_app_logic`` defaults to ``False`` and keeps the emitted evidence
     byte-identical to v1. Set it to ``True`` to add the Tier 1 engine-level inventory
-    (DAO Forms/Reports/Scripts/Modules containers and startup database properties); it
-    never instantiates ``Access.Application``.
+    (DAO Forms/Reports/Scripts/Modules containers and startup database properties) plus
+    the Tier 2 instantiation-level content catalogue read from a disposable offline copy.
+
+    ``include_app_logic_source`` defaults to ``False``; set it to ``True`` (together with
+    ``include_app_logic``) to embed the raw, untrusted Tier 2 source text. Only the
+    catalogue hash and byte size are emitted by default.
     """
     del connection_ref  # Credentials are resolved by the existing path/session policy.
     try:
@@ -201,6 +206,7 @@ def documentation_inspect(
             queries=queries,
             include_query_sql=include_query_sql,
             include_app_logic=include_app_logic,
+            include_app_logic_source=include_app_logic_source,
         )
         data = evidence.to_dict()
         data["status"] = evidence.status

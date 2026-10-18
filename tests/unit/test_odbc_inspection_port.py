@@ -642,8 +642,10 @@ def test_mcp_inspect_forwards_inspection_context_to_the_facade() -> None:
     database = _WiringDatabase(connection)
     seen: dict[str, Any] = {}
 
-    def fake_run(path: str, *, backend: str, allowed_dirs: Any, tables: Any, queries: Any, include_query_sql: bool = False) -> Any:
-        seen.update(path=path, backend=backend, allowed_dirs=list(allowed_dirs), tables=tables, queries=queries, include_query_sql=include_query_sql)
+    def fake_run(path: str, *, backend: str, allowed_dirs: Any, tables: Any, queries: Any, include_query_sql: bool = False, include_app_logic: bool = False, include_app_logic_source: bool = False) -> Any:
+        # kwargs refreshed for the v2 app-logic flags (T6/T7): the fake pins the
+        # facade contract, which now carries both default-off app-logic flags.
+        seen.update(path=path, backend=backend, allowed_dirs=list(allowed_dirs), tables=tables, queries=queries, include_query_sql=include_query_sql, include_app_logic=include_app_logic, include_app_logic_source=include_app_logic_source)
         return inspect_open_database(database, tables=tables, queries=queries, include_query_sql=include_query_sql)
 
     with (
@@ -660,6 +662,8 @@ def test_mcp_inspect_forwards_inspection_context_to_the_facade() -> None:
         "tables": ["Customers"],
         "queries": None,
         "include_query_sql": False,
+        "include_app_logic": False,
+        "include_app_logic_source": False,
     }
 
 
@@ -669,7 +673,8 @@ def test_mcp_inspect_forwards_the_sql_opt_in_flag() -> None:
     database = _WiringDatabase(connection)
     seen: list[bool] = []
 
-    def fake_run(path: str, *, backend: str, allowed_dirs: Any, tables: Any, queries: Any, include_query_sql: bool = False) -> Any:
+    def fake_run(path: str, *, backend: str, allowed_dirs: Any, tables: Any, queries: Any, include_query_sql: bool = False, include_app_logic: bool = False, include_app_logic_source: bool = False) -> Any:
+        # kwargs refreshed for the v2 app-logic flags (T6/T7).
         seen.append(include_query_sql)
         return inspect_open_database(database, tables=tables, queries=queries, include_query_sql=include_query_sql)
 
