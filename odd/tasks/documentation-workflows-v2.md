@@ -473,6 +473,15 @@ integrity checking. No production changes, commit, or push.
   precedence; caps enforced; default-off byte-identity preserved; 2009 unit
   tests green, ruff clean, pyright 0/0/0. Live qualification deferred to T9.
 - T8 | S3 | worker | rendering catalogue sections, prompts, spec sync (R3).
+  Delivered `a33fb5b`: "Application logic" sections for both report kinds,
+  catalogue-only rendering with evidence-ID + sha256 references (never
+  inlined source), visible limitation/coverage lines for degraded states;
+  prompts updated; spec §8 implemented-vs-not-qualified matrix with the
+  T3/T4/T5 archive references; README row extended. Parent closed the
+  agreement-9 gap the worker surfaced: VBA module facts now always carry
+  UTF-8 sha256 + bytes (validator + reader + tests), raw source still
+  opt-in. Byte-identity and fingerprint pins green; full suite 2020
+  passed / 3 skipped.
 - T9 | S4,S5 | parent + independent verify | final gates: qualify.py,
   opt-in integration, independent review, coverage matrix docs.
 
@@ -642,3 +651,11 @@ integrity checking. No production changes, commit, or push.
   0/0/0 on changed modules. Remaining: T8 rendering catalogue sections +
   prompts + spec sync; T9 live qualification gates + independent review +
   coverage matrix + README.
+- L17 (2026-10-17): T8 delivered in `a33fb5b` (worker RED 8 → GREEN;
+  parent added the agreement-9 RED test `KeyError: 'sha256'` → fix:
+  always-digest VBA module facts over UTF-8, validator allowed-keys
+  updated; round-trip test caught the validator mismatch before commit).
+  Recorded decision: app-logic sections render for BOTH report kinds when
+  app-logic evidence exists; er without app-logic stays byte-identical.
+  Remaining: T9 final gates (qualify.py, live opt-in integration on
+  fixtures, independent review, coverage matrix honesty rows).
