@@ -419,7 +419,13 @@ integrity checking. No production changes, commit, or push.
   (parent-verified: 41 passed, ruff clean; new `process_identity.py`).
 - T3 | S2,S5 | worker-prep + parent-launched live gates | containment
   research: Job Object assignment for COM-launched MSACCESS; crash/deadline/
-  supervisor-death matrix on scratch copies.
+  supervisor-death matrix on scratch copies. GATE PASSED 2026-10-17 (L12):
+  attempt-4 exit 0, 9/9 cells, 11/11 checks; close-after-assign and
+  sacrificial-parent job containment PROVEN; production kill net reaped
+  Access in crash/hang cells with pinned Err texts, no kill in graceful
+  cells; zero owned survivors, originals unchanged. Evidence in
+  `odd/evidence/documentation-v2-containment-20261017.zip` (sha d5eb52eb…f81,
+  includes attempts 1-3); scratch roots removed.
 - T4 | S2,S5 | worker + live | content-read qualification: corrected 1-based
   References enumeration with separated Count/Item diagnostics; SaveAsText
   form/report/macro reads; VBProject trust refusal → `unavailable`.
@@ -535,3 +541,19 @@ integrity checking. No production changes, commit, or push.
   12965a8 = T2 code slice. Next: T3 containment live research gates
   (Job Object for COM-launched MSACCESS; crash/deadline/supervisor-death
   matrix on scratch copies).
+- L12 (2026-10-17): T3 GATE PASSED. Attempt-1 crashed on a harness defect
+  (Thread subclass attribute `_stop` shadowed `threading.Thread._stop()`;
+  renamed, traceback capture added — Engram #9966). Attempts 2-3 evidence
+  already showed correct production behavior; only verdict predicates failed
+  (forced-kill lock residue is contract-bounded to the disposable copy; the
+  pinned crash message never claims a grace; the lock list carries bare
+  filenames globbed from the copy's own directory). Attempt-4: PASS exit 0,
+  9/9 cells, both job modes PROVEN including supervisor-death containment
+  via kill-on-close job; kill-net crash/hang reaps verified; graceful cells
+  issued no kill; zero owned survivors; 11 canonical hashes unchanged; no
+  MSACCESS residue at close. Archived
+  `documentation-v2-containment-20261017.zip` (101 text files, 133,512
+  bytes, sha d5eb52eb…f81) including all failed attempts; exact scratch
+  roots removed after verification. Design consequence for T7: BOTH layers
+  are available — Job Object kill-on-close for supervisor death AND the T2
+  PID-scoped kill net for deadline/crash; the reader will register both.
