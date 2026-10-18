@@ -12,8 +12,17 @@ Design guarantees:
 
 * **Owned isolation.** The child is a fresh Python process (spawn, never fork): it builds
   its own DAO STA / ODBC read-only factory and shares no COM proxy or live handle. The
-  supervisor terminates only that exact ``Popen`` -- there is no baseline-diff PID kill
-  and no broad ``taskkill``.
+  supervisor terminates only that exact ``Popen``. An Access instance the child announces
+  as its own (armed app-logic read) is reaped by PID through the fail-closed verifier in
+  ``application/process_identity.py``: there is no baseline-diff kill and no ``/IM``
+  ``taskkill``.
+* **Owned Access reap.** The child announces each owned ``MSACCESS.EXE`` as one flushed
+  ``@@ACCESS_IDENTITY@@`` frame before it opens a source; the supervisor records those
+  identities and, after reaping the Python child, terminates each one only when the PID is
+  outside the pre-spawn baseline, the live creation time matches, and the image is
+  ``MSACCESS.EXE``. A verified Access process that survives the bounded grace (or an
+  announced identity that stays unreadable while alive) fails cleanup explicitly instead
+  of orphaning Access.
 * **Whole-inspection deadline.** The 120-second budget is measured from before the spawn
   and covers child startup, source open, extraction, and serialization. On expiry the
   child is killed and reaped within an explicit, documented cleanup grace; a timer-style
@@ -41,17 +50,20 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from ..errors import AccessMcpError
 from . import documentation_limits
 from .documentation import EvidenceDoc, redact_connection_secrets
 from .documentation_limits import CLEANUP_GRACE_SECONDS, DEADLINE_SECONDS, DIAGNOSTIC_MAX_BYTES
 from .documentation_worker import (
+    AccessIdentity,
     build_request,
-    decode_response,
+    decode_response_with_identities,
     encode_request,
+    split_access_identity_frames,
 )
+from .process_identity import AccessTermination, list_msaccess_pids, terminate_verified_access
 
 # Poll cadence for the deadline/oversize supervisor loop. Small enough to notice a
 # terminated child promptly, large enough not to busy-spin.
@@ -60,6 +72,21 @@ _POLL_INTERVAL_SECONDS = 0.02
 _READ_CHUNK_BYTES = 65536
 
 Launcher = Callable[[], "subprocess.Popen[bytes]"]
+AccessPidLister = Callable[[], set[int]]
+
+
+class AccessTerminator(Protocol):
+    """Fail-closed owned-Access termination seam (faked in unit tests)."""
+
+    def __call__(
+        self,
+        *,
+        pid: int,
+        creation: int,
+        image: str,
+        baseline_pids: frozenset[int],
+        grace_seconds: float,
+    ) -> AccessTermination: ...
 
 
 def _default_launcher() -> subprocess.Popen[bytes]:
@@ -118,10 +145,18 @@ class DocumentationRuntime:
         launcher: Launcher | None = None,
         deadline_seconds: float | None = None,
         cleanup_grace_seconds: float | None = None,
+        access_pid_lister: AccessPidLister | None = None,
+        access_terminator: AccessTerminator | None = None,
     ) -> None:
         self._launcher: Launcher = launcher or _default_launcher
         self._deadline_seconds = deadline_seconds
         self._cleanup_grace_seconds = cleanup_grace_seconds
+        self._access_pid_lister: AccessPidLister = access_pid_lister or list_msaccess_pids
+        self._access_terminator: AccessTerminator = access_terminator or terminate_verified_access
+        # Owned Access instances announced by the current child, plus the pre-spawn
+        # baseline the fail-closed verifier must never kill.
+        self._owned_access: dict[int, AccessIdentity] = {}
+        self._access_baseline: frozenset[int] = frozenset()
 
     @property
     def deadline_seconds(self) -> float:
@@ -155,6 +190,10 @@ class DocumentationRuntime:
         deadline_seconds = self.deadline_seconds
         grace = self.cleanup_grace_seconds
 
+        self._owned_access.clear()
+        # Snapshot already-running Access processes *before* the child exists, so a
+        # caller-owned session can never be announced as this child's own and killed.
+        self._access_baseline = self._capture_access_baseline()
         started = time.monotonic()
         process = self._launcher()
         stdout_reader = _BoundedPipeReader(process.stdout, output_limit)
@@ -177,8 +216,11 @@ class DocumentationRuntime:
             self._join(thread=stdout_reader, grace=grace)
             self._join(thread=stderr_reader, grace=grace)
             self._join(thread=request_writer, grace=grace)
+            self._record_owned_access(stdout_reader)
+            access_cleanup_established = self._terminate_registered_access(grace)
             if (
                 not cleanup_established
+                or not access_cleanup_established
                 or stdout_reader.is_alive()
                 or stderr_reader.is_alive()
                 or request_writer.is_alive()
@@ -296,6 +338,55 @@ class DocumentationRuntime:
             with contextlib.suppress(Exception):
                 stream.close()
 
+    def _capture_access_baseline(self) -> frozenset[int]:
+        """Snapshot the Access PIDs already running before this child was spawned.
+
+        A failing enumeration yields an empty baseline: the verifier still requires a live
+        creation-time and image match before any kill, and the baseline only ever *denies*
+        a kill.
+        """
+        with contextlib.suppress(Exception):
+            return frozenset(self._access_pid_lister())
+        return frozenset()
+
+    def _record_owned_access(self, stdout_reader: _BoundedPipeReader) -> None:
+        """Record every complete identity frame the child announced before its response.
+
+        A damaged frame is left in the response bytes and rejected by the response
+        decoder, but the frames parsed before it are still recorded so their Access PIDs
+        are not lost to cleanup.
+        """
+        identities, _body = split_access_identity_frames(bytes(stdout_reader.data))
+        for identity in identities:
+            self._owned_access[identity.pid] = identity
+
+    def _terminate_registered_access(self, grace: float) -> bool:
+        """Reap every recorded owned Access PID through the fail-closed verifier.
+
+        Runs after the Python child has been reaped, because a dead child can no longer
+        close its own ``Access.Application``. Returns False when a verified owned Access
+        process survives its bounded grace, or when an announced identity stays unreadable
+        while the process is still alive, so the caller raises the existing
+        un-establishable-cleanup failure instead of silently orphaning Access. Verifier
+        refusals (baseline PID, creation or image mismatch) never kill and are reported
+        through ``AccessTermination.detail``.
+        """
+        if not self._owned_access:
+            return True
+        deadline = time.monotonic() + grace
+        established = True
+        for identity in self._owned_access.values():
+            outcome = self._access_terminator(
+                pid=identity.pid,
+                creation=identity.creation,
+                image=identity.image,
+                baseline_pids=self._access_baseline,
+                grace_seconds=max(deadline - time.monotonic(), 0.0),
+            )
+            if not outcome.exited:
+                established = False
+        return established
+
     def _decode_evidence(self, returncode: int | None, output: bytes) -> EvidenceDoc:
         if returncode != 0:
             msg = (
@@ -303,7 +394,9 @@ class DocumentationRuntime:
                 "reaped; no evidence was produced"
             )
             raise AccessMcpError(msg)
-        response = decode_response(output)
+        # Identity frames were recorded before cleanup; the decoder skips them so the v1
+        # no-frame path decodes byte-identically.
+        _identities, response = decode_response_with_identities(output)
         if response["ok"] is not True:
             message = redact_connection_secrets(str(response.get("error") or "Documentation inspection failed"))
             raise AccessMcpError(message)
