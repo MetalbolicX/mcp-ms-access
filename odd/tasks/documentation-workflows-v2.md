@@ -160,6 +160,60 @@ note (a documentation path calling generic
 
 Runtime qualification is operator-gated, as in v1 (T11 pattern).
 
+## Agreed execution order (L5, supersedes slice order above)
+
+1. **Feasibility spike (gate, no production code).** Decides whether
+   Tier 2 exists at all.
+2. **Tier 1 — engine-level inventory (ships regardless of the spike).**
+   DAO `Containers` (Forms, Reports, Scripts, Modules): names and dates;
+   startup DAO database properties (`StartupForm`, `AppTitle`, ...) if the
+   spike confirms DAO readability. Runs in the existing worker; never
+   instantiates Access, so every v1 safety proof still applies.
+3. **Tier 2 — instantiation-level content reader (only if the spike
+   passes).** VBA source, form/report controls and events, macro action
+   trees, project references (S1–S4 reshaped).
+4. **Settle open agenda items with spike data** (copy lifecycle, dialog
+   supervision, flag precedence, acceptance scenarios).
+5. **Single coherent rewrite of this document** (two tiers + spike
+   outcome), replacing incremental patches.
+
+Why the spike gates Tier 2: the fixture generator never opens
+`Access.Application` while an auto-run object exists
+(`scripts/generate_documentation_fixtures.py:35-45`: "AutoExec runs at
+startup"); `AutomationSecurity=3` was only ever a second guard. Tier 2
+must open apps that DO carry AutoExec/startup forms, so non-execution under
+Access.Application is unproven and is the premise of the whole tier.
+
+## Spike protocol (Step 1, proposed)
+
+- **Fixture:** disposable copies of `db/fixtures/documentation/startup.accdb`
+  (AutoExec -> `RunCode StartupMarker()`, ManualMarker, AutoKeys), plus a
+  startup form whose `OnLoad` is `=StartupMarker()` (expression call into
+  the existing module; no VBProject trust needed to set it). The marker is
+  copy-relative (`startup_executed.marker` beside the opened file,
+  generator :40-58), so each copy is its own detector.
+- **Copy location:** a unique per-run directory under the D: repo scratch
+  convention (`db/fixtures/e2e-<uuid>`), never `%TEMP%` on C: (standing
+  user preference); removed after evidence is captured.
+- **Matrix (each cell observed, N=3 runs):**
+  - Positive control: `AutomationSecurity=1` (low) MUST fire the marker;
+    otherwise every "did not fire" result is vacuous (SQLite-PWD lesson).
+  - `AutomationSecurity=3`, copy untouched.
+  - `AutomationSecurity=3` + DAO neutralization of the copy before opening
+    (delete `StartupForm` property; AutoExec neutralization route is an
+    open spike question — DAO cannot rename Scripts documents).
+  - AutoKeys is input-triggered: recorded as not-reachable without
+    keyboard input, no synthetic keystrokes sent.
+- **Observed per cell:** marker present/absent; any modal/trust dialog
+  (dialog watcher); `MSACCESS.EXE` PID captured, reaped, no orphan; no
+  lock residue; startup properties readable via DAO (Tier 1 confirmation);
+  `Application.References` readable after open (Tier 2 data point).
+- **Exit:** PASS = positive control fires AND a recipe with zero markers,
+  zero dialogs, clean PID reap across all runs. Otherwise STOP recorded
+  with evidence; v2 ships Tier 1 only.
+- **Safety:** copies only, original fixtures and `db/northwind.accdb`
+  hash-checked unchanged; no commits from the spike.
+
 ## Log
 
 - L1 (2026-10-17): "Get the memory of the project to continue with the next
@@ -190,3 +244,11 @@ Runtime qualification is operator-gated, as in v1 (T11 pattern).
   watcher test-only), catalogue evidence layout (hash/ID format, flag
   precedence `include_app_logic_source` without `include_app_logic`), and
   v2 runtime-acceptance scenarios (v1 Q1–Q7 pattern).
+- L5 (2026-10-17): user: "I agree" — the feasibility spike gates Tier 2,
+  and Tier 1 (engine-level inventory) ships on its own regardless of the
+  spike result. Parent recorded the execution order and spike protocol;
+  copy location corrected to the D: scratch convention (bare `mkdtemp`
+  would land on C:). L4's startup-property claim partially reversed:
+  startup options are believed to be DAO database properties (Tier 1),
+  references are not — confirmation is a spike observation, not a fact
+  yet. Spike execution NOT yet authorized.
