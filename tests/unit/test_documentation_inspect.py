@@ -13,6 +13,7 @@ from ms_access_mcp.application.documentation_inspect import (
     InspectionCapabilities,
     InspectionCapabilityUnavailableError,
     InspectionPort,
+    OdbcInspectionPort,
 )
 from ms_access_mcp.backends.schema_inspector import QueryParameterInfo
 from ms_access_mcp.errors import AccessMcpError
@@ -29,6 +30,11 @@ class FakePort:
     query_parameters: dict[str, list[QueryParameterInfo] | Exception] | None = None
     caps: InspectionCapabilities = field(default_factory=InspectionCapabilities)
     closed: bool = False
+    container_objects: dict[str, Any] | None = None
+    database_properties: dict[str, str] | Exception | None = None
+    # Records every engine-level app-logic read, so "default off means never read" is
+    # observable rather than inferred.
+    app_logic_calls: list[str] = field(default_factory=list)
 
     def capabilities(self) -> InspectionCapabilities:
         return self.caps
@@ -70,6 +76,29 @@ class FakePort:
             raise self.queries
         return self.queries
 
+    def list_container_objects(self, container_name: str) -> list[dict[str, Any]]:
+        self.app_logic_calls.append(f"container:{container_name}")
+        if self.container_objects is None:
+            # The default double models an engine (ODBC) with no DAO Containers surface.
+            raise InspectionCapabilityUnavailableError(
+                "Access ODBC does not expose DAO Containers; engine-level container inventory requires the DAO engine"
+            )
+        result = self.container_objects.get(container_name, [])
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def get_database_properties(self) -> dict[str, str]:
+        self.app_logic_calls.append("properties")
+        if self.database_properties is None:
+            # The default double models an engine (ODBC) with no DAO Properties surface.
+            raise InspectionCapabilityUnavailableError(
+                "Access ODBC does not expose DAO database properties; startup properties require the DAO engine"
+            )
+        if isinstance(self.database_properties, Exception):
+            raise self.database_properties
+        return self.database_properties
+
     def close(self) -> None:
         self.closed = True
 
@@ -83,6 +112,8 @@ def port(
     link_metadata: dict[str, dict[str, Any] | Exception] | None = None,
     query_parameters: dict[str, list[QueryParameterInfo] | Exception] | None = None,
     caps: InspectionCapabilities | None = None,
+    container_objects: dict[str, Any] | None = None,
+    database_properties: dict[str, str] | Exception | None = None,
 ) -> FakePort:
     return FakePort(
         tables=[] if tables is None else tables,
@@ -92,6 +123,8 @@ def port(
         link_metadata={} if link_metadata is None else link_metadata,
         query_parameters=query_parameters,
         caps=caps if caps is not None else InspectionCapabilities(),
+        container_objects=container_objects,
+        database_properties=database_properties,
     )
 
 
@@ -101,9 +134,14 @@ def inspect_with(
     queries: list[str] | None = None,
     *,
     include_query_sql: bool = False,
+    include_app_logic: bool = False,
 ):
     return DocumentationInspectService().inspect(
-        fake, tables=tables, queries=queries, include_query_sql=include_query_sql
+        fake,
+        tables=tables,
+        queries=queries,
+        include_query_sql=include_query_sql,
+        include_app_logic=include_app_logic,
     )
 
 
@@ -664,3 +702,167 @@ def test_port_close_runs_even_when_enumeration_raises() -> None:
     with pytest.raises(Exception, match="enumeration broke"):
         inspect_with(fake)
     assert fake.closed
+
+
+# ---------------------------------------------------------------------------
+# Tier 1 engine-level inventory: include_app_logic (default false)
+# ---------------------------------------------------------------------------
+
+
+def _app_logic_port(
+    *,
+    container_objects: dict[str, Any] | None = None,
+    database_properties: dict[str, str] | Exception | None = None,
+) -> FakePort:
+    return port(container_objects=container_objects, database_properties=database_properties)
+
+
+def test_include_app_logic_defaults_off_and_keeps_the_v1_evidence_shape() -> None:
+    """Default off (S4/agreement 10): no new category, no new warning, no app-logic read.
+
+    The v1 evidence shape is pinned byte-for-byte at the key/category level: the top
+    level is unchanged and ``data`` still carries exactly status/tables/relationships/
+    queries. The fake records every engine-level app-logic read, so "never read when
+    off" is observed rather than inferred.
+    """
+    fake = _app_logic_port()
+    document = inspect_with(fake, include_app_logic=False)
+    payload = document.to_dict()
+    assert set(payload) == {"schema", "run", "source", "coverage", "warnings", "data"}
+    assert set(payload["data"]) == {"status", "tables", "relationships", "queries"}
+    assert payload["warnings"] == []
+    assert "app_logic" not in json.dumps(payload)
+    assert fake.app_logic_calls == []
+    # The opt-in is default-off at the service seam itself, not only in this test.
+    parameter = inspect.signature(DocumentationInspectService.inspect).parameters["include_app_logic"]
+    assert parameter.default is False
+
+
+def test_include_app_logic_true_reads_engine_dao_containers_and_startup_properties() -> None:
+    """On: the five additive categories carry observed engine-level facts."""
+    fake = _app_logic_port(
+        container_objects={
+            "Forms": [
+                {"name": "frmMain", "last_modified": "2024-01-02", "date_created": "2023-12-01"}
+            ],
+            "Reports": [{"name": "rptSales"}],
+            "Scripts": [{"name": "AutoExec"}],
+            "Modules": [{"name": "modMain"}],
+        },
+        database_properties={
+            "StartupForm": "frmMain",
+            "AppTitle": "Acme",
+            "AllowFullMenus": "-1",
+            "NotAStartupProperty": "ignored",
+        },
+    )
+    document = inspect_with(fake, include_app_logic=True)
+    app_logic = document.app_logic
+    assert app_logic is not None
+    assert [item.category for item in app_logic.containers] == [
+        "form_inventory",
+        "report_inventory",
+        "macro_inventory",
+        "module_inventory",
+    ]
+    by_category = {item.category: item for item in app_logic.containers}
+    assert by_category["form_inventory"].container == "Forms"
+    assert by_category["form_inventory"].method == "engine_dao_containers"
+    assert by_category["form_inventory"].objects.state == "observed"
+    assert by_category["form_inventory"].objects.value == [
+        {"name": "frmMain", "last_modified": "2024-01-02", "date_created": "2023-12-01"}
+    ]
+    assert by_category["report_inventory"].objects.value == [{"name": "rptSales"}]
+    assert by_category["macro_inventory"].objects.value == [{"name": "AutoExec"}]
+    assert by_category["module_inventory"].objects.value == [{"name": "modMain"}]
+    properties = {item.name: item for item in app_logic.startup_properties}
+    # Generic enumeration filtered to the startup allowlist: unknown properties are absent.
+    assert set(properties) == {"StartupForm", "AppTitle", "AllowFullMenus"}
+    assert properties["StartupForm"].method == "engine_dao_properties"
+    assert properties["StartupForm"].value.state == "observed"
+    assert properties["StartupForm"].value.value == "frmMain"
+    assert properties["AllowFullMenus"].value.value == "-1"
+    # Stable evidence IDs follow the existing ``kind:name.property`` provenance scheme.
+    refs = {
+        f"{item.objects.provenance.object_kind}:{item.objects.provenance.object_name}."
+        f"{item.objects.provenance.property}"
+        for item in app_logic.containers
+    }
+    assert refs == {
+        "form_inventory:Forms.objects",
+        "report_inventory:Reports.objects",
+        "macro_inventory:Scripts.objects",
+        "module_inventory:Modules.objects",
+    }
+    assert properties["StartupForm"].value.provenance.object_kind == "startup_property"
+    assert properties["StartupForm"].value.provenance.object_name == "StartupForm"
+    assert properties["StartupForm"].value.provenance.property == "value"
+    assert "app_logic" in document.to_dict()["data"]
+    assert document.status == "complete"
+
+
+def test_odbc_port_reports_every_app_logic_category_unavailable_with_the_engine_limit() -> None:
+    """Fail-honest: an engine without DAO Containers/Properties is unavailable, never empty."""
+    document = inspect_with(_app_logic_port(), include_app_logic=True)
+    app_logic = document.app_logic
+    assert app_logic is not None
+    assert len(app_logic.containers) == 4
+    assert all(item.objects.state == "unavailable" for item in app_logic.containers)
+    assert all("ODBC" in (item.objects.reason or "") for item in app_logic.containers)
+    assert app_logic.startup_properties
+    assert all(item.value.state == "unavailable" for item in app_logic.startup_properties)
+    assert all("ODBC" in (item.value.reason or "") for item in app_logic.startup_properties)
+    assert document.status == "partial"
+
+
+def test_odbc_inspection_port_names_the_engine_limitation_for_app_logic_reads() -> None:
+    """The real ODBC port refuses both app-logic surfaces with a DAO limitation reason."""
+    odbc = OdbcInspectionPort(None)
+    with pytest.raises(InspectionCapabilityUnavailableError) as containers:
+        odbc.list_container_objects("Forms")
+    assert "DAO" in str(containers.value)
+    with pytest.raises(InspectionCapabilityUnavailableError) as properties:
+        odbc.get_database_properties()
+    assert "DAO" in str(properties.value)
+
+
+def test_one_container_failure_stays_failed_and_does_not_erase_the_other_facts() -> None:
+    """Per-category isolation: one failed container leaves every other fact intact."""
+    fake = _app_logic_port(
+        container_objects={
+            "Forms": RuntimeError("Forms container read failed"),
+            "Reports": [{"name": "rptSales"}],
+            "Scripts": [],
+            "Modules": [{"name": "modMain"}],
+        },
+        database_properties={"StartupForm": "frmMain"},
+    )
+    document = inspect_with(fake, include_app_logic=True)
+    app_logic = document.app_logic
+    assert app_logic is not None
+    by_category = {item.category: item for item in app_logic.containers}
+    assert by_category["form_inventory"].objects.state == "failed"
+    assert "Forms container read failed" in (by_category["form_inventory"].objects.reason or "")
+    assert by_category["report_inventory"].objects.state == "observed"
+    assert by_category["report_inventory"].objects.value == [{"name": "rptSales"}]
+    # An empty container is a known-empty observation, distinct from an unread one.
+    assert by_category["macro_inventory"].objects.state == "observed"
+    assert by_category["macro_inventory"].objects.value == []
+    assert by_category["module_inventory"].objects.value == [{"name": "modMain"}]
+    assert [item.value.state for item in app_logic.startup_properties] == ["observed"]
+    assert document.status == "partial"
+
+
+def test_startup_property_read_failure_is_failed_for_every_allowlisted_property() -> None:
+    """A failed property enumeration is one ``failed`` fact per allowlisted property."""
+    fake = _app_logic_port(
+        container_objects={"Forms": [], "Reports": [], "Scripts": [], "Modules": []},
+        database_properties=RuntimeError("properties read failed"),
+    )
+    document = inspect_with(fake, include_app_logic=True)
+    app_logic = document.app_logic
+    assert app_logic is not None
+    assert app_logic.startup_properties
+    assert all(item.value.state == "failed" for item in app_logic.startup_properties)
+    assert all("properties read failed" in (item.value.reason or "") for item in app_logic.startup_properties)
+    assert all(item.objects.state == "observed" for item in app_logic.containers)

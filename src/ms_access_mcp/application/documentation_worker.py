@@ -58,6 +58,7 @@ def build_request(
     tables: list[str] | None,
     queries: list[str] | None,
     include_query_sql: bool = False,
+    include_app_logic: bool = False,
 ) -> dict[str, Any]:
     """Build the structured request handed to the child (no credentials, no executable)."""
     normalized_backend = str(backend).strip().casefold()
@@ -74,6 +75,7 @@ def build_request(
         "tables": None if tables is None else [str(name) for name in tables],
         "queries": None if queries is None else [str(name) for name in queries],
         "include_query_sql": bool(include_query_sql),
+        "include_app_logic": bool(include_app_logic),
     }
 
 
@@ -126,6 +128,11 @@ def decode_request(data: bytes) -> dict[str, Any]:
         msg = "Documentation worker request field 'include_query_sql' must be a boolean"
         raise AccessMcpError(msg)
     request["include_query_sql"] = include_query_sql
+    include_app_logic = request.get("include_app_logic", False)
+    if not isinstance(include_app_logic, bool):
+        msg = "Documentation worker request field 'include_app_logic' must be a boolean"
+        raise AccessMcpError(msg)
+    request["include_app_logic"] = include_app_logic
     return request
 
 
@@ -266,6 +273,7 @@ def _run_request(request: dict[str, Any]) -> dict[str, Any]:
             tables=request.get("tables"),
             queries=request.get("queries"),
             include_query_sql=request.get("include_query_sql", False),
+            include_app_logic=request.get("include_app_logic", False),
         )
     finally:
         database.close_database()

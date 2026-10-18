@@ -173,12 +173,18 @@ def documentation_inspect(
     queries: list[str] | None = None,
     connection_ref: str | None = None,
     include_query_sql: bool = False,
+    include_app_logic: bool = False,
 ) -> CallToolResult:
     """Inspect Access metadata into versioned documentation evidence.
 
     ``include_query_sql`` defaults to ``False``: saved-query SQL is then emitted as an
     ``excluded`` fact instead of its text, because SQL source text is untrusted and may
     contain credentials. Set it to ``True`` to emit readable saved-query SQL.
+
+    ``include_app_logic`` defaults to ``False`` and keeps the emitted evidence
+    byte-identical to v1. Set it to ``True`` to add the Tier 1 engine-level inventory
+    (DAO Forms/Reports/Scripts/Modules containers and startup database properties); it
+    never instantiates ``Access.Application``.
     """
     del connection_ref  # Credentials are resolved by the existing path/session policy.
     try:
@@ -194,6 +200,7 @@ def documentation_inspect(
             tables=tables,
             queries=queries,
             include_query_sql=include_query_sql,
+            include_app_logic=include_app_logic,
         )
         data = evidence.to_dict()
         data["status"] = evidence.status

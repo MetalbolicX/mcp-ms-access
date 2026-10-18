@@ -1865,6 +1865,7 @@ def _cmd_documentation(args: argparse.Namespace) -> int:
                 tables=args.tables,
                 queries=args.queries,
                 include_query_sql=args.include_query_sql,
+                include_app_logic=args.include_app_logic,
             )
             payload = evidence.to_dict()
             payload["status"] = evidence.status
@@ -1917,6 +1918,15 @@ def _build_documentation_parser(sub: argparse._SubParsersAction) -> None:
         help=(
             "Include emitted saved-query SQL evidence (default: SQL is excluded because "
             "it is untrusted source text that may contain credentials)"
+        ),
+    )
+    inspect.add_argument(
+        "--include-app-logic",
+        action="store_true",
+        help=(
+            "Include Tier 1 engine-level app-logic inventory (DAO Forms/Reports/Scripts/"
+            "Modules containers and startup database properties; default: off, so the "
+            "evidence stays byte-identical to v1)"
         ),
     )
     inspect.set_defaults(func=_cmd_documentation)

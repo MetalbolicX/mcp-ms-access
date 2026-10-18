@@ -401,6 +401,139 @@ class QueryEvidence:
 
 
 @dataclass
+class ContainerInventoryEvidence:
+    """One engine-level container inventory fact (Forms, Reports, Scripts, Modules).
+
+    ``objects`` carries the per-fact state: ``observed`` with the container's object
+    list (an empty list is a known-empty container, never an unknown one),
+    ``unavailable`` when the engine cannot expose DAO Containers at all, or ``failed``
+    with safe error context when this container's read raised. Each object carries its
+    ``name`` plus ``last_modified``/``date_created`` only when the engine exposes those
+    document timestamps cheaply. ``method`` records the engine-level read behind the
+    fact, so a consumer can distinguish it from an instantiation-level reader's facts.
+    """
+
+    category: str
+    container: str
+    method: str
+    objects: FactStatus[list[dict[str, Any]]]
+
+    def validate(self) -> None:
+        if not self.category or not self.container or not self.method:
+            raise ValueError("Container inventory category, container, and method must be non-empty")
+        self.objects.validate()
+        provenance = self.objects.provenance
+        if (
+            provenance.object_kind != self.category
+            or provenance.object_name != self.container
+            or provenance.property != "objects"
+        ):
+            raise ValueError("Container inventory provenance must identify this container")
+        if self.objects.state == "observed":
+            for item in self.objects.value:
+                if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"].strip():
+                    raise ValueError("Observed container objects must carry non-empty names")
+                if set(item) - {"name", "last_modified", "date_created"}:
+                    raise ValueError("Observed container objects carry only name, last_modified, and date_created")
+                for key in ("last_modified", "date_created"):
+                    value = item.get(key)
+                    if value is not None and (not isinstance(value, str) or not value.strip()):
+                        raise ValueError("Container object timestamps must be non-empty strings")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "category": self.category,
+            "container": self.container,
+            "method": self.method,
+            "objects": self.objects.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ContainerInventoryEvidence:
+        return cls(
+            category=data["category"],
+            container=data["container"],
+            method=data["method"],
+            objects=FactStatus.from_dict(data["objects"]),
+        )
+
+
+@dataclass
+class StartupPropertyEvidence:
+    """One engine-level startup database-property fact (name -> string value).
+
+    The catalogue is enumerated generically from the engine and filtered to a defined
+    startup allowlist, so an allowlisted property the database does not carry produces
+    no fact. ``value`` is ``observed`` with the property value as a string,
+    ``unavailable`` when the engine cannot expose database properties at all, or
+    ``failed`` when the property enumeration raised. ``method`` records the engine-level
+    read behind the fact.
+    """
+
+    name: str
+    method: str
+    value: FactStatus[str]
+
+    def validate(self) -> None:
+        if not self.name or not self.method:
+            raise ValueError("Startup property name and method must be non-empty")
+        self.value.validate()
+        provenance = self.value.provenance
+        if (
+            provenance.object_kind != "startup_property"
+            or provenance.object_name != self.name
+            or provenance.property != "value"
+        ):
+            raise ValueError("Startup property provenance must identify this property")
+        if self.value.state == "observed" and not isinstance(self.value.value, str):
+            raise ValueError("Observed startup properties must be recorded as strings")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {"name": self.name, "method": self.method, "value": self.value.to_dict()}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> StartupPropertyEvidence:
+        return cls(name=data["name"], method=data["method"], value=FactStatus.from_dict(data["value"]))
+
+
+@dataclass
+class AppLogicEvidence:
+    """Engine-level app-logic inventory behind the default-off ``include_app_logic`` opt-in.
+
+    v2 adds these facts **additively**: an :class:`EvidenceDoc` carries this object only
+    when the caller explicitly opts in, so the default evidence payload keeps the v1
+    shape byte-for-byte (agreement 10). Every fact here is engine-level (DAO) and records
+    its ``method``; instantiation-level facts introduced later must carry their own
+    method so consumers can tell the two tiers apart.
+    """
+
+    containers: list[ContainerInventoryEvidence] = field(default_factory=list)
+    startup_properties: list[StartupPropertyEvidence] = field(default_factory=list)
+
+    def validate(self) -> None:
+        for item in self.containers:
+            item.validate()
+        for item in self.startup_properties:
+            item.validate()
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "containers": [item.to_dict() for item in self.containers],
+            "startup_properties": [item.to_dict() for item in self.startup_properties],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AppLogicEvidence:
+        return cls(
+            containers=[ContainerInventoryEvidence.from_dict(item) for item in data.get("containers", [])],
+            startup_properties=[StartupPropertyEvidence.from_dict(item) for item in data.get("startup_properties", [])],
+        )
+
+
+@dataclass
 class RunMetadata:
     run_id: str
     extractor_version: str
@@ -498,6 +631,9 @@ class EvidenceDoc:
     relationships: list[RelationshipEvidence] = field(default_factory=list)
     queries: list[QueryEvidence] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Additive v2 category, present only when the caller opted into app-logic inventory;
+    # ``None`` keeps the v1 payload byte-identical (agreement 10).
+    app_logic: AppLogicEvidence | None = None
     schema: Literal["access.documentation.evidence/1"] = "access.documentation.evidence/1"
 
     @property
@@ -508,6 +644,9 @@ class EvidenceDoc:
         facts.extend(table.primary_key for table in self.tables)
         facts.extend(query_fact for query in self.queries for query_fact in (query.sql, query.type, query.parameters))
         facts.extend(relationship.attributes for relationship in self.relationships)
+        if self.app_logic is not None:
+            facts.extend(item.objects for item in self.app_logic.containers)
+            facts.extend(item.value for item in self.app_logic.startup_properties)
         has_fact_gap = any(fact.state not in ("observed", "excluded") for fact in facts)
         coverage_gaps = any(status.failed or status.unsupported for status in (self.coverage.tables, self.coverage.queries, self.coverage.relationships))
         return "partial" if has_fact_gap or coverage_gaps else "complete"
@@ -526,10 +665,15 @@ class EvidenceDoc:
             relationship.validate()
         for query in self.queries:
             query.validate()
+        if self.app_logic is not None:
+            self.app_logic.validate()
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
-        result = {"schema": self.schema, "run": self.run.to_dict(), "source": self.source.to_dict(), "coverage": self.coverage.to_dict(), "warnings": list(self.warnings), "data": {"status": self.status, "tables": [item.to_dict() for item in self.tables], "relationships": [item.to_dict() for item in self.relationships], "queries": [item.to_dict() for item in self.queries]}}
+        data: dict[str, Any] = {"status": self.status, "tables": [item.to_dict() for item in self.tables], "relationships": [item.to_dict() for item in self.relationships], "queries": [item.to_dict() for item in self.queries]}
+        if self.app_logic is not None:
+            data["app_logic"] = self.app_logic.to_dict()
+        result = {"schema": self.schema, "run": self.run.to_dict(), "source": self.source.to_dict(), "coverage": self.coverage.to_dict(), "warnings": list(self.warnings), "data": data}
         ensure_evidence_within_limit(result)
         return result
 
@@ -539,7 +683,8 @@ class EvidenceDoc:
         if data.get("schema") != "access.documentation.evidence/1":
             raise ValueError(f"Unsupported evidence schema: {data.get('schema')}")
         payload = data["data"]
-        document = cls(schema=data["schema"], run=RunMetadata.from_dict(data["run"]), source=SourceEvidence.from_dict(data["source"]), coverage=Coverage.from_dict(data["coverage"]), warnings=list(data["warnings"]), tables=[TableEvidence.from_dict(item) for item in payload["tables"]], relationships=[RelationshipEvidence.from_dict(item) for item in payload["relationships"]], queries=[QueryEvidence.from_dict(item) for item in payload["queries"]])
+        app_logic_payload = payload.get("app_logic")
+        document = cls(schema=data["schema"], run=RunMetadata.from_dict(data["run"]), source=SourceEvidence.from_dict(data["source"]), coverage=Coverage.from_dict(data["coverage"]), warnings=list(data["warnings"]), tables=[TableEvidence.from_dict(item) for item in payload["tables"]], relationships=[RelationshipEvidence.from_dict(item) for item in payload["relationships"]], queries=[QueryEvidence.from_dict(item) for item in payload["queries"]], app_logic=AppLogicEvidence.from_dict(app_logic_payload) if app_logic_payload is not None else None)
         document.validate()
         if payload.get("status") != document.status:
             raise ValueError("Serialized evidence status does not match its facts and coverage")

@@ -17,8 +17,11 @@ import json
 
 import pytest
 
+from ms_access_mcp.application import documentation_worker
 from ms_access_mcp.application.documentation_worker import (
     AccessIdentity,
+    build_request,
+    decode_request,
     decode_response,
     decode_response_with_identities,
     emit_access_identity,
@@ -28,6 +31,7 @@ from ms_access_mcp.errors import AccessMcpError
 
 FRAME_PREFIX = "@@ACCESS_IDENTITY@@ "
 CREATION = 133_456_789_012_345_678
+_MISSING = object()  # distinguishes "absent" from an explicit null in request builders
 
 
 class _RecordingStream(io.BytesIO):
@@ -118,3 +122,88 @@ def test_a_damaged_frame_is_never_skipped_or_accepted(damaged: bytes) -> None:
     assert remaining == damaged + b'{"ok":true}'
     with pytest.raises(AccessMcpError, match="malformed"):
         decode_response(remaining)
+
+
+# ---------------------------------------------------------------------------
+# 3. include_app_logic request field (default off) reaches the inspection seam
+# ---------------------------------------------------------------------------
+
+
+def _request(include_app_logic: object = _MISSING) -> bytes:
+    request: dict[str, object] = {
+        "db_path": "core.accdb",
+        "backend": "dao",
+        "allowed_dirs": [],
+        "tables": None,
+        "queries": None,
+    }
+    if include_app_logic is not _MISSING:
+        request["include_app_logic"] = include_app_logic
+    return json.dumps(request).encode("utf-8")
+
+
+def test_build_request_carries_include_app_logic_defaulting_off() -> None:
+    request = build_request(db_path="core.accdb", backend="dao", allowed_dirs=[], tables=None, queries=None)
+    assert request["include_app_logic"] is False
+    opted_in = build_request(
+        db_path="core.accdb",
+        backend="dao",
+        allowed_dirs=[],
+        tables=None,
+        queries=None,
+        include_app_logic=True,
+    )
+    assert opted_in["include_app_logic"] is True
+
+
+def test_decode_request_defaults_include_app_logic_off_and_validates_a_boolean() -> None:
+    assert decode_request(_request())["include_app_logic"] is False
+    assert decode_request(_request(True))["include_app_logic"] is True
+    assert decode_request(_request(False))["include_app_logic"] is False
+
+
+@pytest.mark.parametrize("malformed", ["yes", 1, 0, None, [], {}])
+def test_decode_request_rejects_a_non_boolean_include_app_logic(malformed: object) -> None:
+    with pytest.raises(AccessMcpError, match="include_app_logic"):
+        decode_request(_request(malformed))
+
+
+def test_run_request_passes_include_app_logic_through_to_the_inspection_service(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    class _FakeDatabase:
+        def open_database(self, _path: str) -> object:
+            from ms_access_mcp.application.database import Ok
+
+            return Ok(data={})
+
+        def close_database(self) -> None:
+            return None
+
+    class _FakeDocument:
+        status = "complete"
+
+        def to_dict(self) -> dict[str, object]:
+            return {"schema": "access.documentation.evidence/1"}
+
+    def _fake_inspect(_database: object, **kwargs: object) -> _FakeDocument:
+        seen.update(kwargs)
+        return _FakeDocument()
+
+    monkeypatch.setattr(documentation_worker, "DatabaseUseCases", lambda **_kwargs: _FakeDatabase())
+    monkeypatch.setattr(documentation_worker, "inspect_open_database", _fake_inspect)
+
+    documentation_worker._run_request(
+        {
+            "db_path": "core.accdb",
+            "backend": "dao",
+            "allowed_dirs": [],
+            "tables": None,
+            "queries": None,
+            "include_query_sql": False,
+            "include_app_logic": True,
+        }
+    )
+
+    assert seen["include_app_logic"] is True
+    assert seen["include_query_sql"] is False

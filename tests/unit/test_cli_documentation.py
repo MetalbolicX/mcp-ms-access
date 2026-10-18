@@ -8,6 +8,7 @@ it must never escape as an unhandled traceback.
 
 from __future__ import annotations
 
+import json
 import sys
 from typing import Any
 from unittest.mock import patch
@@ -147,3 +148,40 @@ def test_inspect_help_documents_the_opt_in_and_its_default() -> None:
     assert action.const is True and action.default is False, action.default
     help_text = (action.help or "").lower()
     assert "default" in help_text and "sql" in help_text
+
+
+def test_inspect_forwards_the_app_logic_opt_in_flag_and_defaults_off(capsys) -> None:
+    """S4/requirement 6: ``--include-app-logic`` is store_true and defaults false at the CLI seam."""
+    seen: list[bool] = []
+
+    def _capture(*_args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs["include_app_logic"])
+        return _FakeEvidence()
+
+    with patch.object(cli, "run_documentation_inspection", _capture):
+        assert _run_cli(["documentation", "inspect", "--db", "core.accdb", "--json"]) == 0
+        default_out = capsys.readouterr().out
+        assert (
+            _run_cli(["documentation", "inspect", "--db", "core.accdb", "--include-app-logic", "--json"]) == 0
+        )
+        opted_in_out = capsys.readouterr().out
+
+    assert seen == [False, True]
+    # Default off adds no category: the emitted data keeps exactly the v1 members.
+    default_envelope = json.loads(default_out)
+    assert default_envelope["success"] is True
+    assert set(default_envelope["data"]) == {"tables", "status"}
+    assert "app_logic" not in default_out
+    assert set(json.loads(opted_in_out)["data"]) == {"tables", "status"}
+
+
+def test_inspect_help_documents_the_app_logic_opt_in_and_its_default() -> None:
+    """The app-logic flag is discoverable, is store_true, and states its default."""
+    parser = cli.build_parser()
+    family = next(action for action in parser._actions if action.dest == "command").choices["documentation"]
+    actions = next(item for item in family._actions if item.dest == "documentation_action").choices
+    action = next(item for item in actions["inspect"]._actions if item.dest == "include_app_logic")
+    assert action.option_strings == ["--include-app-logic"]
+    assert action.const is True and action.default is False, action.default
+    help_text = (action.help or "").lower()
+    assert "default" in help_text and "app-logic" in help_text

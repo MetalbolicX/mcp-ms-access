@@ -13,6 +13,8 @@ from ..backends.schema_inspector import QueryParameterInfo, SchemaInspector
 from ..errors import AccessMcpError
 from ..models import FieldInfo, IndexInfo, QueryInfo, RelationshipInfo, TableInfo
 from .documentation import (
+    AppLogicEvidence,
+    ContainerInventoryEvidence,
     Coverage,
     EvidenceDoc,
     FactProvenance,
@@ -23,12 +25,56 @@ from .documentation import (
     RelationshipEvidence,
     RunMetadata,
     SourceEvidence,
+    StartupPropertyEvidence,
     TableEvidence,
     redact_connection_secrets,
     sanitize_connection_string,
 )
 
 _QUERY_TYPES = {"select": "select", "action": "action", "ddl": "ddl"}
+
+# Tier 1 engine-level app-logic inventory (default-off ``include_app_logic``): DAO
+# Containers and database properties are readable without ever instantiating
+# ``Access.Application``, so every v1 safety proof still applies. The category names are
+# additive to ``access.documentation.evidence/1`` (agreement 1), and every fact records
+# the engine-level method so consumers can tell it apart from a future
+# instantiation-level reader's facts (the central v2 design tension).
+ENGINE_DAO_CONTAINERS_METHOD = "engine_dao_containers"
+ENGINE_DAO_PROPERTIES_METHOD = "engine_dao_properties"
+
+# Container -> additive category. ``Scripts`` carries the named macros (including
+# AutoKeys) and ``Modules`` the VBA modules; both are DAO Containers reads, not
+# instantiation-level content reads.
+_CONTAINER_CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("form_inventory", "Forms"),
+    ("report_inventory", "Reports"),
+    ("macro_inventory", "Scripts"),
+    ("module_inventory", "Modules"),
+)
+
+# The startup catalogue is read generically (every database Property) and filtered to
+# this allowlist, so an unrelated property never reaches evidence and an allowlisted
+# property the database does not carry produces no fact (the enumeration observed its
+# absence, which is different from an unreadable property).
+_STARTUP_PROPERTY_ALLOWLIST = frozenset(
+    {
+        "AllowBreakIntoCode",
+        "AllowBuiltInToolbars",
+        "AllowBypassKey",
+        "AllowFullMenus",
+        "AllowShortcutMenus",
+        "AllowSpecialKeys",
+        "AllowToolbarChanges",
+        "AppTitle",
+        "AutoCompact",
+        "DisplayNavigationPane",
+        "ShowNavigationPane",
+        "StartupForm",
+        "StartupShowDBWindow",
+        "StartupShowStatusBar",
+        "UseAppIconForFrmRpt",
+    }
+)
 
 # A linked table's fields and indexes are not read at all. The gap is recorded as a
 # coverage ``unsupported`` reason so an unread schema is never presented as observed
@@ -99,6 +145,10 @@ class InspectionPort(Protocol):
     def get_queries(self) -> list[QueryInfo]: ...
 
     def get_query_parameters(self, query_name: str) -> list[QueryParameterInfo] | None: ...
+
+    def list_container_objects(self, container_name: str) -> list[dict[str, Any]]: ...
+
+    def get_database_properties(self) -> dict[str, str]: ...
 
     def close(self) -> None: ...
 
@@ -177,6 +227,43 @@ class DaoInspectionPort:
 
     def get_query_parameters(self, query_name: str) -> list[QueryParameterInfo] | None:
         return self._inspector.get_query_parameters(query_name)
+
+    def list_container_objects(self, container_name: str) -> list[dict[str, Any]]:
+        """Read one DAO container's document inventory on the dispatcher owner thread."""
+        return self._dispatcher.call(self._read_container_objects, container_name)
+
+    def get_database_properties(self) -> dict[str, str]:
+        """Read every DAO database property on the dispatcher owner thread."""
+        return self._dispatcher.call(self._read_database_properties)
+
+    def _read_container_objects(self, container_name: str) -> list[dict[str, Any]]:
+        """Read container Documents, keeping cheap timestamp reads optional.
+
+        Only DAO ``Containers``/``Documents`` catalogue metadata is touched: no object is
+        opened, no design view is entered, and no ``Access.Application`` is created.
+        ``LastUpdated``/``DateCreated`` are recorded only when the engine exposes them;
+        an unexposed timestamp is omitted rather than invented.
+        """
+        database = self._dispatcher.current_db
+        objects: list[dict[str, Any]] = []
+        for document in database.Containers(container_name).Documents:
+            item: dict[str, Any] = {"name": _engine_text(document.Name)}
+            last_modified = _document_timestamp(document, "LastUpdated")
+            if last_modified is not None:
+                item["last_modified"] = last_modified
+            date_created = _document_timestamp(document, "DateCreated")
+            if date_created is not None:
+                item["date_created"] = date_created
+            objects.append(item)
+        return objects
+
+    def _read_database_properties(self) -> dict[str, str]:
+        """Read every database-level DAO property as a name -> string mapping."""
+        database = self._dispatcher.current_db
+        properties: dict[str, str] = {}
+        for prop in database.Properties:
+            properties[_engine_text(prop.Name)] = _engine_text(prop.Value)
+        return properties
 
     def close(self) -> None:
         """Close the dispatcher's live DAO handle on its owner thread."""
@@ -369,6 +456,20 @@ class OdbcInspectionPort:
             if getattr(row, "column_type", None) == _ODBC_PARAMETER_COLUMN_TYPE
         ]
 
+    def list_container_objects(self, container_name: str) -> list[dict[str, Any]]:
+        """Refuse a DAO Containers read: ODBC exposes no container catalogue."""
+        raise InspectionCapabilityUnavailableError(
+            f"Access ODBC does not expose the DAO {container_name} container; "
+            "engine-level container inventory requires the DAO engine"
+        )
+
+    def get_database_properties(self) -> dict[str, str]:
+        """Refuse a DAO property read: ODBC exposes no database property catalogue."""
+        raise InspectionCapabilityUnavailableError(
+            "Access ODBC does not expose DAO database properties; startup properties "
+            "require the DAO engine"
+        )
+
     def close(self) -> None:
         """Close the connection only when this port owns it.
 
@@ -490,6 +591,7 @@ def inspect_open_database(
     tables: list[str] | None,
     queries: list[str] | None,
     include_query_sql: bool = False,
+    include_app_logic: bool = False,
 ) -> EvidenceDoc:
     """Extract documentation evidence from an already-open ``DatabaseUseCases`` session.
 
@@ -503,6 +605,11 @@ def inspect_open_database(
     ``include_query_sql`` defaults to ``False``: the emitted saved-query SQL fact is then
     ``excluded`` before any capability check, so no SQL text reaches evidence. Passing
     ``True`` restores the observing behavior (DAO observed/failed, ODBC unavailable).
+
+    ``include_app_logic`` defaults to ``False`` and keeps the emitted evidence
+    byte-identical to v1. Passing ``True`` adds the Tier 1 engine-level inventory
+    (DAO Containers and startup database properties) through the same read-only port;
+    it never instantiates ``Access.Application``.
 
     The DAO extraction is dispatched as a single unit, so every COM read it performs
     happens on the dispatcher's owner thread.
@@ -523,6 +630,7 @@ def inspect_open_database(
                 tables=tables,
                 queries=queries,
                 include_query_sql=include_query_sql,
+                include_app_logic=include_app_logic,
             )
         )
     if not callable(getattr(adapter, "open_readonly_inspection_connection", None)):
@@ -530,7 +638,11 @@ def inspect_open_database(
         raise ValueError(msg)
     port = open_odbc_inspection_port(adapter)
     return DocumentationInspectService().inspect(
-        port, tables=tables, queries=queries, include_query_sql=include_query_sql
+        port,
+        tables=tables,
+        queries=queries,
+        include_query_sql=include_query_sql,
+        include_app_logic=include_app_logic,
     )
 
 
@@ -544,6 +656,7 @@ class DocumentationInspectService:
         tables: list[str] | None,
         queries: list[str] | None,
         include_query_sql: bool = False,
+        include_app_logic: bool = False,
     ) -> EvidenceDoc:
         """Build evidence for the requested table/query subset.
 
@@ -558,6 +671,10 @@ class DocumentationInspectService:
 
         ``include_query_sql`` gates only the emitted saved-query SQL fact, defaulting to
         ``False``; every other query fact (name, type, parameters) is unaffected.
+
+        ``include_app_logic`` gates the additive Tier 1 engine-level inventory, defaulting
+        to ``False``: the emitted evidence is then byte-identical to v1 (no new category,
+        no new warning).
         """
         try:
             return self._inspect(
@@ -565,6 +682,7 @@ class DocumentationInspectService:
                 tables=tables,
                 queries=queries,
                 include_query_sql=include_query_sql,
+                include_app_logic=include_app_logic,
             )
         finally:
             port.close()
@@ -576,6 +694,7 @@ class DocumentationInspectService:
         tables: list[str] | None,
         queries: list[str] | None,
         include_query_sql: bool = False,
+        include_app_logic: bool = False,
     ) -> EvidenceDoc:
         capabilities = port.capabilities()
         raw_tables = port.list_tables()
@@ -727,6 +846,9 @@ class DocumentationInspectService:
             tables=table_evidence,
             relationships=relationship_evidence,
             queries=query_evidence,
+            # ``None`` unless the caller opted in: the default payload keeps the exact
+            # v1 ``data`` member set, so a default call stays byte-identical (S4).
+            app_logic=_read_app_logic(port) if include_app_logic else None,
         )
         # Serializing at the seam both validates the document and enforces the evidence
         # byte cap for generated evidence; frontends serialize the returned document
@@ -753,6 +875,117 @@ def _reason(error: Exception | None) -> str:
     if error is None:
         return "Metadata read failed"
     return redact_connection_secrets(str(error).strip() or type(error).__name__)
+
+
+def _engine_text(value: Any) -> str:
+    """Normalize an engine string read, stripping ACE's trailing NUL padding."""
+    if value is None:
+        return ""
+    return str(value).rstrip("\x00")
+
+
+def _document_timestamp(document: Any, attribute: str) -> str | None:
+    """Read a DAO Document date property when the engine exposes it cheaply.
+
+    ``LastUpdated``/``DateCreated`` are optional catalogue metadata: an engine or DAO
+    surface that does not expose one is omitted from the object entry, never invented
+    and never promoted to a failed fact.
+    """
+    try:
+        value = getattr(document, attribute)
+    except Exception:  # noqa: BLE001 - an unexposed Document date is absent, not a failure
+        return None
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _container_object_values(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize a port's container object list to the evidence shape."""
+    normalized: list[dict[str, Any]] = []
+    for item in objects:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        entry: dict[str, Any] = {"name": name.strip()}
+        for key in ("last_modified", "date_created"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                entry[key] = value.strip()
+        normalized.append(entry)
+    return normalized
+
+
+def _startup_property_provenance(name: str) -> FactProvenance:
+    return FactProvenance("startup_property", name, "value")
+
+
+def _startup_property_value(value: Any) -> str:
+    """Record a property value as a string; ``None`` is an empty string, never ``"None"``."""
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
+
+
+def _read_app_logic(port: InspectionPort) -> AppLogicEvidence:
+    """Read the Tier 1 engine-level container inventory and startup properties.
+
+    Every container reads in its own exception boundary and every startup property is
+    its own fact, so one failed read never erases another category. An engine that
+    cannot expose DAO Containers/properties at all (ODBC) is ``unavailable`` with the
+    port's engine-limitation explanation, never a fabricated empty list.
+    """
+    containers: list[ContainerInventoryEvidence] = []
+    for category, container in _CONTAINER_CATEGORIES:
+        provenance = FactProvenance(category, container, "objects")
+        fact: FactStatus[Any]
+        try:
+            objects = port.list_container_objects(container)
+        except InspectionCapabilityUnavailableError as gap:
+            fact = FactStatus.unavailable(_reason(gap), provenance)
+        except Exception as error:
+            fact = FactStatus.failed(_reason(error), provenance)
+        else:
+            fact = FactStatus.observed(_container_object_values(objects), provenance)
+        containers.append(ContainerInventoryEvidence(category, container, ENGINE_DAO_CONTAINERS_METHOD, fact))
+    return AppLogicEvidence(containers=containers, startup_properties=_read_startup_properties(port))
+
+
+def _read_startup_properties(port: InspectionPort) -> list[StartupPropertyEvidence]:
+    """Read every allowlisted startup property as its own engine-level fact."""
+    names = sorted(_STARTUP_PROPERTY_ALLOWLIST)
+    try:
+        raw = port.get_database_properties()
+    except InspectionCapabilityUnavailableError as gap:
+        return [
+            StartupPropertyEvidence(
+                name,
+                ENGINE_DAO_PROPERTIES_METHOD,
+                FactStatus.unavailable(_reason(gap), _startup_property_provenance(name)),
+            )
+            for name in names
+        ]
+    except Exception as error:
+        return [
+            StartupPropertyEvidence(
+                name,
+                ENGINE_DAO_PROPERTIES_METHOD,
+                FactStatus.failed(_reason(error), _startup_property_provenance(name)),
+            )
+            for name in names
+        ]
+    return [
+        StartupPropertyEvidence(
+            name,
+            ENGINE_DAO_PROPERTIES_METHOD,
+            FactStatus.observed(_startup_property_value(raw[name]), _startup_property_provenance(name)),
+        )
+        for name in names
+        if name in raw
+    ]
 
 
 def _provenance(kind: str, name: str, prop: str) -> FactProvenance:

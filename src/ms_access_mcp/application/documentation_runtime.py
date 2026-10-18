@@ -175,6 +175,7 @@ class DocumentationRuntime:
         tables: list[str] | None,
         queries: list[str] | None,
         include_query_sql: bool = False,
+        include_app_logic: bool = False,
     ) -> EvidenceDoc:
         """Run one whole inspection in an owned child, or raise a safe ``AccessMcpError``."""
         request = build_request(
@@ -184,6 +185,7 @@ class DocumentationRuntime:
             tables=tables,
             queries=queries,
             include_query_sql=include_query_sql,
+            include_app_logic=include_app_logic,
         )
         request_bytes = encode_request(request)
         output_limit = documentation_limits.worker_output_limit()
@@ -419,6 +421,7 @@ def run_documentation_inspection(
     tables: list[str] | None = None,
     queries: list[str] | None = None,
     include_query_sql: bool = False,
+    include_app_logic: bool = False,
 ) -> EvidenceDoc:
     """Run one inspection through the default supervised runtime facade."""
     return DocumentationRuntime().inspect(
@@ -428,4 +431,5 @@ def run_documentation_inspection(
         tables=tables,
         queries=queries,
         include_query_sql=include_query_sql,
+        include_app_logic=include_app_logic,
     )
