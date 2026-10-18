@@ -415,7 +415,8 @@ integrity checking. No production changes, commit, or push.
 - T2 | S2,S4,S5 | worker | ownership protocol in
   `application/documentation_runtime.py` + `documentation_worker.py`:
   worker→parent Access-identity ack before armed open; parent-held kill net;
-  strict TDD on unit/fake level; no live Access.
+  strict TDD on unit/fake level; no live Access. Delivered `12965a8`
+  (parent-verified: 41 passed, ruff clean; new `process_identity.py`).
 - T3 | S2,S5 | worker-prep + parent-launched live gates | containment
   research: Job Object assignment for COM-launched MSACCESS; crash/deadline/
   supervisor-death matrix on scratch copies.
@@ -523,3 +524,14 @@ integrity checking. No production changes, commit, or push.
   `feat/documentation-v2-app-logic` from `main` @ `7a51681`. ODD tracking
   added (Specs S1–S5, contract, Tasks T1–T9). Work-unit commits on the
   feature branch; push/PR remain the user's decisions.
+- L11 (2026-10-17): T1 completed in `3b33b61` (repairs `809ffe3`'s
+  overclaim: the atomic Specs/contract/Tasks edit had been rejected and only
+  the L10 log line landed). T2 delivered in `12965a8`: worker ack frame
+  protocol + runtime kill net + fail-closed `process_identity.py`
+  (taskkill /F /PID only, never /IM); parent re-observed 41 passed,
+  ruff clean, and reviewed kill-net placement (after child reap, pre-spawn
+  baseline, refusal never kills, pinned error text byte-identical).
+  Slice boundary recorded: commits 809ffe3+3b33b61 = tracking/docs slice;
+  12965a8 = T2 code slice. Next: T3 containment live research gates
+  (Job Object for COM-launched MSACCESS; crash/deadline/supervisor-death
+  matrix on scratch copies).
