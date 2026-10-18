@@ -455,7 +455,15 @@ integrity checking. No production changes, commit, or push.
   files, 73,339 bytes, SHA-256 `c37f76401d29bf850cef5fb195b3a271877a4915c9290c6c2088db029173a0d4`).
   Tier 2 proceeds; AutoKeys remains unsupported by policy (no input).
 - T6 | S3,S4 | worker | Tier 1 DAO inventory (Containers + startup
-  properties) behind default-off args; v1 byte-identity pins.
+  properties) behind default-off args; v1 byte-identity pins. Delivered
+  `2615178`: `include_app_logic` (CLI `--include-app-logic`, MCP param,
+  default False) routes CLI/MCP→runtime→worker→service; five additive
+  categories (form/report/macro/module inventories + allowlisted startup
+  properties) via DAO only with per-fact states and engine-level method
+  metadata; ODBC reports unavailable; default-off byte-identity pinned at
+  five seams (110 focused tests, ruff clean, pyright 0/0/0). Surface note:
+  parent expanded the delegated surfaces mid-task with
+  documentation_runtime.py + its test (mechanically required by R2).
 - T7 | S2,S3,S4 | worker | Tier 2 reader using T2 protocol + T3–T5 gates:
   offline copy, ForceDisable, opt-in source, caps, catalogue facts.
 - T8 | S3 | worker | rendering catalogue sections, prompts, spec sync (R3).
@@ -609,3 +617,10 @@ integrity checking. No production changes, commit, or push.
   event-macro suppression is recorded UNQUALIFIED, not claimed; T7 proceeds
   with the qualified vectors (AutoExec RunCode→VBA, OnLoad expression→VBA,
   AutoExec OpenQuery non-VBA) and the T3/T4 containment/read gates.
+- L15 (2026-10-17): T6 delivered in `2615178` (RED 43 failures → GREEN
+  110 focused tests; two dispatch rounds after the parent expanded the
+  allowed surfaces with the runtime facade + its test, mechanically
+  required by R2 and within the authorized scope). Tier 1 ships regardless
+  of Tier 2 per L5. Remaining: T7 Tier 2 reader (both containment layers,
+  References 1-based, SaveAsText, trust-refusal unit fakes, embedded-macro
+  vector recorded unqualified), T8 rendering/spec, T9 final gates.
