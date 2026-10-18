@@ -441,7 +441,19 @@ integrity checking. No production changes, commit, or push.
   scratch root removed, no locks or survivors, originals hash-matched.
 - T5 | S2,S5 | worker + live | embedded event-macro canary fixture with
   positive control; rerun startup matrix; AutoKeys stays unsupported
-  (no input synthesis).
+  (no input synthesis). **BLOCKED-with-evidence 2026-10-17 (L14)**: every
+  body-bearing synthesized form-text framing was rejected by LoadFromText
+  (scode -2146826160 "errors while importing"); the placeholder-only
+  framing imports but is vacuous, and the harness correctly refused it.
+  Ground-truth search found none (local Northwind carries 0 forms; no
+  Office sample/template .accdb/.accdt on this host). Disposition: the
+  embedded event-macro vector stays explicitly UNQUALIFIED in the coverage
+  matrix — never claimed suppressed. Reopenable when an operator exports a
+  real form with an embedded event macro (SaveAsText) as ground truth;
+  harness archived in
+  `odd/evidence/documentation-v2-embedded-blocked-20261017.zip` (42 text
+  files, 73,339 bytes, SHA-256 `c37f76401d29bf850cef5fb195b3a271877a4915c9290c6c2088db029173a0d4`).
+  Tier 2 proceeds; AutoKeys remains unsupported by policy (no input).
 - T6 | S3,S4 | worker | Tier 1 DAO inventory (Containers + startup
   properties) behind default-off args; v1 byte-identity pins.
 - T7 | S2,S3,S4 | worker | Tier 2 reader using T2 protocol + T3–T5 gates:
@@ -581,3 +593,19 @@ integrity checking. No production changes, commit, or push.
   The conditional low-security positive control was unnecessary because
   the ForceDisable exports themselves are the positive reads (non-vacuity
   via DAO fixture-inventory proof). Next: T5 embedded event-macro canary.
+- L14 (2026-10-17): T5 BLOCKED-with-evidence, disposition accept-blocked
+  pending optional operator ground truth (plan-110/L25 precedent). Attempt-1
+  failed on a stale-fixture DAO 5003045; attempt-2 (with traceback capture)
+  exposed the real blocker: the 5-candidate embedded-macro form-text ladder —
+  E0 placeholder-only imports and round-trips, every body-bearing framing
+  E1-E4 is rejected by LoadFromText with "Microsoft Access encountered
+  errors while importing frmCanary" (scode -2146826160). A placeholder-only
+  event would make the suppression test vacuous, so the build stopped rather
+  than fall back to VBA/expressions. Ground-truth probe on a Northwind COPY
+  under ForceDisable: 0 forms exist locally (data-only fixture); bounded
+  Office/user-template search found no .accdb samples or .accdt templates.
+  Northwind hash unchanged; no processes/locks left; harness + both attempt
+  evidence archived (sha c37f7640…0d4). Coverage consequence: embedded
+  event-macro suppression is recorded UNQUALIFIED, not claimed; T7 proceeds
+  with the qualified vectors (AutoExec RunCode→VBA, OnLoad expression→VBA,
+  AutoExec OpenQuery non-VBA) and the T3/T4 containment/read gates.
