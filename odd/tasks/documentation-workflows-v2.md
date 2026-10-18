@@ -677,8 +677,9 @@ integrity checking. No production changes, commit, or push.
   row). All nine tasks closed (T5 blocked-with-evidence by design).
   Runtime qualification remains fixture-scope on the measured Access 16.0
   host per the claims boundary; embedded event macros UNQUALIFIED;
-  AutoKeys unsupported. Branch `feat/documentation-v2-app-logic` at 14
-  commits ahead of `origin/main`, NOT pushed — merge/push/PR are the
+  AutoKeys unsupported. Branch `feat/documentation-v2-app-logic` is 16
+  commits ahead of `origin/main` (unpushed `7a51681` + 15 feature
+  commits `809ffe3..ea4ef81`), NOT pushed — merge/push/PR are the
   user's decisions.
 - L17 (2026-10-17): T8 delivered in `a33fb5b` (worker RED 8 → GREEN;
   parent added the agreement-9 RED test `KeyError: 'sha256'` → fix:
