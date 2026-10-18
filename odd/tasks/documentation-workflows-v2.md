@@ -1,8 +1,6 @@
 # ODD feature: documentation-workflows-v2 — IMPLEMENTATION AUTHORIZED
 
-Status: IMPLEMENTATION AUTHORIZED 2026-10-17 (L10: user "Execute the
-recommended order"). Definition, both feasibility spikes, and the six-phase
-remediation order are the specification; execution follows the Tasks section.
+Status: COMPLETE 2026-10-18 (L18) � all nine tasks closed (T5 blocked-with-evidence by design). Runtime qualification is fixture-scope on the measured Access 16.0 host. Merge/push/PR are the user�s decisions.
 Branch: `feat/documentation-v2-app-logic` from `main` @ `7a51681`.
 
 ## Goal
@@ -483,7 +481,27 @@ integrity checking. No production changes, commit, or push.
   opt-in. Byte-identity and fingerprint pins green; full suite 2020
   passed / 3 skipped.
 - T9 | S4,S5 | parent + independent verify | final gates: qualify.py,
-  opt-in integration, independent review, coverage matrix docs.
+  opt-in integration, independent review, coverage matrix docs. COMPLETED
+  2026-10-18 (L18): qualify exit 0 (ruff/pyright/unit 2020 passed/budget);
+  live CLI round trip on a startup-fixture copy — inspect `--include-app-logic
+  [--include-app-logic-source]` status complete with all catalogue facts
+  observed (3 macros + VBA module with always-digest, 3 references) and
+  render producing catalogue-only Markdown with zero source inlining; live
+  e2e fixtures suite 34 passed (v1 unregressed); originals hash-unchanged,
+  zero process/lock residue. The live gate caught and fixed three real
+  defects (`af03b5f`): `hWndAccessApp` is a method on the dynamic dispatch;
+  CurrentProject AccessObject collections are 0-based; per-property DAO
+  isolation so one unreadable property cannot erase the catalogue (absent
+  startup properties are omitted, not failed). Independent verifier
+  `mvdg53l3-f-5nx0`: ACCEPT-with-advisories, zero blockers; A1 stale spec
+  wording fixed in this commit; A3 recorded: production scratch defaults to
+  the system temp with `ACCESS_MCP_DOC_SCRATCH_DIR` override (the D:
+  convention was experiment-scoped); A4: the branch carries 14 commits
+  809ffe3..af03b5f. Live evidence archived in
+  `odd/evidence/documentation-v2-live-final-20261017.zip` (6 JSON files,
+  11,410 bytes, SHA-256 `be42383cf938e79e9546c272dd48c03d26fd221391540bbe8f3b4ece4530b743`).
+  FEATURE COMPLETE on `feat/documentation-v2-app-logic`; push/PR remain the
+  user's decisions.
 
 ## Log
 
@@ -651,6 +669,17 @@ integrity checking. No production changes, commit, or push.
   0/0/0 on changed modules. Remaining: T8 rendering catalogue sections +
   prompts + spec sync; T9 live qualification gates + independent review +
   coverage matrix + README.
+- L18 (2026-10-18): T9 COMPLETED and the feature closed. qualify exit 0;
+  full unit 2020 passed / 3 skipped; live opt-in round trip complete and
+  catalogue-only; live e2e 34 passed; three live-only defects found+fixed
+  (`af03b5f`); independent review ACCEPT-with-advisories with zero
+  blockers (A1 fixed here; A2 is this entry; A3/A4 recorded in the T9
+  row). All nine tasks closed (T5 blocked-with-evidence by design).
+  Runtime qualification remains fixture-scope on the measured Access 16.0
+  host per the claims boundary; embedded event macros UNQUALIFIED;
+  AutoKeys unsupported. Branch `feat/documentation-v2-app-logic` at 14
+  commits ahead of `origin/main`, NOT pushed — merge/push/PR are the
+  user's decisions.
 - L17 (2026-10-17): T8 delivered in `a33fb5b` (worker RED 8 → GREEN;
   parent added the agreement-9 RED test `KeyError: 'sha256'` → fix:
   always-digest VBA module facts over UTF-8, validator allowed-keys

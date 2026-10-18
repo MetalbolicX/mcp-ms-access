@@ -891,10 +891,11 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   (VBA modules, form/report/macro source catalogues, engine-level inventories, references,
   startup properties) plus `### Limitations` / `### Coverage notes`. Non-observed facts are
   visible limitation lines (`unavailable`/`failed`) or coverage notes (`excluded`), and the
-  Markdown never contains raw source. Known evidence-shape gap: VBA module content records
-  `type`/`procedures`/`source` but no per-module digest, so the renderer names the missing
-  VBA sha256/bytes as a limitation instead of fabricating a hash (form/report/macro
-  catalogues do carry `sha256`/`bytes`).
+  Markdown never contains raw source. Agreement 9 is fully closed: every source object
+  family — form/report/macro exports and VBA modules — always carries `sha256`/`bytes`
+  (VBA digests are over the UTF-8 encoding of the module source, since modules have no
+  `SaveAsText` file); an earlier known-gap note about missing VBA digests is superseded
+  by the `a33fb5b` fix.
 
 ### 8.2 Control-flow gate outcomes (evidence archives)
 
