@@ -26,8 +26,10 @@ Safety contract (v2 normative, contract items 2-6):
   death reaps Access through the handle close (the T2 PID kill net remains the primary
   supervisor path);
 * per-family read failures degrade to ``failed``/``unavailable`` facts without erasing
-  the others; missing VBProject trust degrades the VBA family to ``unavailable`` and
-  names the operator prerequisite;
+  the others; a positively recognized VBProject trust refusal (HRESULT ``0x800A17B4``)
+  degrades the VBA family to ``unavailable`` and names the operator prerequisite, while
+  corruption, an unknown COM status, or a missing project stays ``failed`` and is never
+  described as a trust refusal;
 * an *operational* failure of this **optional** Tier 2 stage (scratch directory, disposable
   copy, owned dispatch, armed open, or a whole content read) -- a filesystem/OS error or a
   COM-shaped error carrying a failing HRESULT -- degrades to ``failed`` family/reference
@@ -200,14 +202,13 @@ def _reason(error: Exception) -> str:
 def _is_operational_failure(error: Exception) -> bool:
     """Whether a whole-stage failure is operational (degradable) rather than a defect.
 
-    Operational failures are filesystem/OS errors, the VBA trust-refusal error raised by
-    the documentation session, and COM-shaped errors that carry a failing HRESULT
-    (``hresult``, ``args[0]``, or a nested ``excepinfo`` status). Anything else --
-    ``ValueError``, ``TypeError``, ``AttributeError``, a bare ``RuntimeError``, or any
-    ``int``/``bool`` argument that is not a failing HRESULT -- is an unexpected programmer
-    defect, so it stays a hard error instead of masquerading as successful partial
-    evidence. The predicate is duck-typed: the application layer never imports
-    pywin32/Win32.
+    Operational failures are filesystem/OS errors, the positively recognized VBA trust
+    refusal, and COM-shaped errors that carry a failing HRESULT (``hresult``, ``args[0]``,
+    or a nested ``excepinfo`` status). Anything else -- ``ValueError``, ``TypeError``,
+    ``AttributeError``, a bare ``RuntimeError``, or any ``int``/``bool`` argument that is
+    not a failing HRESULT -- is an unexpected programmer defect, so it stays a hard error
+    instead of masquerading as successful partial evidence. The predicate is duck-typed:
+    the application layer never imports pywin32/Win32.
     """
     if isinstance(error, (OSError, VbaTrustRefusedError)):
         return True

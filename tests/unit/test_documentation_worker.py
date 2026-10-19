@@ -45,6 +45,11 @@ from ms_access_mcp.application.documentation_worker import (
     split_access_identity_frames,
 )
 from ms_access_mcp.application.process_identity import AccessProcessIdentity
+from ms_access_mcp.backends.access.app_logic_session import (
+    VBA_TRUST_PREREQUISITE,
+    VbaTrustRefusedError,
+)
+from ms_access_mcp.backends.access.vba import VbaProjectUnavailableError
 from ms_access_mcp.errors import AccessMcpError
 
 FRAME_PREFIX = "@@ACCESS_IDENTITY@@ "
@@ -520,6 +525,17 @@ class _ComOperationalError(Exception):
         return str(self.args[1])
 
 
+class _VbaFailingSession(_ObservedTier2Session):
+    """A Tier 2 session whose VBA project read fails with ``error``."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__()
+        self._error = error
+
+    def vba_module_count(self) -> int:
+        raise self._error
+
+
 def _run_protocol(
     monkeypatch: pytest.MonkeyPatch, request: dict[str, Any]
 ) -> tuple[int, list[AccessIdentity], dict[str, Any]]:
@@ -699,6 +715,19 @@ def test_worker_success_path_stays_complete_with_observed_tier_two_facts(
     assert _scratch_dirs(tmp_path) == []
 
 
+def _patch_armed_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, session: Any) -> Any:
+    """Wire the production Tier 2 reader to ``session`` for one armed protocol run."""
+    monkeypatch.setenv(documentation_app_logic.SCRATCH_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(documentation_app_logic, "_default_launcher", lambda: session)
+    monkeypatch.setattr(
+        documentation_app_logic,
+        "read_process_identity",
+        lambda pid: AccessProcessIdentity(pid=pid, creation=CREATION, image="MSACCESS.EXE"),
+    )
+    monkeypatch.setattr(documentation_app_logic, "_assign_access_to_job", lambda _pid: _FakeJob())
+    return session
+
+
 def test_worker_degrades_an_operational_com_copy_failure_as_partial(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -755,5 +784,46 @@ def test_worker_reports_a_programming_defect_as_a_hard_error(
     assert "evidence" not in response
     assert identities == []
     assert source.read_bytes() == original
+    assert database.closed is True
+    assert _scratch_dirs(tmp_path) == []
+
+
+_VBA_FAILURES = [
+    pytest.param(VbaTrustRefusedError(VBA_TRUST_PREREQUISITE), "unavailable", "Trust access", id="trust-refusal"),
+    pytest.param(
+        VbaProjectUnavailableError("the VBA project could not be read (unknown COM failure 0x8000FFFF)"),
+        "failed",
+        "0x8000FFFF",
+        id="unknown-com-failure",
+    ),
+]
+
+
+@pytest.mark.parametrize(("error", "state", "expected_text"), _VBA_FAILURES)
+def test_worker_reports_the_vba_family_by_classification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: BaseException, state: str, expected_text: str
+) -> None:
+    """S2: only a recognized trust refusal is ``unavailable``; unknowns stay ``failed``."""
+    session = _patch_armed_session(monkeypatch, tmp_path, _VbaFailingSession(error))
+    source = tmp_path / "core.accdb"
+    source.write_bytes(b"not-a-real-access-file")
+    database = _FakeDatabase()
+    _patch_worker_database(monkeypatch, database)
+
+    exit_code, _identities, response = _run_protocol(monkeypatch, _armed_request(source))
+
+    assert exit_code == 0
+    assert response["ok"] is True, response
+    evidence = response["evidence"]
+    assert evidence["status"] == "partial"
+    vba = next(item for item in evidence["data"]["app_logic"]["content"] if item["category"] == "vba_module")
+    assert vba["content"]["state"] == state
+    assert expected_text in (vba["content"]["reason"] or "")
+    if state == "failed":
+        assert VBA_TRUST_PREREQUISITE not in (vba["content"]["reason"] or "")
+    # The observed form export and the teardown survive the VBA classification.
+    form = next(item for item in evidence["data"]["app_logic"]["content"] if item["category"] == "form")
+    assert form["content"]["state"] == "observed"
+    assert session.closed is True and session.quit_called is True
     assert database.closed is True
     assert _scratch_dirs(tmp_path) == []

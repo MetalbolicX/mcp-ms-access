@@ -910,6 +910,19 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   `Err` at the worker boundary), and `KeyboardInterrupt`/`SystemExit` are never converted
   to partial success. No schema change is involved; the worker protocol's `ok:true` +
   `partial` shape is how a caller sees the retained evidence.
+- **VBA trust is classified by status code, never by message text.** The documentation
+  session reads the VBProject in the shared helper's optional `strict=True` mode, while
+  every existing caller keeps the default swallow-and-DEBUG-log behaviour (an unreadable
+  VBE still yields `None`, an empty project list still yields `None`). In strict mode a
+  *positively recognized* trust refusal — the Microsoft-documented `0x800A17B4`/6068
+  status, whether on `hresult`, on `args[0]`, or nested in a COM `excepinfo` — raises
+  `VbaTrustRefusedError` and the reader reports the `vba_module` family `unavailable`
+  together with the operator prerequisite (enable “Trust access to the VBA project object
+  model”); no Trust Center setting is ever read or changed. Corruption, a truncated or
+  unknown COM status such as `0x8000FFFF`, a plain failure, and an empty project list are
+  **real failures**: they are reported `failed` and are never described as a trust
+  refusal. Localized or English message text is never matched, and a successful read keeps
+  its cached `VBProject` and observed facts unchanged.
 - **Catalogue-only rendering.** The report gains a labeled `## Application logic` section
   (VBA modules, form/report/macro source catalogues, engine-level inventories, references,
   startup properties) plus `### Limitations` / `### Coverage notes`. Non-observed facts are

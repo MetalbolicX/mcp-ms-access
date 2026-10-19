@@ -9,17 +9,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from .vba import get_vb_project, list_procedures
-
-VBA_TRUST_PREREQUISITE = (
-    "VBProject access requires the operator to enable 'Trust access to the VBA project "
-    "object model' in the Access Trust Center; the VBA module catalogue is unavailable"
+from .vba import (
+    VBA_TRUST_PREREQUISITE,  # noqa: F401 - re-exported as the documented session contract
+    VbaTrustRefusedError,  # noqa: F401 - re-exported as the documented session contract
+    get_vb_project,
+    list_procedures,
 )
-
-
-class VbaTrustRefusedError(RuntimeError):
-    """The host refuses programmatic VBProject access (operator trust setting)."""
-
 
 _COMPONENT_TYPES = {1: "Standard", 2: "Class", 3: "Form", 100: "Document"}
 
@@ -90,10 +85,15 @@ class ComAccessSession:
         self._application.SaveAsText(object_type, name, destination)
 
     def _vb_project(self) -> Any:
+        """Return the cached VBProject, reading it strictly on the first call.
+
+        Strict mode classifies the VBE access failure instead of swallowing it: a positively
+        recognized trust refusal raises ``VbaTrustRefusedError`` (so the reader reports the
+        operator prerequisite), while corruption, an unknown COM status, or an empty project
+        list raises a real failure and is never reported as a trust refusal.
+        """
         if self._project is None:
-            self._project = get_vb_project(self._application)
-        if self._project is None:
-            raise VbaTrustRefusedError(VBA_TRUST_PREREQUISITE)
+            self._project = get_vb_project(self._application, strict=True)
         return self._project
 
     def vba_module_count(self) -> int:
