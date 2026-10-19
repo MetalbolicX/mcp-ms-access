@@ -28,6 +28,11 @@ Safety contract (v2 normative, contract items 2-6):
 * per-family read failures degrade to ``failed``/``unavailable`` facts without erasing
   the others; missing VBProject trust degrades the VBA family to ``unavailable`` and
   names the operator prerequisite;
+* containment steps are hard errors: ForceDisable set/readback, owned-identity capture
+  (including an invalid PID read), the identity announcement, and the identity re-read
+  guarding the Job Object assignment raise :class:`ContainmentError`, so an uncertain
+  armed state or ownership is never reported as success, and
+  ``KeyboardInterrupt``/``SystemExit`` are never converted into a degraded result;
 * raw source text is opt-in (R1): the catalogue always carries a content hash and byte
   size, and the untrusted export text is embedded only when ``include_source=True``.
 """
@@ -104,6 +109,17 @@ class JobHandle(Protocol):
     """A held Job Object handle; closing it reaps any process still assigned to it."""
 
     def close(self) -> None: ...
+
+
+class ContainmentError(AccessMcpError):
+    """A containment step failed, so the read is a hard error and never partial evidence.
+
+    Force-disable set/readback, owned-identity capture (including an invalid PID read),
+    the owned-identity announcement, and the identity re-read guarding the Job Object
+    assignment are containment: an uncertain ownership or armed state is reported as a
+    safe error instead of being degraded into partial app-logic facts. Interrupts
+    (``KeyboardInterrupt``/``SystemExit``) are never converted to this type.
+    """
 
 
 class AccessSession(Protocol):
@@ -237,20 +253,12 @@ class AppLogicReader:
             version = session.application_version()
             if _major(version) != SUPPORTED_ACCESS_MAJOR:
                 return _unsupported_runtime_content(version)
-            session.set_automation_security(AUTOMATION_SECURITY_FORCE_DISABLE)
-            readback = session.read_automation_security()
-            if readback != AUTOMATION_SECURITY_FORCE_DISABLE:
-                msg = (
-                    f"Documentation app-logic reader set AutomationSecurity="
-                    f"{AUTOMATION_SECURITY_FORCE_DISABLE} but read back {readback!r}; the "
-                    "inspection aborted without opening any source"
-                )
-                raise AccessMcpError(msg)
+            self._arm_automation_security(session)
             identity = self._capture_identity(session)
             # Announce the owned instance before the armed open so the supervisor can
             # reap Access even when this worker is killed at the whole-inspection deadline.
-            self._emit_identity(identity.pid, identity.creation, identity.image)
-            job, job_failure = self._assign_verified_job(identity)
+            self._announce_identity(identity)
+            job, job_failure = self._assign_containment_job(identity)
             if job is None:
                 warnings.append(
                     "Job Object assignment for the owned Access process failed; the "
@@ -301,16 +309,78 @@ class AppLogicReader:
             )
         return self._assign_job(identity.pid), None
 
+    def _arm_automation_security(self, session: AccessSession) -> None:
+        """Force-disable automation security and verify the readback before any open.
+
+        Both the write and the readback are containment: if the armed state is unknown the
+        read is a hard error, because partial evidence would imply a contained open.
+        """
+        try:
+            session.set_automation_security(AUTOMATION_SECURITY_FORCE_DISABLE)
+            readback = session.read_automation_security()
+        except Exception as error:
+            msg = (
+                f"Documentation app-logic reader could not set AutomationSecurity="
+                f"{AUTOMATION_SECURITY_FORCE_DISABLE} and read it back before opening any "
+                f"source: {_reason(error)}"
+            )
+            raise ContainmentError(msg) from error
+        if readback != AUTOMATION_SECURITY_FORCE_DISABLE:
+            msg = (
+                f"Documentation app-logic reader set AutomationSecurity="
+                f"{AUTOMATION_SECURITY_FORCE_DISABLE} but read back {readback!r}; the "
+                "inspection aborted without opening any source"
+            )
+            raise ContainmentError(msg)
+
+    def _assign_containment_job(
+        self, identity: AccessProcessIdentity
+    ) -> tuple[JobHandle | None, str | None]:
+        """Verify the live identity and assign the Job Object, failing hard on uncertainty.
+
+        A *reported* assignment failure still degrades to the supervisor PID-scoped kill
+        net with a warning (contract 6); an unexpected error while verifying or assigning
+        is containment and aborts before the open.
+        """
+        try:
+            return self._assign_verified_job(identity)
+        except Exception as error:
+            msg = (
+                "Documentation app-logic reader could not verify the owned Access process "
+                f"identity for Job Object assignment ({_reason(error)}); the inspection "
+                "aborted without opening any source"
+            )
+            raise ContainmentError(msg) from error
+
     def _capture_identity(self, session: AccessSession) -> AccessProcessIdentity:
-        pid = session.access_application_pid()
-        identity = self._identity_reader(pid)
+        try:
+            pid = session.access_application_pid()
+            identity = self._identity_reader(pid)
+        except Exception as error:
+            msg = (
+                "Documentation app-logic reader could not capture the owned Access process "
+                f"identity ({_reason(error)}); the inspection aborted without opening any "
+                "source"
+            )
+            raise ContainmentError(msg) from error
         if identity is None:
             msg = (
                 "Documentation app-logic reader could not capture the owned Access process "
                 "identity; the inspection aborted without opening any source"
             )
-            raise AccessMcpError(msg)
+            raise ContainmentError(msg)
         return identity
+
+    def _announce_identity(self, identity: AccessProcessIdentity) -> None:
+        """Announce the owned identity before the open; a lost announcement is fatal."""
+        try:
+            self._emit_identity(identity.pid, identity.creation, identity.image)
+        except Exception as error:
+            msg = (
+                "Documentation app-logic reader could not announce the owned Access process "
+                f"identity to the supervisor ({_reason(error)}); no source was opened"
+            )
+            raise ContainmentError(msg) from error
 
     def _read_content(self, session: AccessSession, workdir: Path, include_source: bool) -> AppLogicContent:
         content: list[ContentObjectEvidence] = []

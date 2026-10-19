@@ -38,6 +38,7 @@ from ms_access_mcp.application.documentation_app_logic import (
     SAVE_AS_TEXT_REPORT,
     AppLogicContent,
     AppLogicReader,
+    ContainmentError,
     VbaTrustRefusedError,
     apply_app_logic_content,
 )
@@ -279,9 +280,12 @@ def test_reader_aborts_without_opening_when_security_readback_mismatches(tmp_pat
     session = _FakeSession(security_readback=1, objects=_default_objects(), exports=_default_exports())
     reader = _reader(session, scratch_root=tmp_path)
 
-    with pytest.raises(AccessMcpError, match="AutomationSecurity"):
+    # S2/WP4: the readback mismatch is a containment failure, typed and hard, so the
+    # worker can never turn it into partial success.
+    with pytest.raises(ContainmentError, match="AutomationSecurity") as raised:
         reader.read(str(source))
 
+    assert isinstance(raised.value, AccessMcpError)
     assert "open" not in session.events
     assert not any(isinstance(event, tuple) and event[0] == "emit" for event in session.events)
 
@@ -591,3 +595,120 @@ def test_app_logic_content_defaults_empty_so_a_default_document_stays_v1() -> No
     assert document.app_logic.references == []
     # A default-off document (no app_logic at all) is still the byte-identical v1 shape.
     assert "app_logic" not in json.dumps(_minimal_document().to_dict())
+
+
+# ---------------------------------------------------------------------------
+# 7. WP4: containment failures stay hard (the ordinary Tier 2 fallback is a later
+#    slice; this section only pins the typed hard-error boundary and interrupts)
+# ---------------------------------------------------------------------------
+
+
+class _SecuritySetFailingSession(_FakeSession):
+    """A session that refuses the ForceDisable write before any open."""
+
+    def set_automation_security(self, level: int) -> None:
+        self.events.append(("security_set", level))
+        raise RuntimeError("AutomationSecurity is locked by policy")
+
+
+class _InvalidPidSession(_FakeSession):
+    """A session whose owned-PID read raises the invalid-PID ValueError."""
+
+    def access_application_pid(self) -> int:
+        self.events.append("pid")
+        raise ValueError("invalid PID value returned for the owned Access instance")
+
+
+class _InterruptingSession(_FakeSession):
+    """A session interrupted mid-read by a console interrupt or shutdown request."""
+
+    def __init__(self, interrupt: type[BaseException], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._interrupt = interrupt
+
+    def current_project_object_names(self, collection: str) -> list[str]:
+        self.events.append(("names", collection))
+        raise self._interrupt
+
+
+def _scratch_dirs(root: Path) -> list[str]:
+    return sorted(path.name for path in root.iterdir() if path.name.startswith("ms_access_doc_v2_"))
+
+
+def test_security_set_failure_is_a_containment_error_not_a_fallback(tmp_path: Path) -> None:
+    """S2: an unarmable ForceDisable never becomes partial evidence."""
+
+    source = _source(tmp_path)
+    session = _SecuritySetFailingSession(objects=_default_objects(), exports=_default_exports())
+
+    with pytest.raises(ContainmentError, match="AutomationSecurity") as raised:
+        _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert isinstance(raised.value, AccessMcpError)
+    assert "open" not in session.events
+    assert not any(isinstance(event, tuple) and event[0] == "emit" for event in session.events)
+
+
+def test_identity_capture_value_error_is_a_containment_error_not_a_fallback(tmp_path: Path) -> None:
+    """S2: the invalid-PID ValueError from identity capture must never be swallowed."""
+
+    source = _source(tmp_path)
+    session = _InvalidPidSession(objects=_default_objects(), exports=_default_exports())
+
+    with pytest.raises(ContainmentError, match="identity") as raised:
+        _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert isinstance(raised.value.__cause__, ValueError)
+    assert "open" not in session.events
+
+
+def test_unreadable_owned_identity_remains_a_hard_error(tmp_path: Path) -> None:
+    """PRESERVE: an unreadable owned identity stayed an error before WP4 and does now."""
+
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+    reader = _reader(session, scratch_root=tmp_path, identity_reader=lambda _pid: None)
+
+    with pytest.raises(ContainmentError, match="identity"):
+        reader.read(str(source))
+
+    assert "open" not in session.events
+
+
+def test_identity_announcement_failure_is_a_containment_error_not_a_fallback(tmp_path: Path) -> None:
+    """S2: the owned-identity announcement is containment, so it is never degraded."""
+
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    def failing_emit(_pid: int, _creation: int, _image: str) -> None:
+        raise OSError("the protocol stdout stream is closed")
+
+    reader = AppLogicReader(
+        launcher=lambda: session,
+        identity_reader=lambda pid: AccessProcessIdentity(pid=pid, creation=CREATION, image="MSACCESS.EXE"),
+        emit_identity=failing_emit,
+        assign_job=lambda _pid: _FakeJob(session.events),
+        scratch_root=tmp_path,
+    )
+
+    with pytest.raises(ContainmentError, match="identity"):
+        reader.read(str(source))
+
+    assert "open" not in session.events
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+def test_interrupt_is_never_converted_to_partial_evidence(
+    tmp_path: Path, interrupt: type[BaseException]
+) -> None:
+    """S2/S3: KeyboardInterrupt and SystemExit propagate and never become partial."""
+
+    source = _source(tmp_path)
+    session = _InterruptingSession(interrupt, objects=_default_objects(), exports=_default_exports())
+
+    with pytest.raises(interrupt):
+        _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert "quit" in session.events
+    assert _scratch_dirs(tmp_path) == []

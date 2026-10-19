@@ -887,6 +887,13 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   `ACCESS_MCP_DOC_SCRATCH_DIR` override when set (otherwise the system temp directory).
   The original is never opened by `Access.Application`, and the copy is removed in a
   `finally`.
+- **Containment failures are hard, typed errors.** The containment steps of a Tier 2
+  inspection — ForceDisable set/readback, owned-identity capture (including an
+  invalid-PID read), the owned-identity announcement, and the identity re-read guarding
+  the Job Object assignment — raise `ContainmentError`, so an uncertain armed state or
+  ownership is reported as a hard `Err` at the worker boundary and never as success.
+  `KeyboardInterrupt`/`SystemExit` are not converted into that type. No schema change is
+  involved.
 - **Catalogue-only rendering.** The report gains a labeled `## Application logic` section
   (VBA modules, form/report/macro source catalogues, engine-level inventories, references,
   startup properties) plus `### Limitations` / `### Coverage notes`. Non-observed facts are
