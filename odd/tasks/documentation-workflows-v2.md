@@ -729,3 +729,34 @@ integrity checking. No production changes, commit, or push.
   T8+docs+hardening) or accept L19's independent adversarial review plus
   the applied hardening as the review basis. Merge/push remain the
   user's decisions.
+- L21 (2026-10-18/19): NATIVE REVIEW COMPLETE — all four slice-sized
+  reviews APPROVED with authority burned (user choice after the
+  whole-branch START was refused for context budget): (1) T2 protocol
+  slice, lineage review-552f777dd083d7f3, 8 paths/1,344 lines, high tier;
+  (2) T6 Tier 1 slice, review-d41574c74cdb100a, 12 paths/917 lines,
+  incremental base accepted; (3) T7 reader slice, review-f6de19718963cdbe,
+  16 paths/1,834 lines; (4) T8+fixes+hardening slice, review-5b546e137f19d0ff,
+  15 paths/913 lines (clean-checkout worktree at 78db647 with explicit
+  base 9f82612). Each ran the full lifecycle: inspect -> start (3 lenses)
+  -> group forecast -> acknowledged run -> native-last-event-closure
+  APPROVED -> exact acknowledge-approved. Total advisories across slices:
+  24, ALL informational/non-blocking (no corrections offered, no
+  blockers): coverage/test-hardening notes (killnet gaps, from_dict
+  roundtrip, size-cap tests, DAO normalization, render fixture, VBA
+  validator shape, silent property skip, PID-guard failure mode),
+  operational notes (PowerShell single probe, shared runtime state,
+  silent baseline degradation, termination detail dropped, com-error
+  reason exposure, scratch cleanup ignore-errors, announce window,
+  copy-while-open, hash fidelity, job close order, tier2 abort, R4-001
+  pair). Incidents during the run, recorded: (a) managed-assets sync
+  initially failed (codegraph MCP probe timeout; revived via MCP connect,
+  sync clean); (b) one provider admission refusal — reviewer payload
+  carried an unknown "severity_note" field (decoder rejected; rejected
+  payload preserved under .git/gentle-ai/rejected-results/); one bounded
+  reconciliation retry regenerated the group and closed APPROVED;
+  (c) one parent transcription error in a collectBinding (corrupted tree
+  hash) was rejected by the provider and corrected by re-copying fresh
+  STATUS bindings verbatim. Review worktrees wt-slice1..4 removed after
+  acknowledgement. Branch remains LOCAL (user decision); merge/push/PR
+  unchanged. The 24 advisories are separate later work by contract,
+  never re-run justification.
