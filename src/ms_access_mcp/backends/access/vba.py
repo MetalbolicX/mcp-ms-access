@@ -18,6 +18,37 @@ logger = logging.getLogger(__name__)
 _COMPILE_CMD_IDS = [301, 206, 317, 232]
 
 
+def failing_hresults(error: BaseException) -> tuple[int, ...]:
+    """Return every failing HRESULT an operational COM error exposes (duck-typed).
+
+    pywin32 exposes the status as ``hresult`` and as the first positional argument. A
+    nested COM failure carries the real status as ``excepinfo[5]`` (``scode``) of
+    ``args[2]`` while ``args[0]`` may hold only the generic ``DISP_E_EXCEPTION``. Codes
+    are normalized to the unsigned 32-bit form so signed and unsigned spellings compare
+    equal; ``bool`` is never an HRESULT, and a success (severity-0) code is not a failure.
+
+    Args:
+        error: Any raised error; only its exposed integer statuses are inspected.
+
+    Returns:
+        Every normalized failing HRESULT, in discovery order (possibly empty).
+
+    """
+    candidates: list[object] = [getattr(error, "hresult", None)]
+    if error.args:
+        candidates.append(error.args[0])
+        if len(error.args) > 2 and isinstance(error.args[2], tuple) and len(error.args[2]) > 5:
+            candidates.append(error.args[2][5])
+    codes: list[int] = []
+    for candidate in candidates:
+        if isinstance(candidate, bool) or not isinstance(candidate, int):
+            continue
+        unsigned = candidate & 0xFFFFFFFF
+        if unsigned & 0x80000000:
+            codes.append(unsigned)
+    return tuple(codes)
+
+
 def _save_vba_module(access_app: Any, module_name: str, operation: str) -> bool:
     """Persist a successful VBE mutation before reporting success."""
     try:

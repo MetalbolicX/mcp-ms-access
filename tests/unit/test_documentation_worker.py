@@ -509,6 +509,17 @@ class _ObservedTier2Session:
         return 0
 
 
+class _ComOperationalError(Exception):
+    """A duck-typed operational COM failure: one failing HRESULT plus its message."""
+
+    def __init__(self, hresult: int, message: str) -> None:
+        super().__init__(hresult, message)
+        self.hresult = hresult
+
+    def __str__(self) -> str:
+        return str(self.args[1])
+
+
 def _run_protocol(
     monkeypatch: pytest.MonkeyPatch, request: dict[str, Any]
 ) -> tuple[int, list[AccessIdentity], dict[str, Any]]:
@@ -683,6 +694,66 @@ def test_worker_success_path_stays_complete_with_observed_tier_two_facts(
     assert session.opened_path is not None
     assert session.opened_path != str(source)
     assert session.closed is True and session.quit_called is True and job.closed is True
+    assert source.read_bytes() == original
+    assert database.closed is True
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_worker_degrades_an_operational_com_copy_failure_as_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1: a COM-shaped operational failure keeps the documented partial degradation."""
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise _ComOperationalError(0x80004005, "the disposable copy COM call failed")
+
+    monkeypatch.setenv(documentation_app_logic.SCRATCH_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(documentation_app_logic, "shutil", SimpleNamespace(copy2=failing_copy, rmtree=shutil.rmtree))
+    source = tmp_path / "core.accdb"
+    source.write_bytes(b"not-a-real-access-file")
+    original = source.read_bytes()
+    database = _FakeDatabase()
+    _patch_worker_database(monkeypatch, database)
+
+    exit_code, identities, response = _run_protocol(monkeypatch, _armed_request(source))
+
+    assert exit_code == 0
+    assert response["ok"] is True
+    evidence = response["evidence"]
+    assert evidence["status"] == "partial"
+    content = evidence["data"]["app_logic"]["content"]
+    assert all(item["content"]["state"] == "failed" for item in content)
+    assert any("COM call failed" in (item["content"]["reason"] or "") for item in content)
+    assert identities == []
+    assert source.read_bytes() == original
+    assert database.closed is True
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_worker_reports_a_programming_defect_as_a_hard_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1: an unexpected defect is a sanitized hard error, never partial evidence."""
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise ValueError("documentation reader defect: PWD=hunter2secret;")
+
+    monkeypatch.setenv(documentation_app_logic.SCRATCH_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(documentation_app_logic, "shutil", SimpleNamespace(copy2=failing_copy, rmtree=shutil.rmtree))
+    source = tmp_path / "core.accdb"
+    source.write_bytes(b"not-a-real-access-file")
+    original = source.read_bytes()
+    database = _FakeDatabase()
+    _patch_worker_database(monkeypatch, database)
+
+    exit_code, identities, response = _run_protocol(monkeypatch, _armed_request(source))
+
+    assert exit_code == 0
+    assert response["ok"] is False
+    assert "documentation reader defect" in response["error"]
+    assert "hunter2secret" not in response["error"]
+    assert "evidence" not in response
+    assert identities == []
     assert source.read_bytes() == original
     assert database.closed is True
     assert _scratch_dirs(tmp_path) == []

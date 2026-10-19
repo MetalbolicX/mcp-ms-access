@@ -609,17 +609,68 @@ def test_app_logic_content_defaults_empty_so_a_default_document_stays_v1() -> No
 # ---------------------------------------------------------------------------
 
 
-class _OpenFailingSession(_FakeSession):
-    """A session whose armed open fails after the containment layers are armed."""
+COM_FAILURE = 0x80004005
+_WHOLE_STAGE_PROBE = "whole stage probe"
 
-    def __init__(self, message: str, **kwargs: Any) -> None:
+
+class _ComFaultError(Exception):
+    """A duck-typed operational COM failure: one failing HRESULT plus its message."""
+
+    def __init__(self, hresult: int, message: str) -> None:
+        super().__init__(hresult, message)
+        self.hresult = hresult
+
+    def __str__(self) -> str:
+        return str(self.args[1])
+
+
+class _HresultArgumentError(Exception):
+    """A COM failure that carries its status only in ``args[0]`` (no ``hresult``)."""
+
+
+class _BoolHresultError(RuntimeError):
+    """A defect whose ``hresult`` attribute is a bool, which is never an HRESULT."""
+
+    hresult = True
+
+
+class _RaisingSession(_FakeSession):
+    """A session whose one named whole-stage read raises a pre-built error."""
+
+    def __init__(self, stage: str, error: BaseException, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._message = message
+        self._stage = stage
+        self._error = error
+
+    def application_version(self) -> str:
+        self.events.append("version")
+        if self._stage == "version":
+            raise self._error
+        return self.version
 
     def open_current_database(self, path: str) -> None:
-        self.events.append("open")
-        self.opened_path = path
-        raise RuntimeError(self._message)
+        if self._stage == "open":
+            self.events.append("open")
+            self.opened_path = path
+            raise self._error
+        super().open_current_database(path)
+
+
+class _OpenFailingSession(_RaisingSession):
+    """A session whose armed open fails with an operational COM-shaped error."""
+
+    def __init__(self, message: str, **kwargs: Any) -> None:
+        super().__init__("open", _ComFaultError(COM_FAILURE, message), **kwargs)
+
+
+class _FamilyDefectSession(_FakeSession):
+    """A session whose form-family read raises a programmer defect."""
+
+    def current_project_object_names(self, collection: str) -> list[str]:
+        if collection == "AllForms":
+            self.events.append(("names", collection))
+            raise TypeError("the export family reader was called with the wrong arity")
+        return super().current_project_object_names(collection)
 
 
 class _SecuritySetFailingSession(_FakeSession):
@@ -678,6 +729,116 @@ def _shutil_seam(**overrides: Any) -> SimpleNamespace:
     return namespace
 
 
+def _reader_with_stage_failure(
+    stage: str, error: BaseException, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[AppLogicReader, _FakeSession | None]:
+    """A reader whose named whole-stage call raises ``error``."""
+    if stage == "copy":
+
+        def failing_copy(_source: object, _destination: object) -> None:
+            raise error
+
+        monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(copy2=failing_copy))
+        session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+        return _reader(session, scratch_root=tmp_path), session
+    if stage == "dispatch":
+
+        def failing_launch() -> Any:
+            raise error
+
+        return AppLogicReader(launcher=failing_launch, scratch_root=tmp_path), None
+    session = _RaisingSession(stage, error, objects=_default_objects(), exports=_default_exports())
+    return _reader(session, scratch_root=tmp_path), session
+
+
+# S1: only operational filesystem/COM failures may degrade a whole-stage boundary.
+_OPERATIONAL_STAGE_ERRORS = [
+    pytest.param(lambda: OSError(f"{_WHOLE_STAGE_PROBE}: the file operation failed"), id="oserror"),
+    pytest.param(lambda: _ComFaultError(COM_FAILURE, f"{_WHOLE_STAGE_PROBE}: the COM call failed"), id="hresult-attribute"),
+    pytest.param(
+        lambda: _HresultArgumentError(COM_FAILURE, f"{_WHOLE_STAGE_PROBE}: unsigned args[0]"), id="unsigned-args0"
+    ),
+    pytest.param(
+        lambda: _HresultArgumentError(-2147467259, f"{_WHOLE_STAGE_PROBE}: signed args[0]"), id="signed-args0"
+    ),
+]
+
+# S1: an unexpected defect -- including an int/bool that is not a failing HRESULT -- is hard.
+_PROGRAMMER_DEFECTS = [
+    pytest.param(lambda: ValueError(f"{_WHOLE_STAGE_PROBE}: wrong number of values"), id="value-error"),
+    pytest.param(lambda: TypeError(f"{_WHOLE_STAGE_PROBE}: unsupported operand"), id="type-error"),
+    pytest.param(lambda: AttributeError(f"{_WHOLE_STAGE_PROBE}: no such attribute"), id="attribute-error"),
+    pytest.param(lambda: RuntimeError(f"{_WHOLE_STAGE_PROBE}: bare runtime error"), id="runtime-error"),
+    pytest.param(
+        lambda: _HresultArgumentError(0, f"{_WHOLE_STAGE_PROBE}: success status"), id="non-failing-int"
+    ),
+    pytest.param(lambda: _BoolHresultError(f"{_WHOLE_STAGE_PROBE}: bool status"), id="bool-hresult"),
+]
+
+
+@pytest.mark.parametrize("stage", ["copy", "dispatch", "version", "open"])
+@pytest.mark.parametrize("make_error", _OPERATIONAL_STAGE_ERRORS)
+def test_operational_whole_stage_failures_keep_partial_degradation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, make_error: Callable[[], BaseException]
+) -> None:
+    """S1: filesystem/COM-shape failures at a whole-stage boundary still degrade."""
+
+    source = _source(tmp_path)
+    original = source.read_bytes()
+    reader, session = _reader_with_stage_failure(stage, make_error(), tmp_path, monkeypatch)
+
+    content = reader.read(str(source))
+
+    _assert_failed_fallback(content, detail=_WHOLE_STAGE_PROBE)
+    assert source.read_bytes() == original
+    assert _scratch_dirs(tmp_path) == []
+    if stage == "open":
+        assert session is not None
+        assert "quit" in session.events
+
+
+@pytest.mark.parametrize("stage", ["copy", "dispatch", "version", "open"])
+@pytest.mark.parametrize("make_error", _PROGRAMMER_DEFECTS)
+def test_programmer_defects_at_a_whole_stage_boundary_stay_hard_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, make_error: Callable[[], BaseException]
+) -> None:
+    """S1: an unexpected defect never masquerades as successful partial evidence."""
+
+    source = _source(tmp_path)
+    original = source.read_bytes()
+    error = make_error()
+    reader, session = _reader_with_stage_failure(stage, error, tmp_path, monkeypatch)
+
+    with pytest.raises(type(error)) as raised:
+        reader.read(str(source))
+
+    assert raised.value is error
+    assert source.read_bytes() == original
+    assert _scratch_dirs(tmp_path) == []
+    if stage == "open":
+        assert session is not None
+        assert "close_current" in session.events
+        assert "quit" in session.events
+        assert "job_close" in session.events
+
+
+def test_per_family_best_effort_catches_are_not_narrowed(tmp_path: Path) -> None:
+    """PRESERVE: a defect inside one family is still that family's own failed fact."""
+
+    source = _source(tmp_path)
+    session = _FamilyDefectSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    form = next(item for item in content.content if item.category == "form")
+    assert form.name == FAMILY_SCOPE_NAME
+    assert form.content.state == "failed"
+    assert "wrong arity" in (form.content.reason or "")
+    assert [item.name for item in content.content if item.category == "report"] == ["rptSales"]
+    assert [item.name for item in content.content if item.category == "macro"] == ["AutoExec"]
+    assert content.warnings == []
+
+
 def test_copy_failure_returns_failed_family_facts_and_a_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -725,7 +886,7 @@ def test_launch_failure_returns_failed_family_facts_and_cleans_the_scratch_dir(t
     """S1/S3: a dispatch failure is ordinary, so it degrades and still cleans up."""
 
     def failing_launch() -> Any:
-        raise RuntimeError("Class not registered: Access.Application")
+        raise _ComFaultError(0x80040154, "Class not registered: Access.Application")
 
     reader = AppLogicReader(launcher=failing_launch, scratch_root=tmp_path)
     source = _source(tmp_path)

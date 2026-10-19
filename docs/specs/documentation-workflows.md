@@ -887,21 +887,29 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   `ACCESS_MCP_DOC_SCRATCH_DIR` override when set (otherwise the system temp directory).
   The original is never opened by `Access.Application`, and the copy is removed in a
   `finally`.
-- **Tier 2 degradation is fact-level, never silent.** Tier 2 is optional, so an ordinary
-  failure of that stage — the scratch directory, the disposable copy, the owned dispatch,
-  the armed open, or a whole content read — returns one `failed` fact per content family
-  (form, report, macro, vba_module) plus one `failed` reference family fact per reference
-  property, with the sanitized reason and one warning. The already collected v1 and
-  Tier 1 facts are retained and the document's derived status becomes `partial`, so a
-  failed Tier 2 family is **not** absent: absence means no such fact exists (no opt-in,
-  or a filtered-out object), while `failed` names an attempt that errored and
-  `unavailable` names one the runtime/prerequisite cannot provide. Containment is not
-  degradable: ForceDisable set/readback, owned-identity capture (including an invalid-PID
-  read), the owned-identity announcement, and the identity re-read guarding the Job
-  Object assignment raise `ContainmentError` (a hard `Err` at the worker boundary), and
-  `KeyboardInterrupt`/`SystemExit` are never converted to partial success. No schema
-  change is involved; the worker protocol's `ok:true` + `partial` shape is how a caller
-  sees the retained evidence.
+- **Tier 2 degradation is fact-level, never silent — and only for operational failures.**
+  Tier 2 is optional, so an *operational* failure of that whole stage — a filesystem/OS
+  error, or a COM-shaped error carrying a failing HRESULT, at the scratch directory, the
+  disposable copy, the owned dispatch, the armed open, or a whole content read — returns
+  one `failed` fact per content family (form, report, macro, vba_module) plus one `failed`
+  reference family fact per reference property, with the sanitized reason and one warning.
+  The already collected v1 and Tier 1 facts are retained and the document's derived status
+  becomes `partial`, so a failed Tier 2 family is **not** absent: absence means no such
+  fact exists (no opt-in, or a filtered-out object), while `failed` names an attempt that
+  errored and `unavailable` names one the runtime/prerequisite cannot provide. The
+  classification is duck-typed (`hresult`, `args[0]`, or a nested COM `excepinfo` status
+  normalized to unsigned; an `int`/`bool` that is not a failing HRESULT never counts), so
+  the application layer still imports no pywin32/Win32. An unexpected **programmer
+  defect** (`ValueError`, `TypeError`, `AttributeError`, a bare `RuntimeError`) at those
+  same whole-stage boundaries is a hard error: it is never reported as successful partial
+  evidence. The narrowing applies to those outer boundaries only; the documented
+  per-family best-effort catches still turn one failed family into that family's own
+  `failed` fact. Containment is not degradable: ForceDisable set/readback, owned-identity
+  capture (including an invalid-PID read), the owned-identity announcement, and the
+  identity re-read guarding the Job Object assignment raise `ContainmentError` (a hard
+  `Err` at the worker boundary), and `KeyboardInterrupt`/`SystemExit` are never converted
+  to partial success. No schema change is involved; the worker protocol's `ok:true` +
+  `partial` shape is how a caller sees the retained evidence.
 - **Catalogue-only rendering.** The report gains a labeled `## Application logic` section
   (VBA modules, form/report/macro source catalogues, engine-level inventories, references,
   startup properties) plus `### Limitations` / `### Coverage notes`. Non-observed facts are

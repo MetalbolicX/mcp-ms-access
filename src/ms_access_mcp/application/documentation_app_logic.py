@@ -28,11 +28,14 @@ Safety contract (v2 normative, contract items 2-6):
 * per-family read failures degrade to ``failed``/``unavailable`` facts without erasing
   the others; missing VBProject trust degrades the VBA family to ``unavailable`` and
   names the operator prerequisite;
-* an ordinary failure of this **optional** Tier 2 stage (scratch directory, disposable
-  copy, owned dispatch, armed open, or a whole content read) degrades to ``failed``
-  family/reference facts plus one warning, so a caller keeps the v1 and Tier 1 facts it
-  already collected as explicit ``partial`` evidence. Containment steps do **not**
-  degrade: ForceDisable set/readback, owned-identity capture (including an invalid PID
+* an *operational* failure of this **optional** Tier 2 stage (scratch directory, disposable
+  copy, owned dispatch, armed open, or a whole content read) -- a filesystem/OS error or a
+  COM-shaped error carrying a failing HRESULT -- degrades to ``failed`` family/reference
+  facts plus one warning, so a caller keeps the v1 and Tier 1 facts it already collected as
+  explicit ``partial`` evidence. An unexpected programmer defect (``ValueError``,
+  ``TypeError``, ``AttributeError``, a ``RuntimeError`` without a failing HRESULT) is a hard
+  error and is never reported as partial evidence. Containment steps do **not** degrade:
+  ForceDisable set/readback, owned-identity capture (including an invalid PID
   read), the identity announcement, and the identity re-read guarding the Job Object
   assignment raise :class:`ContainmentError`, and ``KeyboardInterrupt``/``SystemExit``
   are never converted into partial evidence;
@@ -56,6 +59,7 @@ from ..backends.access.app_logic_session import (  # noqa: F401 - re-exported se
     VBA_TRUST_PREREQUISITE,
     VbaTrustRefusedError,
 )
+from ..backends.access.vba import failing_hresults
 from ..errors import AccessMcpError
 from .documentation import (
     ACCESS_APPLICATION_METHOD,
@@ -193,6 +197,23 @@ def _reason(error: Exception) -> str:
     return redact_connection_secrets(str(error).strip() or type(error).__name__)
 
 
+def _is_operational_failure(error: Exception) -> bool:
+    """Whether a whole-stage failure is operational (degradable) rather than a defect.
+
+    Operational failures are filesystem/OS errors, the VBA trust-refusal error raised by
+    the documentation session, and COM-shaped errors that carry a failing HRESULT
+    (``hresult``, ``args[0]``, or a nested ``excepinfo`` status). Anything else --
+    ``ValueError``, ``TypeError``, ``AttributeError``, a bare ``RuntimeError``, or any
+    ``int``/``bool`` argument that is not a failing HRESULT -- is an unexpected programmer
+    defect, so it stays a hard error instead of masquerading as successful partial
+    evidence. The predicate is duck-typed: the application layer never imports
+    pywin32/Win32.
+    """
+    if isinstance(error, (OSError, VbaTrustRefusedError)):
+        return True
+    return bool(failing_hresults(error))
+
+
 def _major(version: str) -> str:
     return str(version).strip().split(".", 1)[0]
 
@@ -241,12 +262,16 @@ class AppLogicReader:
     def read(self, source_path: str, *, include_source: bool = False) -> AppLogicContent:
         """Read the Tier 2 catalogue from one disposable copy of ``source_path``.
 
-        This stage is optional, so its ordinary failures -- the scratch directory, the
+        This stage is optional, so its *operational* failures -- a filesystem/OS error or a
+        COM-shaped error carrying a failing HRESULT at the scratch directory, the
         disposable copy, the owned dispatch, the armed open, or a whole content read --
         degrade to :func:`_failed_content`: every Tier 2 family and reference is reported
         ``failed`` with a sanitized reason plus one warning, and the caller's already
-        collected v1/Tier 1 facts survive as ``partial`` evidence. Containment failures
-        raise :class:`ContainmentError`, and interrupts are never caught here.
+        collected v1/Tier 1 facts survive as ``partial`` evidence. An unexpected
+        programmer defect is re-raised as a hard error; it never becomes partial evidence.
+        Containment failures raise :class:`ContainmentError`, and interrupts are never
+        caught here. The per-family best-effort catches inside a content read are a
+        separate, unchanged contract: one failed family is a fact, not a whole-stage exit.
         """
         try:
             workdir = Path(tempfile.mkdtemp(prefix=_SCRATCH_PREFIX, dir=str(self._scratch_root)))
@@ -256,14 +281,18 @@ class AppLogicReader:
             copy_path = workdir / Path(source_path).name
             try:
                 shutil.copy2(source_path, copy_path)
-            except Exception as error:  # noqa: BLE001 - an ordinary copy failure degrades
+            except Exception as error:  # noqa: BLE001 - an operational copy failure degrades
+                if not _is_operational_failure(error):
+                    raise
                 return _failed_content(_stage_reason("the disposable copy of the source could not be created", error))
             try:
                 return self._read_armed(str(copy_path), workdir, include_source)
             except ContainmentError:
                 # An uncertain armed state or ownership is a hard error, never partial.
                 raise
-            except Exception as error:  # noqa: BLE001 - the optional Tier 2 stage degrades
+            except Exception as error:  # noqa: BLE001 - an operational stage failure degrades
+                if not _is_operational_failure(error):
+                    raise
                 return _failed_content(_stage_reason("the Tier 2 inspection failed", error))
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
