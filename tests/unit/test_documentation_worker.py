@@ -14,10 +14,27 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from ms_access_mcp.application import documentation_worker
+from ms_access_mcp.application import documentation_app_logic, documentation_worker
+from ms_access_mcp.application.documentation import (
+    AppLogicEvidence,
+    ContainerInventoryEvidence,
+    Coverage,
+    EvidenceDoc,
+    FactProvenance,
+    FactStatus,
+    FieldEvidence,
+    RunMetadata,
+    SourceEvidence,
+    TableEvidence,
+)
 from ms_access_mcp.application.documentation_worker import (
     AccessIdentity,
     build_request,
@@ -27,6 +44,7 @@ from ms_access_mcp.application.documentation_worker import (
     emit_access_identity,
     split_access_identity_frames,
 )
+from ms_access_mcp.application.process_identity import AccessProcessIdentity
 from ms_access_mcp.errors import AccessMcpError
 
 FRAME_PREFIX = "@@ACCESS_IDENTITY@@ "
@@ -355,3 +373,316 @@ def test_run_request_never_invokes_the_tier_two_reader_when_app_logic_is_off(mon
     )
 
     assert called == []
+
+
+# ---------------------------------------------------------------------------
+# 4. WP4: Tier 2 fallback observed through the public worker protocol
+# ---------------------------------------------------------------------------
+
+
+TIER2_PID = 51_000
+
+
+def _provenance(kind: str, name: str, prop: str) -> FactProvenance:
+    return FactProvenance(kind, name, prop)
+
+
+def _passive_document() -> EvidenceDoc:
+    """A v1 document (+ Tier 1 container) that a Tier 2 failure must never erase."""
+    return EvidenceDoc(
+        run=RunMetadata("run-1", "1.0", ["Orders"], []),
+        source=SourceEvidence("core.accdb", "accdb", "DAO", "offline", "closed"),
+        coverage=Coverage(),
+        tables=[
+            TableEvidence(
+                name="Orders",
+                fields=[
+                    FieldEvidence(
+                        name="OrderID",
+                        type=FactStatus.observed("Long", _provenance("field", "OrderID", "type")),
+                        size=FactStatus.observed(4, _provenance("field", "OrderID", "size")),
+                        required=FactStatus.observed(True, _provenance("field", "OrderID", "required")),
+                        allow_zero_length=FactStatus.observed(False, _provenance("field", "OrderID", "allow_zero_length")),
+                        default_value=FactStatus.observed(None, _provenance("field", "OrderID", "default_value")),
+                    )
+                ],
+                primary_key=FactStatus.observed(["OrderID"], _provenance("table", "Orders", "primary_key")),
+                indexes=[],
+            )
+        ],
+        app_logic=AppLogicEvidence(
+            containers=[
+                ContainerInventoryEvidence(
+                    "form",
+                    "Forms",
+                    "DAO.Containers",
+                    FactStatus.observed([{"name": "frmMain"}], _provenance("form", "Forms", "objects")),
+                )
+            ]
+        ),
+    )
+
+
+class _FakeDatabase:
+    """Records the worker's own open/close so the teardown is observable."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def open_database(self, _path: str) -> object:
+        from ms_access_mcp.application.database import Ok
+
+        return Ok(data={})
+
+    def close_database(self) -> None:
+        self.closed = True
+
+
+class _FakeJob:
+    """A fake kill-on-close Job handle."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _ReadbackMismatchSession:
+    """A session that cannot be armed: ForceDisable does not read back."""
+
+    def __init__(self) -> None:
+        self.opened = False
+
+    def application_version(self) -> str:
+        return "16.0"
+
+    def set_automation_security(self, _level: int) -> None:
+        return None
+
+    def read_automation_security(self) -> int:
+        return 1
+
+    def open_current_database(self, _path: str) -> None:
+        self.opened = True
+
+
+class _ObservedTier2Session:
+    """A fake COM boundary with exactly one observed form export."""
+
+    def __init__(self) -> None:
+        self.opened_path: str | None = None
+        self.closed = False
+        self.quit_called = False
+
+    def application_version(self) -> str:
+        return "16.0"
+
+    def set_automation_security(self, _level: int) -> None:
+        return None
+
+    def read_automation_security(self) -> int:
+        return 3
+
+    def access_application_pid(self) -> int:
+        return TIER2_PID
+
+    def open_current_database(self, path: str) -> None:
+        self.opened_path = path
+
+    def close_current_database(self) -> None:
+        self.closed = True
+
+    def quit_application(self) -> None:
+        self.quit_called = True
+
+    def current_project_object_names(self, collection: str) -> list[str]:
+        return ["frmMain"] if collection == "AllForms" else []
+
+    def save_as_text(self, _object_type: int, _name: str, destination: str) -> None:
+        Path(destination).write_bytes("FORM frmMain\r\nEnd\r\n".encode("utf-16-le"))
+
+    def vba_module_count(self) -> int:
+        return 0
+
+    def reference_count(self) -> int:
+        return 0
+
+
+def _run_protocol(
+    monkeypatch: pytest.MonkeyPatch, request: dict[str, Any]
+) -> tuple[int, list[AccessIdentity], dict[str, Any]]:
+    """Drive the child entry point over in-memory streams (no spawn, no Access)."""
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(json.dumps(request).encode("utf-8"))))
+    stdout = _RecordingStream()
+    # ``main`` writes its single response to ``sys.stdout.buffer`` (a binary stream), and
+    # the identity announcement targets the raw process stdout (``sys.__stdout__``); in a
+    # real child both are the same protocol stream.
+    monkeypatch.setattr(sys, "stdout", SimpleNamespace(buffer=stdout))
+    monkeypatch.setattr(sys, "__stdout__", SimpleNamespace(buffer=stdout))
+    exit_code = documentation_worker.main([])
+    identities, response = decode_response_with_identities(stdout.getvalue())
+    return exit_code, identities, response
+
+
+def _armed_request(source: Path) -> dict[str, Any]:
+    """A request that opts into the armed Tier 2 read for ``source``."""
+    return build_request(
+        db_path=str(source),
+        backend="dao",
+        allowed_dirs=[],
+        tables=None,
+        queries=None,
+        include_app_logic=True,
+    )
+
+
+def _scratch_dirs(root: Path) -> list[str]:
+    return sorted(path.name for path in root.iterdir() if path.name.startswith("ms_access_doc_v2_"))
+
+
+def _patch_worker_database(monkeypatch: pytest.MonkeyPatch, database: _FakeDatabase) -> None:
+    monkeypatch.setattr(documentation_worker, "DatabaseUseCases", lambda **_kwargs: database)
+    monkeypatch.setattr(documentation_worker, "inspect_open_database", lambda *_args, **_kwargs: _passive_document())
+
+
+def test_worker_reports_ok_partial_and_keeps_every_passive_fact_when_tier_two_copy_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1-S3: the real reader's fallback reaches the protocol as partial evidence."""
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise OSError("the disposable copy could not be written: PWD=hunter2secret;")
+
+    monkeypatch.setenv(documentation_app_logic.SCRATCH_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(documentation_app_logic, "shutil", SimpleNamespace(copy2=failing_copy, rmtree=shutil.rmtree))
+    source = tmp_path / "core.accdb"
+    source.write_bytes(b"not-a-real-access-file")
+    original = source.read_bytes()
+    database = _FakeDatabase()
+    _patch_worker_database(monkeypatch, database)
+
+    exit_code, identities, response = _run_protocol(monkeypatch, _armed_request(source))
+
+    assert exit_code == 0
+    assert response["ok"] is True
+    evidence = response["evidence"]
+    assert evidence["status"] == "partial"
+    # v1 + Tier 1 facts are retained in full.
+    assert [table["name"] for table in evidence["data"]["tables"]] == ["Orders"]
+    assert evidence["data"]["tables"][0]["fields"][0]["name"] == "OrderID"
+    containers = evidence["data"]["app_logic"]["containers"]
+    assert containers[0]["objects"]["state"] == "observed"
+    assert containers[0]["objects"]["value"] == [{"name": "frmMain"}]
+    # Every Tier 2 family and the reference family are explicit failed facts.
+    content = evidence["data"]["app_logic"]["content"]
+    assert [(item["category"], item["name"]) for item in content] == [
+        ("form", "<all objects>"),
+        ("report", "<all objects>"),
+        ("macro", "<all objects>"),
+        ("vba_module", "<all objects>"),
+    ]
+    assert all(item["content"]["state"] == "failed" for item in content)
+    reference = evidence["data"]["app_logic"]["references"][0]
+    assert reference["name"] == "<all objects>"
+    assert all(reference[prop]["state"] == "failed" for prop in ("path", "guid", "major", "minor", "built_in"))
+    # Sanitized reasons and a visible warning, never a silent degradation.
+    assert evidence["warnings"]
+    serialized = json.dumps(evidence)
+    assert "hunter2secret" not in serialized
+    # No owned Access instance was ever announced, and the original is untouched.
+    assert identities == []
+    assert source.read_bytes() == original
+    assert database.closed is True
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_worker_keeps_a_containment_failure_a_hard_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2: an unarmable inspection is never reported as partial success."""
+
+    session = _ReadbackMismatchSession()
+    monkeypatch.setenv(documentation_app_logic.SCRATCH_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(documentation_app_logic, "_default_launcher", lambda: session)
+    source = tmp_path / "core.accdb"
+    source.write_bytes(b"not-a-real-access-file")
+    database = _FakeDatabase()
+    _patch_worker_database(monkeypatch, database)
+
+    exit_code, _identities, response = _run_protocol(monkeypatch, _armed_request(source))
+
+    assert exit_code == 0
+    assert response["ok"] is False
+    assert "AutomationSecurity" in response["error"]
+    assert "evidence" not in response
+    assert session.opened is False
+    assert database.closed is True
+    assert _scratch_dirs(tmp_path) == []
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+def test_worker_propagates_an_interrupt_instead_of_reporting_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupt: type[BaseException]
+) -> None:
+    """S2/S3: KeyboardInterrupt/SystemExit never become partial success in the protocol."""
+
+    def interrupted_copy(_source: object, _destination: object) -> None:
+        raise interrupt
+
+    monkeypatch.setenv(documentation_app_logic.SCRATCH_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(documentation_app_logic, "shutil", SimpleNamespace(copy2=interrupted_copy, rmtree=shutil.rmtree))
+    source = tmp_path / "core.accdb"
+    source.write_bytes(b"not-a-real-access-file")
+    database = _FakeDatabase()
+    _patch_worker_database(monkeypatch, database)
+
+    exit_code, _identities, response = _run_protocol(monkeypatch, _armed_request(source))
+
+    assert exit_code == 0
+    assert response["ok"] is False
+    assert response["error"] == interrupt.__name__
+    assert "evidence" not in response
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_worker_success_path_stays_complete_with_observed_tier_two_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRESERVE: the successful armed read is unchanged by the WP4 fallback."""
+
+    session = _ObservedTier2Session()
+    job = _FakeJob()
+    monkeypatch.setenv(documentation_app_logic.SCRATCH_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(documentation_app_logic, "_default_launcher", lambda: session)
+    monkeypatch.setattr(
+        documentation_app_logic,
+        "read_process_identity",
+        lambda pid: AccessProcessIdentity(pid=pid, creation=CREATION, image="MSACCESS.EXE"),
+    )
+    monkeypatch.setattr(documentation_app_logic, "_assign_access_to_job", lambda _pid: job)
+    source = tmp_path / "core.accdb"
+    source.write_bytes(b"not-a-real-access-file")
+    original = source.read_bytes()
+    database = _FakeDatabase()
+    _patch_worker_database(monkeypatch, database)
+
+    exit_code, identities, response = _run_protocol(monkeypatch, _armed_request(source))
+
+    assert exit_code == 0
+    assert response["ok"] is True, response
+    evidence = response["evidence"]
+    assert evidence["status"] == "complete"
+    assert identities == [AccessIdentity(pid=TIER2_PID, creation=CREATION, image="MSACCESS.EXE")]
+    content = evidence["data"]["app_logic"]["content"]
+    assert [(item["category"], item["name"], item["content"]["state"]) for item in content] == [
+        ("form", "frmMain", "observed"),
+    ]
+    assert evidence["warnings"] == []
+    # Only the disposable copy is opened, and both teardown paths ran.
+    assert session.opened_path is not None
+    assert session.opened_path != str(source)
+    assert session.closed is True and session.quit_called is True and job.closed is True
+    assert source.read_bytes() == original
+    assert database.closed is True
+    assert _scratch_dirs(tmp_path) == []

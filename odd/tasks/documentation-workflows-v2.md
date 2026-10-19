@@ -403,8 +403,13 @@ integrity checking. No production changes, commit, or push.
    and image immediately after dispatch and acknowledges the supervisor
    BEFORE opening the armed copy. The supervisor owns the kill net for
    deadline, crash, and exit paths. Kills are PID+creation-scoped only.
-6. **Degradation.** Security or cleanup uncertainty produces `Err`, never a
-   partial `Ok`. Missing VBProject trust degrades to `unavailable` (D4).
+6. **Degradation.** Security, identity, or cleanup uncertainty produces
+   `Err`, never a partial `Ok`. Ordinary failures of the *optional* Tier 2
+   stage (scratch directory, disposable copy, owned dispatch, armed open,
+   whole content read) degrade to explicit `failed` family/reference
+   facts plus one warning, so the v1 and Tier 1 facts already collected
+   are retained as `partial` evidence (WP4 amendment, L22; no schema
+   change). Missing VBProject trust degrades to `unavailable` (D4).
 7. **Claims boundary.** Qualification is fixture-scope on the supported
    runtime. No claim of universal macro suppression or hostile-database
    safety is made anywhere in code, docs, or reports.
@@ -729,7 +734,7 @@ integrity checking. No production changes, commit, or push.
   T8+docs+hardening) or accept L19's independent adversarial review plus
   the applied hardening as the review basis. Merge/push remain the
   user's decisions.
-- L21 (2026-10-18/19): NATIVE REVIEW COMPLETE — all four slice-sized
+- L21 (2026-10-18/19): NATIVE REVIEW COMPLETE ï¿½ all four slice-sized
   reviews APPROVED with authority burned (user choice after the
   whole-branch START was refused for context budget): (1) T2 protocol
   slice, lineage review-552f777dd083d7f3, 8 paths/1,344 lines, high tier;
@@ -750,7 +755,7 @@ integrity checking. No production changes, commit, or push.
   copy-while-open, hash fidelity, job close order, tier2 abort, R4-001
   pair). Incidents during the run, recorded: (a) managed-assets sync
   initially failed (codegraph MCP probe timeout; revived via MCP connect,
-  sync clean); (b) one provider admission refusal — reviewer payload
+  sync clean); (b) one provider admission refusal ï¿½ reviewer payload
   carried an unknown "severity_note" field (decoder rejected; rejected
   payload preserved under .git/gentle-ai/rejected-results/); one bounded
   reconciliation retry regenerated the group and closed APPROVED;
@@ -760,3 +765,22 @@ integrity checking. No production changes, commit, or push.
   acknowledgement. Branch remains LOCAL (user decision); merge/push/PR
   unchanged. The 24 advisories are separate later work by contract,
   never re-run justification.
+- L22 (2026-10-19): WP4 amendment (user-approved plan). Contract item 6
+  wording clarified: it now separates *ordinary* Tier 2 failures (scratch
+  directory, disposable copy, owned dispatch, armed open, whole content
+  read) that degrade to `failed` family/reference facts plus one warning
+  -- keeping already collected v1/Tier 1 facts as explicit `partial`
+  evidence -- from ForceDisable set/readback, owned-identity capture
+  (including an invalid-PID `ValueError`), identity announcement, and
+  supervisor cleanup, which stay hard `Err`; `KeyboardInterrupt`/
+  `SystemExit` are never converted to partial success. Implementation
+  reuses `_family_fact`/`_family_provenance`, `FactStatus`,
+  `_reason` (connection-secret redaction), `apply_app_logic_content`,
+  `EvidenceDoc.status`, and the existing unsupported-runtime per-family/
+  reference shape; no schema change and no new framework. Evidence for
+  this note is unit-level only (fakes, no live COM): ordinary
+  copy/scratch/launch/open failure -> `ok:true` + `partial` with full
+  passive retention; containment failure -> typed
+  `ContainmentError` -> worker `ok:false`; interrupt -> `ok:false`.
+  Live re-qualification and differential proof stay owned by the WP4
+  verification task; no live result is claimed here.

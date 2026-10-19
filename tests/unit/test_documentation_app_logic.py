@@ -18,21 +18,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from ms_access_mcp.application import documentation_limits
+from ms_access_mcp.application import documentation_app_logic, documentation_limits
 from ms_access_mcp.application.documentation import (
+    AppLogicEvidence,
+    ContainerInventoryEvidence,
     Coverage,
     EvidenceDoc,
+    FactProvenance,
+    FactStatus,
     RunMetadata,
     SourceEvidence,
 )
 from ms_access_mcp.application.documentation_app_logic import (
     ACCESS_APPLICATION_METHOD,
+    FAMILY_SCOPE_NAME,
     SAVE_AS_TEXT_FORM,
     SAVE_AS_TEXT_MACRO,
     SAVE_AS_TEXT_REPORT,
@@ -598,9 +605,21 @@ def test_app_logic_content_defaults_empty_so_a_default_document_stays_v1() -> No
 
 
 # ---------------------------------------------------------------------------
-# 7. WP4: containment failures stay hard (the ordinary Tier 2 fallback is a later
-#    slice; this section only pins the typed hard-error boundary and interrupts)
+# 7. WP4: ordinary Tier 2 failures degrade to failed facts; containment stays hard
 # ---------------------------------------------------------------------------
+
+
+class _OpenFailingSession(_FakeSession):
+    """A session whose armed open fails after the containment layers are armed."""
+
+    def __init__(self, message: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._message = message
+
+    def open_current_database(self, path: str) -> None:
+        self.events.append("open")
+        self.opened_path = path
+        raise RuntimeError(self._message)
 
 
 class _SecuritySetFailingSession(_FakeSession):
@@ -633,6 +652,130 @@ class _InterruptingSession(_FakeSession):
 
 def _scratch_dirs(root: Path) -> list[str]:
     return sorted(path.name for path in root.iterdir() if path.name.startswith("ms_access_doc_v2_"))
+
+
+def _assert_failed_fallback(content: AppLogicContent, *, detail: str) -> None:
+    """A WP4 fallback reports every family and reference as failed, with one warning."""
+    assert [item.category for item in content.content] == ["form", "report", "macro", "vba_module"]
+    assert all(item.name == FAMILY_SCOPE_NAME for item in content.content)
+    assert all(item.content.state == "failed" for item in content.content)
+    assert all(detail in (item.content.reason or "") for item in content.content)
+    assert len(content.references) == 1
+    reference = content.references[0]
+    assert reference.name == FAMILY_SCOPE_NAME
+    for fact in (reference.path, reference.guid, reference.major, reference.minor, reference.built_in):
+        assert fact.state == "failed"
+        assert detail in (fact.reason or "")
+    assert content.warnings
+    assert all(detail in warning for warning in content.warnings)
+
+
+def _shutil_seam(**overrides: Any) -> SimpleNamespace:
+    """The reader's ``shutil`` seam with only the named calls overridden."""
+    namespace = SimpleNamespace(copy2=shutil.copy2, rmtree=shutil.rmtree)
+    for name, replacement in overrides.items():
+        setattr(namespace, name, replacement)
+    return namespace
+
+
+def test_copy_failure_returns_failed_family_facts_and_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1/S3: an ordinary copy error degrades instead of losing the Tier 2 report."""
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise OSError("the disposable copy could not be written")
+
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(copy2=failing_copy))
+    source = _source(tmp_path)
+    original = source.read_bytes()
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    _assert_failed_fallback(content, detail="could not be written")
+    assert "open" not in session.events
+    assert source.read_bytes() == original
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_scratch_dir_creation_failure_returns_failed_family_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1/S3: an ordinary scratch-directory error also degrades, never raises."""
+
+    def failing_mkdtemp(**_kwargs: object) -> str:
+        raise OSError("the scratch directory could not be created")
+
+    monkeypatch.setattr(
+        documentation_app_logic,
+        "tempfile",
+        SimpleNamespace(mkdtemp=failing_mkdtemp, gettempdir=lambda: str(tmp_path)),
+    )
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    _assert_failed_fallback(content, detail="could not be created")
+    assert "open" not in session.events
+
+
+def test_launch_failure_returns_failed_family_facts_and_cleans_the_scratch_dir(tmp_path: Path) -> None:
+    """S1/S3: a dispatch failure is ordinary, so it degrades and still cleans up."""
+
+    def failing_launch() -> Any:
+        raise RuntimeError("Class not registered: Access.Application")
+
+    reader = AppLogicReader(launcher=failing_launch, scratch_root=tmp_path)
+    source = _source(tmp_path)
+
+    content = reader.read(str(source))
+
+    _assert_failed_fallback(content, detail="Class not registered")
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_open_failure_returns_failed_family_facts_after_teardown(tmp_path: Path) -> None:
+    """S2/S3: an ordinary open error degrades only after the teardown calls ran."""
+
+    source = _source(tmp_path)
+    original = source.read_bytes()
+    session = _OpenFailingSession(
+        "the disposable copy could not be locked",
+        objects=_default_objects(),
+        exports=_default_exports(),
+    )
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    _assert_failed_fallback(content, detail="could not be locked")
+    assert "open" in session.events
+    # Only the disposable copy was ever handed to the armed open.
+    assert Path(session.opened_path or "") != source
+    assert Path(session.opened_path or "").name == source.name
+    assert "close_current" in session.events
+    assert "quit" in session.events
+    assert "job_close" in session.events
+    assert source.read_bytes() == original
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_open_failure_reason_is_scrubbed_of_connection_secrets(tmp_path: Path) -> None:
+    """S3: fallback reasons go through the same secret-redaction boundary as v1."""
+
+    source = _source(tmp_path)
+    session = _OpenFailingSession(
+        'open failed: Provider=X;PWD=hunter2secret;',
+        objects=_default_objects(),
+        exports=_default_exports(),
+    )
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    serialized = json.dumps([item.content.reason for item in content.content] + content.warnings)
+    assert "hunter2secret" not in serialized
+    assert "PWD" in serialized
 
 
 def test_security_set_failure_is_a_containment_error_not_a_fallback(tmp_path: Path) -> None:
@@ -711,4 +854,60 @@ def test_interrupt_is_never_converted_to_partial_evidence(
         _reader(session, scratch_root=tmp_path).read(str(source))
 
     assert "quit" in session.events
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_fallback_content_keeps_v1_and_tier_one_facts_and_reports_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S1/S3: the merge is additive, so retained facts survive a Tier 2 fallback."""
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise OSError("the disposable copy could not be written")
+
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(copy2=failing_copy))
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+    document = _minimal_document()
+    document.app_logic = AppLogicEvidence(
+        containers=[
+            ContainerInventoryEvidence(
+                "form",
+                "Forms",
+                "DAO.Containers",
+                FactStatus.observed([{"name": "frmMain"}], FactProvenance("form", "Forms", "objects")),
+            )
+        ]
+    )
+
+    merged = apply_app_logic_content(document, content)
+    payload = merged.to_dict()
+
+    assert payload["data"]["status"] == "partial"
+    assert payload["data"]["app_logic"]["containers"][0]["objects"]["state"] == "observed"
+    assert payload["data"]["app_logic"]["containers"][0]["objects"]["value"] == [{"name": "frmMain"}]
+    assert [item["category"] for item in payload["data"]["app_logic"]["content"]] == [
+        "form",
+        "report",
+        "macro",
+        "vba_module",
+    ]
+    assert payload["data"]["app_logic"]["references"][0]["name"] == FAMILY_SCOPE_NAME
+    assert payload["warnings"]
+    # The fallback is a fact-level degradation, never a schema or payload-limit change.
+    merged.validate()
+
+
+def test_successful_read_is_unchanged_and_carries_no_degradation_warning(tmp_path: Path) -> None:
+    """PRESERVE: the successful Tier 2 read is untouched by the WP4 fallback path."""
+
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert content.warnings == []
+    assert [item.name for item in content.content] == ["frmMain", "rptSales", "AutoExec"]
+    assert all(item.content.state == "observed" for item in content.content)
     assert _scratch_dirs(tmp_path) == []

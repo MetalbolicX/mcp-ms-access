@@ -28,11 +28,14 @@ Safety contract (v2 normative, contract items 2-6):
 * per-family read failures degrade to ``failed``/``unavailable`` facts without erasing
   the others; missing VBProject trust degrades the VBA family to ``unavailable`` and
   names the operator prerequisite;
-* containment steps are hard errors: ForceDisable set/readback, owned-identity capture
-  (including an invalid PID read), the identity announcement, and the identity re-read
-  guarding the Job Object assignment raise :class:`ContainmentError`, so an uncertain
-  armed state or ownership is never reported as success, and
-  ``KeyboardInterrupt``/``SystemExit`` are never converted into a degraded result;
+* an ordinary failure of this **optional** Tier 2 stage (scratch directory, disposable
+  copy, owned dispatch, armed open, or a whole content read) degrades to ``failed``
+  family/reference facts plus one warning, so a caller keeps the v1 and Tier 1 facts it
+  already collected as explicit ``partial`` evidence. Containment steps do **not**
+  degrade: ForceDisable set/readback, owned-identity capture (including an invalid PID
+  read), the identity announcement, and the identity re-read guarding the Job Object
+  assignment raise :class:`ContainmentError`, and ``KeyboardInterrupt``/``SystemExit``
+  are never converted into partial evidence;
 * raw source text is opt-in (R1): the catalogue always carries a content hash and byte
   size, and the untrusted export text is embedded only when ``include_source=True``.
 """
@@ -236,12 +239,32 @@ class AppLogicReader:
         self._scratch_root = Path(str(scratch_root)) if scratch_root is not None else Path(_default_scratch_root())
 
     def read(self, source_path: str, *, include_source: bool = False) -> AppLogicContent:
-        """Read the Tier 2 catalogue from one disposable copy of ``source_path``."""
-        workdir = Path(tempfile.mkdtemp(prefix=_SCRATCH_PREFIX, dir=str(self._scratch_root)))
+        """Read the Tier 2 catalogue from one disposable copy of ``source_path``.
+
+        This stage is optional, so its ordinary failures -- the scratch directory, the
+        disposable copy, the owned dispatch, the armed open, or a whole content read --
+        degrade to :func:`_failed_content`: every Tier 2 family and reference is reported
+        ``failed`` with a sanitized reason plus one warning, and the caller's already
+        collected v1/Tier 1 facts survive as ``partial`` evidence. Containment failures
+        raise :class:`ContainmentError`, and interrupts are never caught here.
+        """
+        try:
+            workdir = Path(tempfile.mkdtemp(prefix=_SCRATCH_PREFIX, dir=str(self._scratch_root)))
+        except OSError as error:
+            return _failed_content(_stage_reason("the disposable scratch directory could not be created", error))
         try:
             copy_path = workdir / Path(source_path).name
-            shutil.copy2(source_path, copy_path)
-            return self._read_armed(str(copy_path), workdir, include_source)
+            try:
+                shutil.copy2(source_path, copy_path)
+            except Exception as error:  # noqa: BLE001 - an ordinary copy failure degrades
+                return _failed_content(_stage_reason("the disposable copy of the source could not be created", error))
+            try:
+                return self._read_armed(str(copy_path), workdir, include_source)
+            except ContainmentError:
+                # An uncertain armed state or ownership is a hard error, never partial.
+                raise
+            except Exception as error:  # noqa: BLE001 - the optional Tier 2 stage degrades
+                return _failed_content(_stage_reason("the Tier 2 inspection failed", error))
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
@@ -530,18 +553,48 @@ def _reference_evidence(
     return ReferenceEvidence(name, ACCESS_APPLICATION_METHOD, *facts)
 
 
+def _stage_reason(stage: str, error: Exception) -> str:
+    """Compose one sanitized degradation reason from a stage label and its error."""
+    return redact_connection_secrets(f"{stage}: {_reason(error)}")
+
+
+def _whole_family_content(
+    reason: str, *, unavailable: bool
+) -> tuple[list[ContentObjectEvidence], ReferenceEvidence]:
+    """One whole-family fact per content family plus one whole-family reference.
+
+    ``unavailable`` is the unsupported-runtime degradation; ``failed`` is the ordinary
+    Tier 2 failure degradation. Both reuse :func:`_family_fact`, the family scope name,
+    the per-reference property facts, and :class:`FactStatus`, so no schema changes.
+    """
+    make: Callable[[str, FactProvenance], FactStatus[Any]] = FactStatus.unavailable if unavailable else FactStatus.failed
+    content = [_family_fact(category, make(reason, _family_provenance(category))) for category in _FAMILY_CATEGORIES]
+    reference = ReferenceEvidence(
+        FAMILY_SCOPE_NAME,
+        ACCESS_APPLICATION_METHOD,
+        *[make(reason, FactProvenance("reference", FAMILY_SCOPE_NAME, prop)) for prop in REFERENCE_PROPERTIES],
+    )
+    return content, reference
+
+
+def _failed_content(detail: str) -> AppLogicContent:
+    """Degrade an ordinary Tier 2 failure to explicit failed facts plus one warning."""
+    reason = f"Tier 2 app-logic content was not read: {detail}"
+    content, reference = _whole_family_content(reason, unavailable=False)
+    warning = (
+        f"Tier 2 app-logic content was not read ({detail}); the v1 and Tier 1 app-logic "
+        "facts are retained and every Tier 2 family and reference is reported as failed"
+    )
+    return AppLogicContent(content=content, references=[reference], warnings=[warning])
+
+
 def _unsupported_runtime_content(version: str) -> AppLogicContent:
     reason = (
         f"Access runtime version {version!r} is not the supported "
         f"{SUPPORTED_ACCESS_MAJOR}.0 runtime; app-logic facts are unavailable and no "
         "source was opened"
     )
-    content = [_family_fact(category, FactStatus.unavailable(reason, _family_provenance(category))) for category in _FAMILY_CATEGORIES]
-    reference = ReferenceEvidence(
-        FAMILY_SCOPE_NAME,
-        ACCESS_APPLICATION_METHOD,
-        *[FactStatus.unavailable(reason, FactProvenance("reference", FAMILY_SCOPE_NAME, prop)) for prop in REFERENCE_PROPERTIES],
-    )
+    content, reference = _whole_family_content(reason, unavailable=True)
     return AppLogicContent(content=content, references=[reference], warnings=[])
 
 

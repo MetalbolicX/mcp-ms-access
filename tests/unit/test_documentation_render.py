@@ -491,3 +491,35 @@ def test_interpretations_may_cite_app_logic_evidence_ids() -> None:
     assert "`form:frmMain.content` — Main entry form" in report.markdown
     with pytest.raises(ValueError, match="evidence"):
         render_document(catalogue_evidence(), interpretations=[{"evidence_ref": "form:Missing.content", "text": "guess"}])
+
+
+def test_whole_family_fallback_renders_failed_limitations_not_absent_families() -> None:
+    """S3: a Tier 2 fallback renders explicit failed families, distinct from absent ones."""
+    evidence = make_evidence()
+    evidence.app_logic = AppLogicEvidence(
+        content=[
+            app_content(category, FAMILY_SCOPE_NAME, state="failed", reason="the disposable copy could not be written")
+            for category in ("form", "report", "macro", "vba_module")
+        ],
+        references=[
+            ReferenceEvidence(
+                FAMILY_SCOPE_NAME,
+                "Access.Application",
+                *[
+                    FactStatus.failed("the disposable copy could not be written", provenance("reference", FAMILY_SCOPE_NAME, prop))
+                    for prop in ("path", "guid", "major", "minor", "built_in")
+                ],
+            )
+        ],
+    )
+
+    report = render_document(evidence)
+
+    assert report.status == "partial"
+    assert "### Limitations" in report.markdown
+    for label in ("VBA modules", "Forms", "Reports", "Macros"):
+        assert f"- {label}: failed — the disposable copy could not be written" in report.markdown
+    assert "the disposable copy could not be written" in report.markdown.split("### Limitations", 1)[1]
+    # The retained v1 sections are untouched by the degraded Tier 2 families.
+    assert "## Data dictionary" in report.markdown
+    assert "| Parent" in report.markdown

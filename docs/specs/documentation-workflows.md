@@ -887,13 +887,21 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   `ACCESS_MCP_DOC_SCRATCH_DIR` override when set (otherwise the system temp directory).
   The original is never opened by `Access.Application`, and the copy is removed in a
   `finally`.
-- **Containment failures are hard, typed errors.** The containment steps of a Tier 2
-  inspection — ForceDisable set/readback, owned-identity capture (including an
-  invalid-PID read), the owned-identity announcement, and the identity re-read guarding
-  the Job Object assignment — raise `ContainmentError`, so an uncertain armed state or
-  ownership is reported as a hard `Err` at the worker boundary and never as success.
-  `KeyboardInterrupt`/`SystemExit` are not converted into that type. No schema change is
-  involved.
+- **Tier 2 degradation is fact-level, never silent.** Tier 2 is optional, so an ordinary
+  failure of that stage — the scratch directory, the disposable copy, the owned dispatch,
+  the armed open, or a whole content read — returns one `failed` fact per content family
+  (form, report, macro, vba_module) plus one `failed` reference family fact per reference
+  property, with the sanitized reason and one warning. The already collected v1 and
+  Tier 1 facts are retained and the document's derived status becomes `partial`, so a
+  failed Tier 2 family is **not** absent: absence means no such fact exists (no opt-in,
+  or a filtered-out object), while `failed` names an attempt that errored and
+  `unavailable` names one the runtime/prerequisite cannot provide. Containment is not
+  degradable: ForceDisable set/readback, owned-identity capture (including an invalid-PID
+  read), the owned-identity announcement, and the identity re-read guarding the Job
+  Object assignment raise `ContainmentError` (a hard `Err` at the worker boundary), and
+  `KeyboardInterrupt`/`SystemExit` are never converted to partial success. No schema
+  change is involved; the worker protocol's `ok:true` + `partial` shape is how a caller
+  sees the retained evidence.
 - **Catalogue-only rendering.** The report gains a labeled `## Application logic` section
   (VBA modules, form/report/macro source catalogues, engine-level inventories, references,
   startup properties) plus `### Limitations` / `### Coverage notes`. Non-observed facts are
