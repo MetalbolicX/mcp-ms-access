@@ -1018,6 +1018,206 @@ def test_an_unreadable_identity_that_already_exited_needs_no_kill() -> None:
     assert _taskkill_calls(runner) == []
 
 
+class _RaisingRunner:
+    """Records the argv it is handed and then fails the probe.
+
+    Used for the three unreadable-probe outcomes: a failed enumeration is an empty
+    baseline, a failed liveness probe is "still alive", and a failed identity probe is
+    an unreadable identity. None of them may authorize a kill.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: Any, timeout: float) -> subprocess.CompletedProcess[str]:
+        self.calls.append([str(argument) for argument in args])
+        raise self.error
+
+
+class _TaskkillFailingRunner(_CommandRunner):
+    """Identity-verifiable runner whose ``taskkill /F /PID`` invocation itself fails."""
+
+    def __init__(self, *, error: Exception | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.error = OSError("taskkill could not be started") if error is None else error
+
+    def __call__(self, args: Any, timeout: float) -> subprocess.CompletedProcess[str]:
+        call = [str(argument) for argument in args]
+        if call[0] == "taskkill":
+            self.calls.append(call)
+            # A kill *was* attempted, so the post-kill liveness answer applies even
+            # though the invocation itself failed.
+            self.killed = True
+            raise self.error
+        return super().__call__(args, timeout)
+
+
+class _PollingRunner:
+    """Scripted runner whose ``tasklist`` liveness answers die after N live probes."""
+
+    def __init__(self, *, alive_probes: int) -> None:
+        self.alive_probes = alive_probes
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: Any, timeout: float) -> subprocess.CompletedProcess[str]:
+        call = [str(argument) for argument in args]
+        self.calls.append(call)
+        if call[0] == "powershell":
+            return subprocess.CompletedProcess(call, 0, f"{ACCESS_CREATION}|MSACCESS", "")
+        if call[0] == "taskkill":
+            return subprocess.CompletedProcess(call, 0, "", "")
+        if call[0] == "tasklist":
+            if self.alive_probes > 0:
+                self.alive_probes -= 1
+                return subprocess.CompletedProcess(call, 0, _tasklist_line(), "")
+            return subprocess.CompletedProcess(call, 0, "INFO: No tasks are running\n", "")
+        msg = f"unexpected probe command: {call[0]}"
+        raise AssertionError(msg)
+
+
+class _FakeClock:
+    """Deterministic ``time`` double: monotonic advances per read, sleep never blocks."""
+
+    def __init__(self, step: float = 0.1) -> None:
+        self.step = step
+        self.now = 0.0
+        self.reads = 0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        self.reads += 1
+        value = self.now
+        self.now += self.step
+        return value
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+
+
+def test_a_failed_taskkill_that_left_the_process_running_is_not_exited() -> None:
+    """A failed kill is reported as such; the liveness probe decides ``exited``."""
+    runner = _TaskkillFailingRunner(alive_after_kill=True)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=5.0,
+    )
+
+    assert outcome.pid == ACCESS_PID
+    assert outcome.verified is True
+    assert outcome.terminated is False
+    assert outcome.exited is False
+    assert outcome.detail == (
+        f"identity-verified Access PID {ACCESS_PID} termination failed (OSError); "
+        "the process is still running"
+    )
+    # No grace poll runs on the failure path: exactly one liveness probe answers it.
+    assert [call[0] for call in runner.calls] == ["powershell", "taskkill", "tasklist"]
+    assert _taskkill_calls(runner) == [["taskkill", "/F", "/PID", str(ACCESS_PID)]]
+
+
+def test_a_failed_taskkill_that_already_exited_reports_no_observable_process() -> None:
+    runner = _TaskkillFailingRunner(alive_after_kill=False)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=5.0,
+    )
+
+    assert outcome.verified is True
+    assert outcome.terminated is False
+    assert outcome.exited is True
+    assert outcome.detail == (
+        f"identity-verified Access PID {ACCESS_PID} termination failed (OSError); "
+        "the process is not observable"
+    )
+    assert [call[0] for call in runner.calls] == ["powershell", "taskkill", "tasklist"]
+
+
+def test_a_positive_grace_poll_reports_exited_after_one_live_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grace loop polls deterministically: live, bounded wait, then dead."""
+    from ms_access_mcp.application import process_identity as identity_module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(identity_module, "time", clock)
+    runner = _PollingRunner(alive_probes=1)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.5,
+    )
+
+    assert outcome.verified is True
+    assert outcome.terminated is True
+    assert outcome.exited is True
+    assert outcome.detail == f"identity-verified Access PID {ACCESS_PID} terminated by PID-scoped taskkill"
+    # One probe stayed alive, one bounded wait, one probe found the process gone.
+    assert [call[0] for call in runner.calls] == ["powershell", "taskkill", "tasklist", "tasklist"]
+    assert len(clock.sleeps) == 1
+    assert 0 < clock.sleeps[0] <= 0.5
+
+
+def test_list_msaccess_pids_skips_banners_other_images_and_malformed_rows() -> None:
+    """Only the PID column of an ``MSACCESS.EXE`` row is a baseline PID."""
+    stdout = "".join(
+        (
+            "INFO: No tasks are running which match the specified criteria.\n",
+            '"EXCEL.EXE","99","Console","1","1,000 K"\n',
+            '"MSACCESS.EXE","not-a-pid","Console","1","1 K"\n',
+            '"MSACCESS.EXE"\n',
+            f'"MSACCESS.EXE","{ACCESS_PID}","Console","1","100,000 K"\n',
+            '"MSACCESS.EXE","0x1f","Console","1","1 K"\n',
+        )
+    )
+    runner = _RawTasklistRunner(stdout)
+
+    assert list_msaccess_pids(runner=runner) == {ACCESS_PID}  # type: ignore[arg-type]
+    assert runner.calls == [["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE", "/FO", "CSV", "/NH"]]
+
+
+def test_list_msaccess_pids_reports_an_empty_baseline_when_the_probe_raises() -> None:
+    runner = _RaisingRunner(OSError("tasklist is unavailable"))
+
+    assert list_msaccess_pids(runner=runner) == set()  # type: ignore[arg-type]
+    assert runner.calls == [["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE", "/FO", "CSV", "/NH"]]
+
+
+def test_process_is_alive_treats_an_unreadable_probe_as_still_alive() -> None:
+    """Unknown liveness is never "gone": cleanup must not be assumed established."""
+    runner = _RaisingRunner(OSError("tasklist is unavailable"))
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is True  # type: ignore[arg-type]
+    assert runner.calls == [["tasklist", "/FI", f"PID eq {ACCESS_PID}", "/FO", "CSV", "/NH"]]
+
+
+def test_read_process_identity_reports_none_when_the_probe_raises() -> None:
+    runner = _RaisingRunner(OSError("powershell is unavailable"))
+
+    assert read_process_identity(ACCESS_PID, runner=runner) is None  # type: ignore[arg-type]
+    assert runner.calls == [
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"$p = Get-Process -Id {ACCESS_PID} -ErrorAction Stop; "
+            "'{0}|{1}' -f $p.StartTime.ToFileTime(), $p.ProcessName",
+        ]
+    ]
+
+
 # ---------------------------------------------------------------------------
 # T7: Tier 2 source opt-in plumbing and Err precedence
 # ---------------------------------------------------------------------------
