@@ -269,6 +269,83 @@ def test_reader_copies_to_a_unique_scratch_dir_and_removes_it(tmp_path: Path) ->
     # The disposable copy is gone after evidence capture.
     assert not opened.parent.exists()
     assert source.read_bytes() == b"not-a-real-access-file"
+    # S2 A4: a successful removal never invents a residue warning.
+    assert content.warnings == []
+
+
+# ---------------------------------------------------------------------------
+# S2 A4: a failed scratch removal is best-effort and surfaces as one warning
+# ---------------------------------------------------------------------------
+
+_SCRATCH_SECRET = "hunter2secret"
+
+
+def test_scratch_removal_failure_adds_one_sanitized_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 A4: a raising removal keeps the evidence and adds exactly one warning."""
+
+    def failing_rmtree(_path: object, *_args: object, **_kwargs: object) -> None:
+        raise OSError(f"cannot remove the directory: PWD={_SCRATCH_SECRET}")
+
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(rmtree=failing_rmtree))
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    # The read itself stays successful: same families, same observed facts.
+    assert [item.name for item in content.content] == ["frmMain", "rptSales", "AutoExec"]
+    assert all(item.content.state == "observed" for item in content.content)
+    assert len(content.warnings) == 1
+    warning = content.warnings[0]
+    assert warning.startswith("The disposable scratch copy directory could not be removed")
+    assert "OSError" in warning
+    # Sanitized: neither the exception's credential text nor the scratch path is echoed.
+    assert _SCRATCH_SECRET not in warning
+    assert str(tmp_path) not in warning
+    # The residue is real, which is exactly why it must be reported.
+    assert len(_scratch_dirs(tmp_path)) == 1
+
+
+def test_scratch_removal_that_leaves_the_directory_behind_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 A4: a silently incomplete removal is detected, not assumed to have worked."""
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(rmtree=lambda *_a, **_k: None))
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert len(content.warnings) == 1
+    assert content.warnings[0].startswith("The disposable scratch copy directory could not be removed")
+    assert str(tmp_path) not in content.warnings[0]
+    assert len(_scratch_dirs(tmp_path)) == 1
+
+
+def test_scratch_removal_warning_does_not_mask_a_degraded_tier_two_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 A4: the residue warning is additive; the degradation warning survives."""
+
+    def failing_rmtree(_path: object, *_args: object, **_kwargs: object) -> None:
+        raise OSError("the residue could not be removed")
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise OSError("the disposable copy could not be written")
+
+    monkeypatch.setattr(
+        documentation_app_logic, "shutil", _shutil_seam(rmtree=failing_rmtree, copy2=failing_copy)
+    )
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert len(content.warnings) == 2
+    assert any("could not be written" in warning for warning in content.warnings)
+    assert any("could not be removed" in warning for warning in content.warnings)
 
 
 def test_reader_emits_the_owned_identity_before_it_opens_the_armed_copy(tmp_path: Path) -> None:
@@ -1058,6 +1135,113 @@ def test_interrupt_is_never_converted_to_partial_evidence(
     assert _scratch_dirs(tmp_path) == []
 
 
+class _ContainmentInterruptSession(_FakeSession):
+    """A session that raises the given interrupt during one containment step."""
+
+    def __init__(self, step: str, interrupt: type[BaseException], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._step = step
+        self._interrupt = interrupt
+
+    def set_automation_security(self, level: int) -> None:
+        if self._step == "security_set":
+            raise self._interrupt
+        super().set_automation_security(level)
+
+    def read_automation_security(self) -> int:
+        if self._step == "security_read":
+            raise self._interrupt
+        return super().read_automation_security()
+
+    def access_application_pid(self) -> int:
+        if self._step == "pid":
+            raise self._interrupt
+        return super().access_application_pid()
+
+
+_CONTAINMENT_INTERRUPT_STEPS = [
+    "security_set",
+    "security_read",
+    "pid",
+    "identity_read",
+    "announce",
+    "job_assign",
+]
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("step", _CONTAINMENT_INTERRUPT_STEPS)
+def test_interrupt_during_a_containment_step_propagates_and_still_tears_down(
+    tmp_path: Path, interrupt: type[BaseException], step: str
+) -> None:
+    """S3 H4: an interrupt at any containment step escapes and teardown still runs.
+
+    Every containment boundary catches ``Exception`` only, so a console interrupt or a
+    shutdown request must never be wrapped into ``ContainmentError`` or degraded into
+    partial evidence. The session teardown (close/quit) and the scratch removal still run
+    before the interrupt leaves the reader.
+    """
+    source = _source(tmp_path)
+    session = _ContainmentInterruptSession(step, interrupt, objects=_default_objects(), exports=_default_exports())
+
+    def read_identity(pid: int) -> AccessProcessIdentity:
+        if step == "identity_read":
+            raise interrupt
+        return AccessProcessIdentity(pid=pid, creation=CREATION, image="MSACCESS.EXE")
+
+    def emit(pid: int, creation: int, image: str) -> None:
+        session.events.append(("emit", pid, creation, image))
+        if step == "announce":
+            raise interrupt
+
+    def assign(_pid: int) -> Any:
+        session.events.append("job_assign")
+        if step == "job_assign":
+            raise interrupt
+        return _FakeJob(session.events)
+
+    reader = AppLogicReader(
+        launcher=lambda: session,
+        identity_reader=read_identity,
+        emit_identity=emit,
+        assign_job=assign,
+        scratch_root=tmp_path,
+    )
+
+    with pytest.raises(interrupt):
+        reader.read(str(source))
+
+    assert "open" not in session.events
+    assert "close_current" in session.events
+    assert "quit" in session.events
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_unexpected_job_assignment_error_is_a_containment_error(tmp_path: Path) -> None:
+    """S3 H4: an unexpected error inside job assignment is containment, never partial."""
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    def failing_assign(_pid: int) -> Any:
+        raise TypeError("the job assignment plumbing is wrong")
+
+    reader = AppLogicReader(
+        launcher=lambda: session,
+        identity_reader=lambda pid: AccessProcessIdentity(pid=pid, creation=CREATION, image="MSACCESS.EXE"),
+        emit_identity=lambda _pid, _creation, _image: None,
+        assign_job=failing_assign,
+        scratch_root=tmp_path,
+    )
+
+    with pytest.raises(ContainmentError, match="Job Object assignment") as raised:
+        reader.read(str(source))
+
+    assert isinstance(raised.value.__cause__, TypeError)
+    assert "open" not in session.events
+    assert "quit" in session.events
+    assert _scratch_dirs(tmp_path) == []
+
+
 def test_fallback_content_keeps_v1_and_tier_one_facts_and_reports_partial(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1112,3 +1296,30 @@ def test_successful_read_is_unchanged_and_carries_no_degradation_warning(tmp_pat
     assert [item.name for item in content.content] == ["frmMain", "rptSales", "AutoExec"]
     assert all(item.content.state == "observed" for item in content.content)
     assert _scratch_dirs(tmp_path) == []
+
+
+def test_read_level_interrupt_propagates_and_teardown_still_removes_the_workdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 A4: an interrupt inside the armed read is never masked by best-effort teardown."""
+    created: list[Path] = []
+    real_mkdtemp = documentation_app_logic.tempfile.mkdtemp
+
+    def tracking_mkdtemp(*args: Any, **kwargs: Any) -> str:
+        path = Path(real_mkdtemp(*args, **kwargs))
+        created.append(path)
+        return str(path)
+
+    def interrupting_armed(self: Any, copy_path: str, workdir: Path, include_source: bool) -> AppLogicContent:
+        raise KeyboardInterrupt
+
+    source = tmp_path / "source.accdb"
+    source.write_bytes(b"probe")
+    monkeypatch.setattr(documentation_app_logic.tempfile, "mkdtemp", tracking_mkdtemp)
+    monkeypatch.setattr(AppLogicReader, "_read_armed", interrupting_armed)
+
+    with pytest.raises(KeyboardInterrupt):
+        AppLogicReader(scratch_root=tmp_path).read(str(source), include_source=False)
+
+    assert len(created) == 1
+    assert not created[0].exists()

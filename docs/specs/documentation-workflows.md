@@ -885,8 +885,34 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   Markdown caps (above the cap stays an `Err`, never truncation).
 - **Scratch copy.** One unique disposable directory per inspection, under the
   `ACCESS_MCP_DOC_SCRATCH_DIR` override when set (otherwise the system temp directory).
-  The original is never opened by `Access.Application`, and the copy is removed in a
-  `finally`.
+  The original is never opened by `Access.Application`. Removal in the `finally` is
+  best-effort: a removal that fails, or that reports success while the directory is still
+  there, never raises from teardown and never hides the inspection's own result. Instead
+  the run carries one sanitized warning (error class plus redacted reason, never the
+  scratch path and never an exception message verbatim) on `AppLogicContent.warnings`,
+  which the merge adds to the document warnings. A successful removal adds no warning, so
+  a successful run's evidence and Markdown stay byte-identical.
+- **Failure visibility uses the existing channels only.** The four formerly silent
+  failure sites surface as sanitized warnings on the existing `EvidenceDoc.warnings` /
+  `AppLogicContent.warnings` lists, or as error-message enrichment. No logging framework,
+  schema change, or derived-status change is involved: `EvidenceDoc.status` keeps
+  reflecting facts and coverage only, so a warning never turns a `complete` document
+  `partial`.
+  - *Baseline listing.* A failed `MSACCESS.EXE` baseline listing is distinguishable from a
+    genuinely empty baseline and reaches the successful path as one `EvidenceDoc.warnings`
+    entry. The empty-baseline decision, its kill-denying semantics, and the public
+    behaviour of `list_msaccess_pids` are unchanged.
+  - *Termination.* When cleanup cannot be established, the raised error message carries
+    the per-PID termination detail plus any swallowed kill-attempt error class; the kill,
+    retry, grace, and established/not-established decisions are unchanged.
+  - *DAO properties.* Unreadable database properties are still omitted and readable
+    siblings are still recorded as their own observed startup-property facts, but the
+    omission is no longer silent: the successful path carries one warning stating how
+    many properties were skipped and naming only those whose *name* was itself readable
+    (an unreadable name is counted, never guessed). A fully readable catalogue adds no
+    warning.
+  - *Scratch residue.* A failed scratch-directory removal is reported as described in the
+    scratch-copy bullet above.
 - **Tier 2 degradation is fact-level, never silent — and only for operational failures.**
   Tier 2 is optional, so an *operational* failure of that whole stage — a filesystem/OS
   error, or a COM-shaped error carrying a failing HRESULT, at the scratch directory, the
@@ -937,7 +963,14 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   by the `a33fb5b` fix. Validation now holds that parity: observed `vba_module` evidence
   must carry a non-empty `sha256` string and an integer `bytes`, exactly like observed
   `SaveAsText` content, so older or hand-built evidence that lacks the digest no longer
-  validates.
+  validates. Both branches enforce the recorded shape, not only its presence: `sha256`
+  must be exactly 64 lowercase hexadecimal characters (the `hashlib.hexdigest` form the
+  reader always emits) and `bytes` must be a non-negative integer (a negative size is
+  rejected as a shape error). Because the reader always satisfies that contract, the
+  renderer has no digest-gap limitation line: digest-complete content is validated before
+  any render, so the removed branch was unreachable rather than untested. In strict VBA
+  mode a classified raise replaces the default "vb project unavailable" DEBUG wording,
+  which now belongs to the non-strict swallow path only.
 
 ### 8.2 Control-flow gate outcomes (evidence archives)
 

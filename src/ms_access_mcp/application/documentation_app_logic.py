@@ -273,30 +273,48 @@ class AppLogicReader:
         Containment failures raise :class:`ContainmentError`, and interrupts are never
         caught here. The per-family best-effort catches inside a content read are a
         separate, unchanged contract: one failed family is a fact, not a whole-stage exit.
+
+        The scratch directory is disposable, so its removal is best-effort: a removal
+        that fails, or that silently leaves the directory behind, adds exactly one
+        sanitized warning (S2 A4) instead of raising out of the ``finally`` and masking
+        the inspection's own result. A successful removal adds no warning, so a
+        successful run's content stays byte-identical.
         """
         try:
             workdir = Path(tempfile.mkdtemp(prefix=_SCRATCH_PREFIX, dir=str(self._scratch_root)))
         except OSError as error:
             return _failed_content(_stage_reason("the disposable scratch directory could not be created", error))
         try:
-            copy_path = workdir / Path(source_path).name
-            try:
-                shutil.copy2(source_path, copy_path)
-            except Exception as error:  # noqa: BLE001 - an operational copy failure degrades
-                if not _is_operational_failure(error):
-                    raise
-                return _failed_content(_stage_reason("the disposable copy of the source could not be created", error))
-            try:
-                return self._read_armed(str(copy_path), workdir, include_source)
-            except ContainmentError:
-                # An uncertain armed state or ownership is a hard error, never partial.
+            content = self._read_copy(source_path, workdir, include_source)
+        except BaseException:
+            # Teardown still runs on a raised containment/defect/interrupt error. There is
+            # no content to carry a residue warning in that case, and the error keeps
+            # propagating untouched.
+            _remove_scratch(workdir)
+            raise
+        residue_warning = _remove_scratch(workdir)
+        if residue_warning is not None:
+            content.warnings.append(residue_warning)
+        return content
+
+    def _read_copy(self, source_path: str, workdir: Path, include_source: bool) -> AppLogicContent:
+        """Copy the source into ``workdir`` and read the armed copy, degrading ordinary failures."""
+        copy_path = workdir / Path(source_path).name
+        try:
+            shutil.copy2(source_path, copy_path)
+        except Exception as error:  # noqa: BLE001 - an operational copy failure degrades
+            if not _is_operational_failure(error):
                 raise
-            except Exception as error:  # noqa: BLE001 - an operational stage failure degrades
-                if not _is_operational_failure(error):
-                    raise
-                return _failed_content(_stage_reason("the Tier 2 inspection failed", error))
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
+            return _failed_content(_stage_reason("the disposable copy of the source could not be created", error))
+        try:
+            return self._read_armed(str(copy_path), workdir, include_source)
+        except ContainmentError:
+            # An uncertain armed state or ownership is a hard error, never partial.
+            raise
+        except Exception as error:  # noqa: BLE001 - an operational stage failure degrades
+            if not _is_operational_failure(error):
+                raise
+            return _failed_content(_stage_reason("the Tier 2 inspection failed", error))
 
     def _read_armed(self, copy_path: str, workdir: Path, include_source: bool) -> AppLogicContent:
         warnings: list[str] = []
@@ -586,6 +604,43 @@ def _reference_evidence(
 def _stage_reason(stage: str, error: Exception) -> str:
     """Compose one sanitized degradation reason from a stage label and its error."""
     return redact_connection_secrets(f"{stage}: {_reason(error)}")
+
+
+def _remove_scratch(workdir: Path) -> str | None:
+    """Remove the disposable scratch directory, never raising from the caller's ``finally``.
+
+    Teardown is best-effort (S2 A4): the directory is disposable, so a removal that fails
+    -- or that reports success while the directory is still there -- must not mask the
+    inspection's own result with a teardown error. Instead it returns one sanitized
+    warning naming the error class and its redacted reason. A removed directory, and an
+    already absent one, return ``None`` so a successful run stays byte-identical.
+    """
+    failures: list[Exception] = []
+
+    def record(_operation: Any, _path: Any, exc_info: tuple[type[BaseException], BaseException, Any]) -> None:
+        # ``rmtree``'s ``onerror`` hands over ``sys.exc_info()``, not the exception alone.
+        if isinstance(exc_info[1], Exception):
+            failures.append(exc_info[1])
+
+    try:
+        shutil.rmtree(workdir, onerror=record)
+    except Exception as error:  # noqa: BLE001 - teardown never raises
+        failures.append(error)
+    if not workdir.exists():
+        # The residue itself is the authority: an already removed directory is success.
+        return None
+    error: Exception | None = next(
+        (item for item in failures if not isinstance(item, FileNotFoundError)),
+        None,
+    )
+    if error is None:
+        detail = "OSError: the directory is still present after removal"
+    else:
+        detail = f"{type(error).__name__}: {_reason(error)}"
+    return redact_connection_secrets(
+        f"The disposable scratch copy directory could not be removed ({detail}); "
+        "the residue remains under the documentation scratch root"
+    )
 
 
 def _whole_family_content(
