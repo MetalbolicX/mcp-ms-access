@@ -457,6 +457,19 @@ def test_app_logic_vba_digest_and_byte_cells_render_without_a_gap() -> None:
     assert "source digest (sha256/bytes) is not recorded" not in markdown
 
 
+def test_renderer_rejects_digestless_vba_evidence_before_reaching_the_removed_gap() -> None:
+    """S3 H2: the removed limitation branch was unreachable; the validator rejects first."""
+    evidence = make_evidence()
+    evidence.app_logic = AppLogicEvidence(
+        content=[app_content("vba_module", "modMain", {"type": "Standard", "procedures": [], "bytes": 73})]
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        render_document(evidence)
+
+    assert str(excinfo.value) == "Observed vba_module content requires a sha256 string"
+
+
 def test_app_logic_opt_in_source_is_referenced_by_evidence_id_and_never_inlined() -> None:
     """R3: raw source is referenced by evidence ID; the text itself never reaches Markdown."""
     markdown = render_document(catalogue_evidence()).markdown

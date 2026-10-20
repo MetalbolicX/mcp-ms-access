@@ -432,7 +432,9 @@ def _app_logic_state_lines(app_logic: AppLogicEvidence) -> tuple[list[str], list
 
     ``unavailable``/``failed`` facts are limitations; ``excluded`` facts are an output
     policy and stay coverage notes. An observed fact needs no line, and the table cells
-    render ``—`` for the facts recorded here.
+    render ``—`` for the facts recorded here. An observed content fact is digest-complete
+    by contract (:meth:`ContentObjectEvidence.validate` requires the 64-hex ``sha256`` and
+    a non-negative ``bytes`` before any render), so there is no digest-gap line.
     """
     limitations: list[str] = []
     notes: list[str] = []
@@ -445,10 +447,6 @@ def _app_logic_state_lines(app_logic: AppLogicEvidence) -> tuple[list[str], list
 
     for item in app_logic.content:
         record(_content_label(item), item.content)
-        if item.category == _VBA and item.content.state == "observed" and not _observed_value(item.content).get("sha256"):
-            limitations.append(
-                f'- VBA module "{_inline(item.name)}": source digest (sha256/bytes) is not recorded for this category'
-            )
     for item in app_logic.containers:
         record(f"{_container_label(item.category)} (container `{_cell(item.container)}`)", item.objects)
     for item in app_logic.references:

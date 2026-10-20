@@ -25,7 +25,11 @@ from ms_access_mcp.backends.access.app_logic_session import (
     ComAccessSession,
     VbaTrustRefusedError,
 )
-from ms_access_mcp.backends.access.vba import VbaProjectUnavailableError, get_vb_project
+from ms_access_mcp.backends.access.vba import (
+    VbaProjectUnavailableError,
+    failing_hresults,
+    get_vb_project,
+)
 
 TRUST_HRESULT = 0x800A17B4
 SIGNED_TRUST_HRESULT = TRUST_HRESULT - 0x1_0000_0000
@@ -106,16 +110,51 @@ class _FakeProject:
         return _FakeCollection(self._collections.get(collection, []))
 
 
+class _FailingVBProjects:
+    """A ``VBProjects`` collection whose ``Count`` or item read raises.
+
+    This is the second strict-path boundary: ``VBE`` itself is readable, but the project
+    enumeration fails. Real hosts raise here too (a locked or corrupt project store), so
+    the classification must cover it and never emit the default "unavailable" wording.
+    """
+
+    def __init__(self, error: BaseException, *, fail_on_item: bool = False) -> None:
+        self._error = error
+        self._fail_on_item = fail_on_item
+        self._items = [SimpleNamespace(Name="VBAProject")]
+
+    @property
+    def Count(self) -> int:  # noqa: N802 - COM shape
+        if self._fail_on_item:
+            return len(self._items)
+        raise self._error
+
+    def __call__(self, index: int) -> Any:
+        # pywin32 dynamic dispatch exposes a collection's default member as a call.
+        if self._fail_on_item:
+            raise self._error
+        return self._items[index - 1]
+
+
 class _FakeApplication:
     """A fake ``Access.Application`` whose VBE read fails or yields one project."""
 
-    def __init__(self, *, vbe_error: BaseException | None = None, project: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        vbe_error: BaseException | None = None,
+        project: Any = None,
+        vbprojects_error: BaseException | None = None,
+        vbprojects_error_on_item: bool = False,
+    ) -> None:
         self.Version = "16.0"
         self.AutomationSecurity = 1
         self.CurrentProject = _FakeProject()
         self.References = _FakeCollection([])
         self._vbe_error = vbe_error
         self._vb_project = project
+        self._vbprojects_error = vbprojects_error
+        self._vbprojects_error_on_item = vbprojects_error_on_item
         self.vbe_reads = 0
         self.opened_paths: list[str] = []
         self.closed = False
@@ -126,6 +165,12 @@ class _FakeApplication:
         self.vbe_reads += 1
         if self._vbe_error is not None:
             raise self._vbe_error
+        if self._vbprojects_error is not None:
+            return SimpleNamespace(
+                VBProjects=_FailingVBProjects(
+                    self._vbprojects_error, fail_on_item=self._vbprojects_error_on_item
+                )
+            )
         projects = [] if self._vb_project is None else [self._vb_project]
         return SimpleNamespace(VBProjects=_FakeCollection(projects, one_based=True))
 
@@ -203,6 +248,83 @@ def test_default_get_vb_project_still_swallows_and_logs_the_vbe_failure(caplog: 
 
     debug_messages = [record.message for record in caplog.records if record.levelno == logging.DEBUG]
     assert any("vb project" in message.lower() for message in debug_messages)
+
+
+def test_strict_get_vb_project_does_not_log_the_default_unavailable_wording(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """S3 H3: strict mode raises instead of logging the default "unavailable" DEBUG line."""
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(VbaProjectUnavailableError):
+            get_vb_project(_FakeApplication(vbe_error=_ComError(UNKNOWN_COM_HRESULT)), strict=True)
+
+    debug_messages = [record.message for record in caplog.records if record.levelno == logging.DEBUG]
+    assert debug_messages == []
+
+
+@pytest.mark.parametrize(
+    ("fail_on_item", "make_error", "expected", "expected_text"),
+    [
+        pytest.param(False, lambda: _ComError(TRUST_HRESULT), VbaTrustRefusedError, "Trust access", id="count-trust"),
+        pytest.param(
+            False, lambda: _ComError(UNKNOWN_COM_HRESULT), VbaProjectUnavailableError, "0x8000FFFF", id="count-unknown"
+        ),
+        pytest.param(True, lambda: _ComError(TRUST_HRESULT), VbaTrustRefusedError, "Trust access", id="item-trust"),
+        pytest.param(
+            True, lambda: _ComError(UNKNOWN_COM_HRESULT), VbaProjectUnavailableError, "0x8000FFFF", id="item-unknown"
+        ),
+    ],
+)
+def test_strict_get_vb_project_classifies_a_vbprojects_enumeration_failure(
+    caplog: pytest.LogCaptureFixture,
+    fail_on_item: bool,
+    make_error: Any,
+    expected: type[Exception],
+    expected_text: str,
+) -> None:
+    """S3 H3: the strict enumeration-failure branch is classified and never swallowed."""
+    error = make_error()
+    app = _FakeApplication(vbprojects_error=error, vbprojects_error_on_item=fail_on_item)
+
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(expected) as raised:
+            get_vb_project(app, strict=True)
+
+    assert raised.value.__cause__ is error
+    assert expected_text in str(raised.value)
+    if expected is VbaProjectUnavailableError:
+        assert VBA_TRUST_PREREQUISITE not in str(raised.value)
+    assert [record.message for record in caplog.records if record.levelno == logging.DEBUG] == []
+
+
+def test_default_get_vb_project_keeps_the_enumeration_failure_visible() -> None:
+    """PRESERVE: the non-strict enumeration branch still re-raises the original error."""
+    error = RuntimeError("the project store is corrupt")
+
+    with pytest.raises(RuntimeError) as raised:
+        get_vb_project(_FakeApplication(vbprojects_error=error))
+
+    assert raised.value is error
+
+
+class _BoolHresultError(Exception):
+    """A defect whose ``hresult`` attribute is a bool, which is never an HRESULT."""
+
+    hresult = True
+
+
+def test_failing_hresults_reads_a_plain_high_bit_int_argument() -> None:
+    """S3 H4: the documented duck typing accepts a plain ``int`` ``args[0]``.
+
+    A high-bit (severity-1) status is a failing HRESULT whether it is spelled unsigned or
+    signed, and the classification is deliberately never tightened to require an
+    ``hresult`` attribute. A severity-0 status is not a failure and a ``bool`` is never
+    an HRESULT.
+    """
+    assert failing_hresults(_ArgsOnlyComError(0x80004005, "operational")) == (0x80004005,)
+    assert failing_hresults(_ArgsOnlyComError(-2147467259, "operational")) == (0x80004005,)
+    assert failing_hresults(_ArgsOnlyComError(1, "success status")) == ()
+    assert failing_hresults(_BoolHresultError(True)) == ()
 
 
 def test_default_get_vb_project_returns_the_first_project() -> None:

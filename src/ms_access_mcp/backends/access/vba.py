@@ -45,6 +45,10 @@ def failing_hresults(error: BaseException) -> tuple[int, ...]:
     are normalized to the unsigned 32-bit form so signed and unsigned spellings compare
     equal; ``bool`` is never an HRESULT, and a success (severity-0) code is not a failure.
 
+    A plain ``int`` that only ``args`` carries is deliberately accepted, exactly like an
+    ``hresult`` attribute: the classification is duck-typed and is never tightened to
+    require ``hresult`` (a high-bit, severity-1 plain int is a failing HRESULT).
+
     Args:
         error: Any raised error; only its exposed integer statuses are inspected.
 
@@ -149,10 +153,12 @@ def get_vb_project(access_app: Any, *, strict: bool = False) -> Any | None:
     try:
         vbe = access_app.VBE
     except Exception as exc:
+        if strict:
+            # Strict callers raise a classified failure, so the default swallow-and-DEBUG
+            # wording would describe an outcome that never happens here.
+            raise _vb_project_failure(exc) from exc
         logger.debug("vb project unavailable: %s", exc)
-        if not strict:
-            return None
-        raise _vb_project_failure(exc) from exc
+        return None
     try:
         count = vbe.VBProjects.Count
         for i in range(1, count + 1):
