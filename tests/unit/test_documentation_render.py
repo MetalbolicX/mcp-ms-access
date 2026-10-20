@@ -325,6 +325,7 @@ ENGINE_CONTAINER_METHOD = "engine_dao_containers"
 FORM_SHA = "a" * 64
 REPORT_SHA = "b" * 64
 MACRO_SHA = "c" * 64
+VBA_SHA = "d" * 64
 VBA_SOURCE = 'Attribute VB_Name = "modMain"\nSub Main()\nVBA_SOURCE_SENTINEL\nEnd Sub'
 FORM_SOURCE = "Version =20\nFORM_SOURCE_SENTINEL\nEnd\n"
 
@@ -441,6 +442,25 @@ def test_app_logic_vba_digest_gap_is_named_in_the_limitations() -> None:
     """The catalogue records no VBA digest today (evidence shape), so the gap is explicit."""
     markdown = render_document(catalogue_evidence()).markdown
     assert '- VBA module "modMain": source digest (sha256/bytes) is not recorded' in markdown
+
+
+def test_app_logic_vba_digest_and_byte_cells_render_without_a_gap() -> None:
+    """A recorded digest fills the VBA table cells and suppresses the digest gap."""
+    evidence = make_evidence()
+    evidence.app_logic = AppLogicEvidence(
+        content=[
+            app_content(
+                "vba_module",
+                "modMain",
+                {"type": "Standard", "procedures": [], "sha256": VBA_SHA, "bytes": 73},
+            )
+        ]
+    )
+
+    markdown = render_document(evidence).markdown
+
+    assert f"| modMain | Standard | 0 | `{VBA_SHA}` | 73 | `vba_module:modMain.content` |" in markdown
+    assert "source digest (sha256/bytes) is not recorded" not in markdown
 
 
 def test_app_logic_opt_in_source_is_referenced_by_evidence_id_and_never_inlined() -> None:

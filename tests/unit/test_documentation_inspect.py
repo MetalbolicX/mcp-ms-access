@@ -907,3 +907,201 @@ def test_service_accepts_the_source_opt_in_alongside_app_logic() -> None:
 def test_service_source_opt_in_defaults_off() -> None:
     parameter = inspect.signature(DocumentationInspectService.inspect).parameters["include_app_logic_source"]
     assert parameter.default is False
+
+
+# ---------------------------------------------------------------------------
+# DAO port normalization: ACE NUL padding, optional dates, per-property isolation
+# ---------------------------------------------------------------------------
+# These drive the production ``DaoInspectionPort`` over a fake DAO ``Database``
+# handle, so the normalization is observed through the port's public reads and not
+# by calling the module's private text/date helpers directly. No COM, no ACE.
+
+_ABSENT = object()
+
+
+def _dao_date(attribute: str, value: Any) -> Any:
+    """Model a DAO date read: missing attributes are absent, ``Exception``s raise."""
+    if value is _ABSENT:
+        msg = f"DAO Document does not expose {attribute}"
+        raise AttributeError(msg)
+    if isinstance(value, Exception):
+        raise value
+    return value
+
+
+class _FakeDaoDocument:
+    """DAO ``Document`` double for the two optional date attributes."""
+
+    def __init__(self, name: Any, *, last_updated: Any = _ABSENT, date_created: Any = _ABSENT) -> None:
+        self.Name = name
+        self._last_updated = last_updated
+        self._date_created = date_created
+
+    @property
+    def LastUpdated(self) -> Any:
+        return _dao_date("LastUpdated", self._last_updated)
+
+    @property
+    def DateCreated(self) -> Any:
+        return _dao_date("DateCreated", self._date_created)
+
+
+class _FakeDaoProperty:
+    """DAO ``Property`` double whose name or value read may fail."""
+
+    def __init__(self, name: Any, value: Any = "") -> None:
+        self._name = name
+        self._value = value
+
+    @property
+    def Name(self) -> Any:
+        if isinstance(self._name, Exception):
+            raise self._name
+        return self._name
+
+    @property
+    def Value(self) -> Any:
+        if isinstance(self._value, Exception):
+            raise self._value
+        return self._value
+
+
+class _FakeDaoContainer:
+    """DAO ``Container`` double exposing its ``Documents`` collection."""
+
+    def __init__(self, documents: list[Any]) -> None:
+        self.Documents = list(documents)
+
+
+class _FakeDaoDatabase:
+    """Fake DAO ``Database`` handle: per-container Documents plus Properties."""
+
+    def __init__(
+        self,
+        *,
+        documents: dict[str, list[Any]] | None = None,
+        properties: list[Any] | None = None,
+    ) -> None:
+        self.documents = documents or {}
+        self.Properties = list(properties or [])
+
+    def Containers(self, container_name: str) -> _FakeDaoContainer:
+        return _FakeDaoContainer(self.documents.get(container_name, []))
+
+
+class _InlineDaoDispatcher:
+    """Dispatcher double that runs every dispatched read inline over a fake handle."""
+
+    def __init__(self, database: _FakeDaoDatabase) -> None:
+        self.current_db = database
+
+    def call(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
+        return operation(*args, **kwargs)
+
+
+def test_dao_port_strips_ace_nul_padding_from_names_and_property_values() -> None:
+    """ACE pads engine strings with trailing NULs; evidence never carries them."""
+    database = _FakeDaoDatabase(
+        documents={"Forms": [_FakeDaoDocument("frmMain\x00\x00")]},
+        properties=[_FakeDaoProperty("AppTitle\x00", "Acme\x00\x00")],
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.list_container_objects("Forms") == [{"name": "frmMain"}]
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme"}
+
+
+def test_dao_port_omits_only_the_dates_the_engine_does_not_expose() -> None:
+    """An absent, raising, or null date is omitted; a readable one is recorded."""
+    database = _FakeDaoDatabase(
+        documents={
+            "Forms": [
+                _FakeDaoDocument("frmMain", last_updated="2024-01-02 10:00:00"),
+                _FakeDaoDocument("frmSales", last_updated=RuntimeError("DAO 3251"), date_created=None),
+                _FakeDaoDocument("frmOrders", last_updated="2024-02-03", date_created="2023-12-01"),
+            ]
+        }
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.list_container_objects("Forms") == [
+        {"name": "frmMain", "last_modified": "2024-01-02 10:00:00"},
+        {"name": "frmSales"},
+        {"name": "frmOrders", "last_modified": "2024-02-03", "date_created": "2023-12-01"},
+    ]
+
+
+def test_dao_port_keeps_sibling_properties_when_one_property_read_fails() -> None:
+    """One unreadable property (live DAO 5003251) never erases the whole catalogue."""
+    database = _FakeDaoDatabase(
+        properties=[
+            _FakeDaoProperty("AppTitle", "Acme"),
+            _FakeDaoProperty("Connection", RuntimeError("DAO 5003251")),
+            _FakeDaoProperty(RuntimeError("DAO 3265: property name unreadable"), "orphan"),
+            _FakeDaoProperty("StartupForm\x00", "frmMain"),
+        ]
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme", "StartupForm": "frmMain"}
+
+
+# ---------------------------------------------------------------------------
+# Service-side app-logic normalization: malformed container entries, startup values
+# ---------------------------------------------------------------------------
+
+
+def test_malformed_container_entries_are_filtered_and_only_name_and_dates_survive() -> None:
+    """A port's inventory is normalized to ``name`` plus readable date strings."""
+    fake = _app_logic_port(
+        container_objects={
+            "Forms": [
+                {"name": "frmMain", "last_modified": " 2024-01-02 ", "extra": "dropped"},
+                "not-an-entry",
+                {"name": None},
+                {"name": "   "},
+                {"noname": "frmMissing"},
+                {"name": "frmOrders", "last_modified": None, "date_created": 17},
+            ]
+        },
+        database_properties={},
+    )
+
+    document = inspect_with(fake, include_app_logic=True)
+
+    app_logic = document.app_logic
+    assert app_logic is not None
+    by_category = {item.category: item for item in app_logic.containers}
+    assert by_category["form_inventory"].objects.state == "observed"
+    assert by_category["form_inventory"].objects.value == [
+        {"name": "frmMain", "last_modified": "2024-01-02"},
+        {"name": "frmOrders"},
+    ]
+    # The other three containers were read and are known-empty, not failed.
+    assert [by_category[category].objects.value for category in ("report_inventory", "macro_inventory", "module_inventory")] == [[], [], []]
+    assert document.status == "complete"
+
+
+def test_startup_property_none_and_non_string_values_are_normalized_not_invented() -> None:
+    """A null value becomes an empty string; non-strings become their text, never ``None``."""
+    fake = _app_logic_port(
+        container_objects={},
+        database_properties={
+            "AppTitle": None,
+            "StartupForm": "frmMain",
+            "AllowFullMenus": -1,
+            "ShowNavigationPane": True,
+        },
+    )
+
+    document = inspect_with(fake, include_app_logic=True)
+
+    app_logic = document.app_logic
+    assert app_logic is not None
+    properties = {item.name: item.value for item in app_logic.startup_properties}
+    assert set(properties) == {"AppTitle", "StartupForm", "AllowFullMenus", "ShowNavigationPane"}
+    assert all(fact.state == "observed" for fact in properties.values())
+    assert properties["AppTitle"].value == ""
+    assert properties["StartupForm"].value == "frmMain"
+    assert properties["AllowFullMenus"].value == "-1"
+    assert properties["ShowNavigationPane"].value == "True"

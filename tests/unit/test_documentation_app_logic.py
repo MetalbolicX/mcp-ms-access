@@ -49,6 +49,7 @@ from ms_access_mcp.application.documentation_app_logic import (
     VbaTrustRefusedError,
     apply_app_logic_content,
 )
+from ms_access_mcp.application.documentation_render import render_document
 from ms_access_mcp.application.process_identity import AccessProcessIdentity
 from ms_access_mcp.errors import AccessMcpError
 
@@ -492,6 +493,45 @@ def test_vba_modules_always_carry_source_digest_and_bytes_without_source(tmp_pat
     module_opt = next(item for item in opt_in.content if item.category == "vba_module")
     assert module_opt.content.value["source"] == text
     assert module_opt.content.value["sha256"] == module.content.value["sha256"]
+
+
+def test_reader_vba_digest_round_trips_and_renders_without_the_missing_digest_gap(
+    tmp_path: Path,
+) -> None:
+    """Positive digest path: the reader's VBA digest survives evidence and reaches Markdown.
+
+    The digest is validation-visible (``to_dict`` validates) and byte-stable across the
+    serialization round trip, and the rendered VBA table carries it. Because the digest
+    *is* recorded, the "source digest is not recorded" limitation line must be absent,
+    and the raw module text stays out of Markdown while the source opt-in is off.
+    """
+    source = _source(tmp_path)
+    text = 'Attribute VB_Name = "modMain"\nSub Main()\nVBA_DIGEST_SENTINEL\nEnd Sub\n'
+    session = _FakeSession(
+        objects=_default_objects(),
+        exports=_default_exports(),
+        vba_modules=[{"name": "modMain", "type": "Standard", "procedures": ["Main"], "source": text}],
+    )
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+    document = apply_app_logic_content(_minimal_document(), content)
+    encoded = text.encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+
+    decoded = EvidenceDoc.from_dict(json.loads(json.dumps(document.to_dict())))
+
+    assert decoded == document
+    assert decoded.app_logic is not None
+    module = next(item for item in decoded.app_logic.content if item.category == "vba_module")
+    assert module.content.value == {
+        "type": "Standard",
+        "procedures": ["Main"],
+        "sha256": digest,
+        "bytes": len(encoded),
+    }
+    markdown = render_document(decoded).markdown
+    assert f"| modMain | Standard | 1 — Main | `{digest}` | {len(encoded)} | `vba_module:modMain.content` |" in markdown
+    assert "source digest (sha256/bytes) is not recorded" not in markdown
+    assert "VBA_DIGEST_SENTINEL" not in markdown
 
 
 # ---------------------------------------------------------------------------
