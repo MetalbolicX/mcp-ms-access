@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from ms_access_mcp.application.documentation import (
@@ -221,6 +223,19 @@ def vba_content(value: object = None, *, name: str = "modMain", state: str = "ob
     return ContentObjectEvidence("vba_module", name, "access-application", fact)
 
 
+def form_content(value: object = None, *, name: str = "frmMain", state: str = "observed", reason: str | None = None) -> ContentObjectEvidence:
+    prop = provenance("form", name, "content")
+    fact = FactStatus.observed(value, prop) if state == "observed" else getattr(FactStatus, state)(reason, prop)
+    return ContentObjectEvidence("form", name, "access-application", fact)
+
+
+# The two validator branches that share the digest/size contract (S3 H1).
+CONTENT_BRANCHES = [
+    pytest.param(vba_content, "Observed vba_module content", id="vba_module"),
+    pytest.param(form_content, "Observed form/report/macro content", id="form"),
+]
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -270,3 +285,71 @@ def test_non_observed_vba_module_family_fact_needs_no_digest(state: str) -> None
     """S1: a non-observed family fact returns early and stays valid without a digest."""
     fact = vba_content(None, name="<all objects>", state=state, reason="VBProject access failed")
     assert fact.validate() is None
+
+
+@pytest.mark.parametrize(
+    "digest",
+    [
+        "D" * 64,
+        "d" * 63,
+        "d" * 65,
+        "g" * 64,
+        " d" * 32,
+        "sha256:" + "d" * 64,
+    ],
+    ids=["uppercase", "too-short", "too-long", "non-hex", "whitespace", "prefixed"],
+)
+@pytest.mark.parametrize(("make_content", "prefix"), CONTENT_BRANCHES)
+def test_observed_content_sha256_must_be_64_lowercase_hex(
+    make_content: Callable[..., ContentObjectEvidence], prefix: str, digest: str
+) -> None:
+    """S3 H1: a recorded digest must be exactly 64 lowercase hex characters."""
+    with pytest.raises(ValueError) as excinfo:
+        make_content({"sha256": digest, "bytes": 42}).validate()
+
+    assert str(excinfo.value) == f"{prefix} requires a 64-character lowercase hexadecimal sha256"
+
+
+@pytest.mark.parametrize(("make_content", "prefix"), CONTENT_BRANCHES)
+def test_observed_content_byte_size_must_not_be_negative(
+    make_content: Callable[..., ContentObjectEvidence], prefix: str
+) -> None:
+    """S3 H1: a byte size is a count, so a negative integer is rejected in both branches."""
+    with pytest.raises(ValueError) as excinfo:
+        make_content({"sha256": VBA_SHA256, "bytes": -1}).validate()
+
+    assert str(excinfo.value) == f"{prefix} requires a non-negative byte size"
+
+
+@pytest.mark.parametrize("size", [0, 4096])
+@pytest.mark.parametrize(("make_content", "prefix"), CONTENT_BRANCHES)
+def test_observed_content_accepts_zero_and_positive_byte_sizes(
+    make_content: Callable[..., ContentObjectEvidence], prefix: str, size: int
+) -> None:
+    """S3 H1: zero and positive sizes stay valid, so an empty export is still recorded."""
+    assert make_content({"sha256": VBA_SHA256, "bytes": size}).validate() is None
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ({"type": "Standard", "bytes": 42}, "Observed vba_module content requires a sha256 string"),
+        (
+            {"type": "Standard", "sha256": 42, "bytes": 42},
+            "Observed vba_module content requires a sha256 string",
+        ),
+        ({"type": "Standard", "sha256": VBA_SHA256}, "Observed vba_module content requires a byte size integer"),
+        (
+            {"type": "Standard", "sha256": VBA_SHA256, "bytes": True},
+            "Observed vba_module content requires a byte size integer",
+        ),
+    ],
+    ids=["missing-digest", "non-string-digest", "missing-size", "bool-size"],
+)
+def test_the_shape_checks_keep_the_existing_messages_for_missing_and_wrong_types(
+    value: dict[str, object], message: str
+) -> None:
+    """PRESERVE: a valid digest with a missing/bool size still reports the original message."""
+    with pytest.raises(ValueError) as excinfo:
+        vba_content(value).validate()
+    assert str(excinfo.value) == message

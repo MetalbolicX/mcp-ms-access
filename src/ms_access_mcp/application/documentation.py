@@ -510,6 +510,10 @@ _SAVE_AS_TEXT_CATEGORIES = frozenset({"form", "report", "macro"})
 _REFERENCE_PROPERTIES = ("path", "guid", "major", "minor", "built_in")
 REFERENCE_PROPERTIES = _REFERENCE_PROPERTIES
 
+# Agreement 9 records the source digest as a lowercase hex SHA-256, exactly as
+# ``hashlib.hexdigest`` emits it, so a reader-independent consumer can compare it.
+_SHA256_HEX_SHAPE = re.compile(r"[0-9a-f]{64}")
+
 
 @dataclass
 class ContentObjectEvidence:
@@ -520,7 +524,10 @@ class ContentObjectEvidence:
     UTF-8) and its ``bytes`` size; for a vba_module the observed value carries the
     module ``type``, its ``procedures`` where readable, and the ``sha256``/``bytes`` of
     the module source's UTF-8 encoding (agreement 9: a content hash per source
-    object, always). The raw ``source`` text is embedded only under the explicit
+    object, always). Both branches require ``sha256`` to be exactly 64 lowercase hex
+    characters (the ``hashlib.hexdigest`` form) and ``bytes`` to be a non-negative
+    integer, so a malformed digest or a negative size is rejected at the seam instead
+    of reaching a report. The raw ``source`` text is embedded only under the explicit
     ``include_app_logic_source`` opt-in (R1). A whole family that cannot be read at
     all is a single entry with the family scope name whose ``content`` is
     ``unavailable``/``failed``.
@@ -555,15 +562,27 @@ class ContentObjectEvidence:
                 raise ValueError("Observed form/report/macro content carries only sha256, bytes, and source")
             if not isinstance(value.get("sha256"), str) or not value["sha256"]:
                 raise ValueError("Observed form/report/macro content requires a sha256 string")
+            if not _SHA256_HEX_SHAPE.fullmatch(value["sha256"]):
+                raise ValueError(
+                    "Observed form/report/macro content requires a 64-character lowercase hexadecimal sha256"
+                )
             if not isinstance(value.get("bytes"), int) or isinstance(value["bytes"], bool):
                 raise ValueError("Observed form/report/macro content requires a byte size integer")
+            if value["bytes"] < 0:
+                raise ValueError("Observed form/report/macro content requires a non-negative byte size")
         else:
             if set(value) - {"type", "procedures", "source", "sha256", "bytes"}:
                 raise ValueError("Observed vba_module content carries only type, procedures, sha256, bytes, and source")
             if not isinstance(value.get("sha256"), str) or not value["sha256"]:
                 raise ValueError("Observed vba_module content requires a sha256 string")
+            if not _SHA256_HEX_SHAPE.fullmatch(value["sha256"]):
+                raise ValueError(
+                    "Observed vba_module content requires a 64-character lowercase hexadecimal sha256"
+                )
             if not isinstance(value.get("bytes"), int) or isinstance(value["bytes"], bool):
                 raise ValueError("Observed vba_module content requires a byte size integer")
+            if value["bytes"] < 0:
+                raise ValueError("Observed vba_module content requires a non-negative byte size")
             if "type" in value and (not isinstance(value["type"], str) or not value["type"]):
                 raise ValueError("Observed vba_module type must be a non-empty string")
             procedures = value.get("procedures")
