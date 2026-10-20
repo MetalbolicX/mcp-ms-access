@@ -560,6 +560,10 @@ class ContentObjectEvidence:
         else:
             if set(value) - {"type", "procedures", "source", "sha256", "bytes"}:
                 raise ValueError("Observed vba_module content carries only type, procedures, sha256, bytes, and source")
+            if not isinstance(value.get("sha256"), str) or not value["sha256"]:
+                raise ValueError("Observed vba_module content requires a sha256 string")
+            if not isinstance(value.get("bytes"), int) or isinstance(value["bytes"], bool):
+                raise ValueError("Observed vba_module content requires a byte size integer")
             if "type" in value and (not isinstance(value["type"], str) or not value["type"]):
                 raise ValueError("Observed vba_module type must be a non-empty string")
             procedures = value.get("procedures")

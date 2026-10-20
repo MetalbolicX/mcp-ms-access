@@ -934,7 +934,10 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   family — form/report/macro exports and VBA modules — always carries `sha256`/`bytes`
   (VBA digests are over the UTF-8 encoding of the module source, since modules have no
   `SaveAsText` file); an earlier known-gap note about missing VBA digests is superseded
-  by the `a33fb5b` fix.
+  by the `a33fb5b` fix. Validation now holds that parity: observed `vba_module` evidence
+  must carry a non-empty `sha256` string and an integer `bytes`, exactly like observed
+  `SaveAsText` content, so older or hand-built evidence that lacks the digest no longer
+  validates.
 
 ### 8.2 Control-flow gate outcomes (evidence archives)
 

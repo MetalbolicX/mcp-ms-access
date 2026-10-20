@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from ms_access_mcp.application.documentation import (
+    ContentObjectEvidence,
     Coverage,
     CoverageStatus,
     EvidenceDoc,
@@ -209,3 +210,63 @@ def test_redact_connection_secrets_handles_multiple_escaped_pairs_and_keeps_cont
     redacted = redact_connection_secrets("PWD={can}}ary};UID={u}}v} tail")
     assert redacted == "PWD=***;UID=*** tail"
     assert "ary" not in redacted and "u}}v" not in redacted
+
+
+VBA_SHA256 = "d" * 64
+
+
+def vba_content(value: object = None, *, name: str = "modMain", state: str = "observed", reason: str | None = None) -> ContentObjectEvidence:
+    prop = provenance("vba_module", name, "content")
+    fact = FactStatus.observed(value, prop) if state == "observed" else getattr(FactStatus, state)(reason, prop)
+    return ContentObjectEvidence("vba_module", name, "access-application", fact)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"type": "Standard", "procedures": ["Main"], "bytes": 42},
+        {"type": "Standard", "procedures": ["Main"], "sha256": "", "bytes": 42},
+        {"type": "Standard", "procedures": ["Main"], "sha256": 42, "bytes": 42},
+    ],
+    ids=["missing", "empty", "non-string"],
+)
+def test_observed_vba_module_content_requires_a_sha256_string(value: dict[str, object]) -> None:
+    """S1: observed VBA evidence carries a digest exactly like SaveAsText content."""
+    with pytest.raises(ValueError, match="Observed vba_module content requires a sha256 string") as excinfo:
+        vba_content(value).validate()
+    assert str(excinfo.value) == "Observed vba_module content requires a sha256 string"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"type": "Standard", "sha256": VBA_SHA256},
+        {"type": "Standard", "sha256": VBA_SHA256, "bytes": True},
+        {"type": "Standard", "sha256": VBA_SHA256, "bytes": 42.0},
+    ],
+    ids=["missing", "bool", "float"],
+)
+def test_observed_vba_module_content_requires_a_byte_size_integer(value: dict[str, object]) -> None:
+    """S1: a byte size must be an int and never a bool or a float."""
+    with pytest.raises(ValueError, match="Observed vba_module content requires a byte size integer") as excinfo:
+        vba_content(value).validate()
+    assert str(excinfo.value) == "Observed vba_module content requires a byte size integer"
+
+
+def test_minimal_observed_vba_module_content_with_a_digest_is_valid() -> None:
+    """S1: type plus procedures plus the digest is the minimal accepted shape."""
+    evidence = vba_content({"type": "Standard", "procedures": ["Main"], "sha256": VBA_SHA256, "bytes": 42})
+    assert evidence.validate() is None
+    assert ContentObjectEvidence.from_dict(evidence.to_dict()) == evidence
+
+
+def test_observed_vba_module_content_stays_valid_without_type_and_procedures() -> None:
+    """S1: ``type``/``procedures`` stay optional; only the digest is required."""
+    assert vba_content({"sha256": VBA_SHA256, "bytes": 42}).validate() is None
+
+
+@pytest.mark.parametrize("state", ["failed", "unavailable"])
+def test_non_observed_vba_module_family_fact_needs_no_digest(state: str) -> None:
+    """S1: a non-observed family fact returns early and stays valid without a digest."""
+    fact = vba_content(None, name="<all objects>", state=state, reason="VBProject access failed")
+    assert fact.validate() is None

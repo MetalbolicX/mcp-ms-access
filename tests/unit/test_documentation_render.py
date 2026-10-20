@@ -371,7 +371,7 @@ def catalogue_evidence() -> EvidenceDoc:
         containers=[app_container("form_inventory", "Forms", [{"name": "frmMain"}])],
         startup_properties=[app_startup("AppTitle", "My App")],
         content=[
-            app_content("vba_module", "modMain", {"type": "Standard", "procedures": ["Main", "Helper"], "source": VBA_SOURCE}),
+            app_content("vba_module", "modMain", {"type": "Standard", "procedures": ["Main", "Helper"], "sha256": VBA_SHA, "bytes": 73, "source": VBA_SOURCE}),
             app_content("form", "frmMain", {"sha256": FORM_SHA, "bytes": 5130, "source": FORM_SOURCE}),
             app_content("report", "rptSales", {"sha256": REPORT_SHA, "bytes": 120}),
             app_content("macro", "AutoExec", {"sha256": MACRO_SHA, "bytes": 30}),
@@ -396,7 +396,7 @@ def test_app_logic_renders_catalogue_names_hashes_references_and_startup_values(
     markdown = render_document(catalogue_evidence()).markdown
     assert "## Application logic" in markdown
     assert "### VBA modules" in markdown
-    assert "| modMain | Standard | 2 — Main, Helper | — | — | `vba_module:modMain.content` |" in markdown
+    assert f"| modMain | Standard | 2 — Main, Helper | `{VBA_SHA}` | 73 | `vba_module:modMain.content` |" in markdown
     assert "### Forms" in markdown
     assert f"| frmMain | `{FORM_SHA}` | 5130 | `form:frmMain.content` |" in markdown
     assert f"| rptSales | `{REPORT_SHA}` | 120 | `report:rptSales.content` |" in markdown
@@ -436,12 +436,6 @@ def test_app_logic_excluded_fact_renders_a_coverage_note_without_a_gap() -> None
     assert '- Startup property "AppTitle": excluded — Startup values are excluded by caller policy' in report.markdown
     assert "### Limitations" not in report.markdown
     assert report.status == "complete"
-
-
-def test_app_logic_vba_digest_gap_is_named_in_the_limitations() -> None:
-    """The catalogue records no VBA digest today (evidence shape), so the gap is explicit."""
-    markdown = render_document(catalogue_evidence()).markdown
-    assert '- VBA module "modMain": source digest (sha256/bytes) is not recorded' in markdown
 
 
 def test_app_logic_vba_digest_and_byte_cells_render_without_a_gap() -> None:
