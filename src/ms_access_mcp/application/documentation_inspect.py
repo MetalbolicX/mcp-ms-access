@@ -150,6 +150,8 @@ class InspectionPort(Protocol):
 
     def get_database_properties(self) -> dict[str, str]: ...
 
+    def database_property_omissions(self) -> list[str]: ...
+
     def close(self) -> None: ...
 
 
@@ -206,6 +208,8 @@ class DaoInspectionPort:
     def __init__(self, dispatcher: Any) -> None:
         self._dispatcher = _OwnerThreadDispatcher(dispatcher)
         self._inspector = SchemaInspector(self._dispatcher)
+        # Populated in the dispatcher's owner thread by one ordered property read.
+        self._property_omissions: list[str] = []
 
     def capabilities(self) -> InspectionCapabilities:
         return InspectionCapabilities()
@@ -236,6 +240,18 @@ class DaoInspectionPort:
         """Read every DAO database property on the dispatcher owner thread."""
         return self._dispatcher.call(self._read_database_properties)
 
+    def database_property_omissions(self) -> list[str]:
+        """Return the sanitized warning for the properties the last read skipped.
+
+        The DAO read isolates every property, so an unreadable one is omitted from the
+        mapping instead of erasing the catalogue. That omission is visible through this
+        one warning rather than being silent (S2 A3): it states how many properties were
+        skipped and names only those whose *name* was itself readable, never the failure
+        text. An uninterrupted read records nothing here, so a successful run's evidence
+        stays byte-identical.
+        """
+        return list(self._property_omissions)
+
     def _read_container_objects(self, container_name: str) -> list[dict[str, Any]]:
         """Read container Documents, keeping cheap timestamp reads optional.
 
@@ -265,15 +281,26 @@ class DaoInspectionPort:
         one unreadable value must not erase the whole catalogue — the same
         discipline the fixture probes use. Unreadable properties are omitted;
         allowlisted startup properties that do not exist on a database are simply
-        absent from the mapping.
+        absent from the mapping. The omission is never silent: the skipped count (and
+        the names that were themselves readable) is recorded as one sanitized warning
+        for the service to add to the evidence (S2 A3).
         """
         database = self._dispatcher.current_db
         properties: dict[str, str] = {}
+        skipped = 0
+        readable_names: list[str] = []
         for prop in database.Properties:
+            name: str | None = None
             try:
-                properties[_engine_text(prop.Name)] = _engine_text(prop.Value)
+                name = _engine_text(prop.Name)
+                properties[name] = _engine_text(prop.Value)
             except Exception:  # noqa: BLE001 - one unreadable value never erases the rest
-                continue
+                skipped += 1
+                if name is not None:
+                    # Only a name that was actually read is reported; an unreadable
+                    # name is counted but never guessed or invented.
+                    readable_names.append(name)
+        self._property_omissions = _property_omission_warnings(skipped, readable_names)
         return properties
 
     def close(self) -> None:
@@ -480,6 +507,10 @@ class OdbcInspectionPort:
             "Access ODBC does not expose DAO database properties; startup properties "
             "require the DAO engine"
         )
+
+    def database_property_omissions(self) -> list[str]:
+        """Report no property omission: ODBC has no property catalogue to skip in."""
+        return []
 
     def close(self) -> None:
         """Close the connection only when this port owns it.
@@ -854,6 +885,10 @@ class DocumentationInspectService:
                 coverage.queries.unsupported[query.name] = evidence.parameters.reason or "Query parameters are unavailable"
             query_evidence.append(evidence)
 
+        app_logic: AppLogicEvidence | None = None
+        warnings: list[str] = []
+        if include_app_logic:
+            app_logic, warnings = _read_app_logic(port)
         document = EvidenceDoc(
             run=RunMetadata(
                 run_id=str(uuid4()),
@@ -872,9 +907,11 @@ class DocumentationInspectService:
             tables=table_evidence,
             relationships=relationship_evidence,
             queries=query_evidence,
+            # Only a real omission adds a warning, so a fully readable run is unchanged.
+            warnings=warnings,
             # ``None`` unless the caller opted in: the default payload keeps the exact
             # v1 ``data`` member set, so a default call stays byte-identical (S4).
-            app_logic=_read_app_logic(port) if include_app_logic else None,
+            app_logic=app_logic,
         )
         # Serializing at the seam both validates the document and enforces the evidence
         # byte cap for generated evidence; frontends serialize the returned document
@@ -949,6 +986,26 @@ def _startup_property_provenance(name: str) -> FactProvenance:
     return FactProvenance("startup_property", name, "value")
 
 
+def _property_omission_warnings(skipped: int, readable_names: list[str]) -> list[str]:
+    """Compose the one sanitized warning for properties a catalogue read skipped.
+
+    The wording is evidence-facing, so it carries no exception text and no engine
+    internals: only the skipped count and the names whose own read succeeded (S2 A3).
+    A complete read produces no warning at all, which keeps a successful run's evidence
+    byte-identical.
+    """
+    if skipped <= 0:
+        return []
+    plural = skipped != 1
+    warning = (
+        f"{skipped} database propert{'ies' if plural else 'y'} could not be read and "
+        f"{'were' if plural else 'was'} omitted from the startup-property catalogue"
+    )
+    if readable_names:
+        warning += f" (readable names: {', '.join(readable_names)})"
+    return [warning]
+
+
 def _startup_property_value(value: Any) -> str:
     """Record a property value as a string; ``None`` is an empty string, never ``"None"``."""
     if value is None:
@@ -956,13 +1013,15 @@ def _startup_property_value(value: Any) -> str:
     return value if isinstance(value, str) else str(value)
 
 
-def _read_app_logic(port: InspectionPort) -> AppLogicEvidence:
+def _read_app_logic(port: InspectionPort) -> tuple[AppLogicEvidence, list[str]]:
     """Read the Tier 1 engine-level container inventory and startup properties.
 
     Every container reads in its own exception boundary and every startup property is
     its own fact, so one failed read never erases another category. An engine that
     cannot expose DAO Containers/properties at all (ODBC) is ``unavailable`` with the
-    port's engine-limitation explanation, never a fabricated empty list.
+    port's engine-limitation explanation, never a fabricated empty list. The returned
+    warnings are the port's sanitized property-omission warnings (S2 A3); they are
+    empty whenever the property catalogue was read completely.
     """
     containers: list[ContainerInventoryEvidence] = []
     for category, container in _CONTAINER_CATEGORIES:
@@ -977,10 +1036,13 @@ def _read_app_logic(port: InspectionPort) -> AppLogicEvidence:
         else:
             fact = FactStatus.observed(_container_object_values(objects), provenance)
         containers.append(ContainerInventoryEvidence(category, container, ENGINE_DAO_CONTAINERS_METHOD, fact))
-    return AppLogicEvidence(containers=containers, startup_properties=_read_startup_properties(port))
+    startup_properties, warnings = _read_startup_properties(port)
+    return AppLogicEvidence(containers=containers, startup_properties=startup_properties), warnings
 
 
-def _read_startup_properties(port: InspectionPort) -> list[StartupPropertyEvidence]:
+def _read_startup_properties(
+    port: InspectionPort,
+) -> tuple[list[StartupPropertyEvidence], list[str]]:
     """Read every allowlisted startup property as its own engine-level fact."""
     names = sorted(_STARTUP_PROPERTY_ALLOWLIST)
     try:
@@ -993,7 +1055,7 @@ def _read_startup_properties(port: InspectionPort) -> list[StartupPropertyEviden
                 FactStatus.unavailable(_reason(gap), _startup_property_provenance(name)),
             )
             for name in names
-        ]
+        ], []
     except Exception as error:
         return [
             StartupPropertyEvidence(
@@ -1002,7 +1064,7 @@ def _read_startup_properties(port: InspectionPort) -> list[StartupPropertyEviden
                 FactStatus.failed(_reason(error), _startup_property_provenance(name)),
             )
             for name in names
-        ]
+        ], []
     return [
         StartupPropertyEvidence(
             name,
@@ -1011,7 +1073,7 @@ def _read_startup_properties(port: InspectionPort) -> list[StartupPropertyEviden
         )
         for name in names
         if name in raw
-    ]
+    ], port.database_property_omissions()
 
 
 def _provenance(kind: str, name: str, prop: str) -> FactProvenance:

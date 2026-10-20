@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -32,6 +33,8 @@ class FakePort:
     closed: bool = False
     container_objects: dict[str, Any] | None = None
     database_properties: dict[str, str] | Exception | None = None
+    # Sanitized warnings the port recorded while reading the property catalogue (S2 A3).
+    property_omissions: list[str] = field(default_factory=list)
     # Records every engine-level app-logic read, so "default off means never read" is
     # observable rather than inferred.
     app_logic_calls: list[str] = field(default_factory=list)
@@ -99,6 +102,9 @@ class FakePort:
             raise self.database_properties
         return self.database_properties
 
+    def database_property_omissions(self) -> list[str]:
+        return list(self.property_omissions)
+
     def close(self) -> None:
         self.closed = True
 
@@ -114,6 +120,7 @@ def port(
     caps: InspectionCapabilities | None = None,
     container_objects: dict[str, Any] | None = None,
     database_properties: dict[str, str] | Exception | None = None,
+    database_property_omissions: list[str] | None = None,
 ) -> FakePort:
     return FakePort(
         tables=[] if tables is None else tables,
@@ -125,6 +132,7 @@ def port(
         caps=caps if caps is not None else InspectionCapabilities(),
         container_objects=container_objects,
         database_properties=database_properties,
+        property_omissions=[] if database_property_omissions is None else database_property_omissions,
     )
 
 
@@ -154,6 +162,7 @@ def test_fake_port_signatures_match_production_port() -> None:
         "get_relationships",
         "get_queries",
         "get_query_parameters",
+        "database_property_omissions",
         "close",
     ):
         assert inspect.signature(getattr(FakePort, method_name)) == inspect.signature(
@@ -713,8 +722,13 @@ def _app_logic_port(
     *,
     container_objects: dict[str, Any] | None = None,
     database_properties: dict[str, str] | Exception | None = None,
+    database_property_omissions: list[str] | None = None,
 ) -> FakePort:
-    return port(container_objects=container_objects, database_properties=database_properties)
+    return port(
+        container_objects=container_objects,
+        database_properties=database_properties,
+        database_property_omissions=database_property_omissions,
+    )
 
 
 def test_include_app_logic_defaults_off_and_keeps_the_v1_evidence_shape() -> None:
@@ -1031,6 +1045,30 @@ def test_dao_port_omits_only_the_dates_the_engine_does_not_expose() -> None:
     ]
 
 
+def test_dao_port_records_a_real_datetime_date_as_its_stripped_string() -> None:
+    """S3 H4: a DAO date is a real ``datetime``, recorded as the documented stripped text."""
+    database = _FakeDaoDatabase(
+        documents={
+            "Forms": [
+                _FakeDaoDocument(
+                    "frmMain",
+                    last_updated=datetime(2024, 1, 2, 10, 30, 15),
+                    date_created=datetime(2023, 12, 1, 0, 0, 0),
+                )
+            ]
+        }
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.list_container_objects("Forms") == [
+        {
+            "name": "frmMain",
+            "last_modified": "2024-01-02 10:30:15",
+            "date_created": "2023-12-01 00:00:00",
+        }
+    ]
+
+
 def test_dao_port_keeps_sibling_properties_when_one_property_read_fails() -> None:
     """One unreadable property (live DAO 5003251) never erases the whole catalogue."""
     database = _FakeDaoDatabase(
@@ -1044,6 +1082,55 @@ def test_dao_port_keeps_sibling_properties_when_one_property_read_fails() -> Non
     dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
 
     assert dao_port.get_database_properties() == {"AppTitle": "Acme", "StartupForm": "frmMain"}
+
+
+def test_dao_port_reports_the_skipped_property_count_and_readable_names() -> None:
+    """S2 A3: omissions are still omitted, and one warning names how many were skipped."""
+    database = _FakeDaoDatabase(
+        properties=[
+            _FakeDaoProperty("AppTitle", "Acme"),
+            _FakeDaoProperty("Connection", RuntimeError("DAO 5003251")),
+            _FakeDaoProperty(RuntimeError("DAO 3265: property name unreadable"), "orphan"),
+            _FakeDaoProperty("StartupForm\x00", "frmMain"),
+        ]
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme", "StartupForm": "frmMain"}
+    # One sanitized warning: the count plus only the names that were themselves readable.
+    assert dao_port.database_property_omissions() == [
+        "2 database properties could not be read and were omitted from the "
+        "startup-property catalogue (readable names: Connection)"
+    ]
+    # The failure detail never reaches the warning: only the readable name is echoed.
+    assert all("5003251" not in warning and "3265" not in warning for warning in dao_port.database_property_omissions())
+
+
+def test_dao_port_reports_a_single_skipped_property_without_a_readable_name() -> None:
+    """S2 A3: an unreadable name is counted but never guessed or invented."""
+    database = _FakeDaoDatabase(
+        properties=[
+            _FakeDaoProperty("AppTitle", "Acme"),
+            _FakeDaoProperty(RuntimeError("DAO 3265: property name unreadable"), "orphan"),
+        ]
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme"}
+    assert dao_port.database_property_omissions() == [
+        "1 database property could not be read and was omitted from the startup-property catalogue"
+    ]
+
+
+def test_dao_port_reports_no_omission_warning_when_every_property_is_readable() -> None:
+    """S2 A3/S4: a fully readable catalogue adds no warning, so success stays identical."""
+    database = _FakeDaoDatabase(properties=[_FakeDaoProperty("AppTitle", "Acme")])
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    # Before any read there is nothing to report.
+    assert dao_port.database_property_omissions() == []
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme"}
+    assert dao_port.database_property_omissions() == []
 
 
 # ---------------------------------------------------------------------------
@@ -1079,6 +1166,7 @@ def test_malformed_container_entries_are_filtered_and_only_name_and_dates_surviv
     ]
     # The other three containers were read and are known-empty, not failed.
     assert [by_category[category].objects.value for category in ("report_inventory", "macro_inventory", "module_inventory")] == [[], [], []]
+    assert [by_category[category].objects.state for category in ("report_inventory", "macro_inventory", "module_inventory")] == ["observed", "observed", "observed"]
     assert document.status == "complete"
 
 
@@ -1105,3 +1193,52 @@ def test_startup_property_none_and_non_string_values_are_normalized_not_invented
     assert properties["StartupForm"].value == "frmMain"
     assert properties["AllowFullMenus"].value == "-1"
     assert properties["ShowNavigationPane"].value == "True"
+
+
+def test_include_app_logic_forwards_one_skipped_property_warning_without_a_status_change() -> None:
+    """S2 A3: the port's omission warning reaches ``warnings``; facts/status do not move."""
+    warning = (
+        "2 database properties could not be read and were omitted from the "
+        "startup-property catalogue (readable names: Connection)"
+    )
+    fake = _app_logic_port(
+        container_objects={},
+        database_properties={"AppTitle": "Acme", "StartupForm": "frmMain"},
+        database_property_omissions=[warning],
+    )
+
+    document = inspect_with(fake, include_app_logic=True)
+
+    # Exactly one warning, on the success path, and never a status change.
+    assert document.warnings == [warning]
+    assert document.to_dict()["warnings"] == [warning]
+    assert document.status == "complete"
+    # The readable siblings are unchanged observed facts; nothing was invented.
+    assert document.app_logic is not None
+    properties = {item.name: item.value for item in document.app_logic.startup_properties}
+    assert set(properties) == {"AppTitle", "StartupForm"}
+    assert all(fact.state == "observed" for fact in properties.values())
+
+
+def test_include_app_logic_success_carries_no_property_omission_warning() -> None:
+    """S2 A3/S4: a fully readable catalogue keeps the successful payload unchanged."""
+    fake = _app_logic_port(container_objects={}, database_properties={"AppTitle": "Acme"})
+
+    document = inspect_with(fake, include_app_logic=True)
+
+    assert document.warnings == []
+    assert document.status == "complete"
+
+
+def test_property_omission_warning_is_never_read_without_the_app_logic_opt_in() -> None:
+    """PRESERVE: default-off never reads properties, so it can never gain a warning."""
+    fake = _app_logic_port(
+        container_objects={},
+        database_properties={"AppTitle": "Acme"},
+        database_property_omissions=["1 database property could not be read"],
+    )
+
+    document = inspect_with(fake)
+
+    assert document.warnings == []
+    assert fake.app_logic_calls == []
