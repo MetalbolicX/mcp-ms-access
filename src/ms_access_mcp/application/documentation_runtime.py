@@ -38,7 +38,13 @@ Design guarantees:
   partial evidence. Cleanup that cannot be established raises explicitly rather than
   silently orphaning the child, and never blocks on a child pipe still held open by a
   surviving child: a stream whose reader/writer thread is still blocked is left to its
-  own daemon thread instead of being closed.
+  own daemon thread instead of being closed. A failure that used to be silent is now
+  reported through the channel that already exists: a failed pre-spawn Access baseline
+  listing becomes one sanitized ``EvidenceDoc.warnings`` entry (the baseline itself stays
+  the empty kill-denying set), and an un-establishable cleanup message appends each
+  unresolved PID's verifier detail plus the class name of any swallowed kill error. No
+  containment decision -- which PID is killed, whether a kill is retried, or whether
+  cleanup counts as established -- depends on that reporting.
 """
 
 from __future__ import annotations
@@ -63,7 +69,12 @@ from .documentation_worker import (
     encode_request,
     split_access_identity_frames,
 )
-from .process_identity import AccessTermination, list_msaccess_pids, terminate_verified_access
+from .process_identity import (
+    AccessBaseline,
+    AccessTermination,
+    read_msaccess_baseline,
+    terminate_verified_access,
+)
 
 # Poll cadence for the deadline/oversize supervisor loop. Small enough to notice a
 # terminated child promptly, large enough not to busy-spin.
@@ -73,6 +84,42 @@ _READ_CHUNK_BYTES = 65536
 
 Launcher = Callable[[], "subprocess.Popen[bytes]"]
 AccessPidLister = Callable[[], set[int]]
+AccessBaselineReader = Callable[[], AccessBaseline]
+
+# One sanitized warning for a failed baseline listing: the error *class* is the only part of
+# the failure that can be published, because a probe error message may carry paths or
+# credentials. The text states the unchanged kill semantics so the warning never reads as an
+# authorization to kill.
+_BASELINE_LISTING_WARNING = (
+    "Access process baseline listing failed ({error_class}); the pre-spawn MSACCESS.EXE "
+    "baseline was treated as empty and every owned-Access kill still requires a live "
+    "identity match"
+)
+
+
+def _resolve_baseline_reader(
+    lister: AccessPidLister | None,
+    reader: AccessBaselineReader | None,
+) -> AccessBaselineReader:
+    """Pick the baseline seam: an explicit outcome reader, else the set-returning lister.
+
+    The real reader is :func:`read_msaccess_baseline`, which reports a failed enumeration
+    instead of hiding it behind the empty set. The older ``access_pid_lister`` seam is kept
+    for callers that only inject a PID set; it is adapted to the same outcome shape, with a
+    raised lister error reported as the failure it is.
+    """
+    if reader is not None:
+        return reader
+    if lister is None:
+        return read_msaccess_baseline
+
+    def read_from_lister() -> AccessBaseline:
+        try:
+            return AccessBaseline(pids=frozenset(lister()), error_class=None)
+        except Exception as error:  # noqa: BLE001 - a failed listing is not a cleanup failure
+            return AccessBaseline(pids=frozenset(), error_class=type(error).__name__)
+
+    return read_from_lister
 
 
 class AccessTerminator(Protocol):
@@ -146,17 +193,26 @@ class DocumentationRuntime:
         deadline_seconds: float | None = None,
         cleanup_grace_seconds: float | None = None,
         access_pid_lister: AccessPidLister | None = None,
+        access_baseline_reader: AccessBaselineReader | None = None,
         access_terminator: AccessTerminator | None = None,
     ) -> None:
         self._launcher: Launcher = launcher or _default_launcher
         self._deadline_seconds = deadline_seconds
         self._cleanup_grace_seconds = cleanup_grace_seconds
-        self._access_pid_lister: AccessPidLister = access_pid_lister or list_msaccess_pids
+        self._access_baseline_reader: AccessBaselineReader = _resolve_baseline_reader(
+            access_pid_lister, access_baseline_reader
+        )
         self._access_terminator: AccessTerminator = access_terminator or terminate_verified_access
         # Owned Access instances announced by the current child, plus the pre-spawn
         # baseline the fail-closed verifier must never kill.
         self._owned_access: dict[int, AccessIdentity] = {}
         self._access_baseline: frozenset[int] = frozenset()
+        # Failure visibility for the current inspection: the class name of a swallowed
+        # baseline-enumeration error, and the evidence collected while cleanup could not be
+        # established. None of these fields influences a containment decision.
+        self._baseline_listing_error: str | None = None
+        self._unresolved_access_details: list[str] = []
+        self._child_kill_errors: list[str] = []
 
     @property
     def deadline_seconds(self) -> float:
@@ -202,6 +258,8 @@ class DocumentationRuntime:
         grace = self.cleanup_grace_seconds
 
         self._owned_access.clear()
+        self._unresolved_access_details.clear()
+        self._child_kill_errors.clear()
         # Snapshot already-running Access processes *before* the child exists, so a
         # caller-owned session can never be announced as this child's own and killed.
         self._access_baseline = self._capture_access_baseline()
@@ -236,12 +294,7 @@ class DocumentationRuntime:
                 or stderr_reader.is_alive()
                 or request_writer.is_alive()
             ):
-                msg = (
-                    f"Documentation inspection worker cleanup could not be established within "
-                    f"the {grace:g}-second cleanup grace; the owned worker may still be running "
-                    "and no evidence was produced"
-                )
-                raise AccessMcpError(msg)
+                raise AccessMcpError(self._cleanup_failure_message(grace))
             if stdout_reader.oversized:
                 msg = (
                     f"Documentation inspection worker response exceeded the allowed "
@@ -305,15 +358,26 @@ class DocumentationRuntime:
         """Terminate only this owned child and wait for it within the bounded grace."""
         if process.poll() is not None:
             return True
-        with contextlib.suppress(Exception):
-            process.kill()
+        self._kill_child(process)
         if self._wait(process, grace):
             return True
         # One bounded retry: a process that ignored the first termination gets a second
         # kill and the same bounded grace, never an unbounded join.
-        with contextlib.suppress(Exception):
-            process.kill()
+        self._kill_child(process)
         return self._wait(process, grace)
+
+    def _kill_child(self, process: subprocess.Popen[bytes]) -> None:
+        """Issue one bounded child kill, remembering a swallowed failure's class name.
+
+        The kill is attempted exactly as before; a failure is never retried here beyond the
+        caller's single bounded retry. Its class name is recorded so an un-establishable
+        cleanup can say *why* the termination attempts did not take, without publishing the
+        error message (which may carry paths or credentials).
+        """
+        try:
+            process.kill()
+        except Exception as error:  # noqa: BLE001 - reported through the cleanup failure
+            self._child_kill_errors.append(type(error).__name__)
 
     @staticmethod
     def _wait(process: subprocess.Popen[bytes], grace: float) -> bool:
@@ -354,11 +418,37 @@ class DocumentationRuntime:
 
         A failing enumeration yields an empty baseline: the verifier still requires a live
         creation-time and image match before any kill, and the baseline only ever *denies*
-        a kill.
+        a kill. The failure itself is kept (class name only) so the successful path can
+        report it instead of presenting the empty set as a measured result.
         """
-        with contextlib.suppress(Exception):
-            return frozenset(self._access_pid_lister())
-        return frozenset()
+        try:
+            listing = self._access_baseline_reader()
+        except Exception as error:  # noqa: BLE001 - an unreadable baseline is the empty baseline
+            self._baseline_listing_error = type(error).__name__
+            return frozenset()
+        self._baseline_listing_error = listing.error_class
+        return frozenset(listing.pids)
+
+    def _cleanup_failure_message(self, grace: float) -> str:
+        """Build the un-establishable-cleanup failure, appending the verification evidence.
+
+        The base wording is unchanged, and a failure that produced no extra evidence (a
+        surviving child with no announced Access PID and no swallowed kill error) still
+        reads exactly as it always did. Per-PID verifier details and swallowed kill error
+        class names are appended, never substituted: they explain the failure without
+        changing it, and they carry no raw probe output.
+        """
+        message = (
+            "Documentation inspection worker cleanup could not be established within "
+            f"the {grace:g}-second cleanup grace; the owned worker may still be running "
+            "and no evidence was produced"
+        )
+        if self._unresolved_access_details:
+            message += " Owned Access cleanup detail: " + "; ".join(self._unresolved_access_details) + "."
+        if self._child_kill_errors:
+            error_classes = ", ".join(dict.fromkeys(self._child_kill_errors))
+            message += f" Owned worker termination attempt failed ({error_classes})."
+        return message
 
     def _record_owned_access(self, stdout_reader: _BoundedPipeReader) -> None:
         """Record every complete identity frame the child announced before its response.
@@ -380,7 +470,8 @@ class DocumentationRuntime:
         while the process is still alive, so the caller raises the existing
         un-establishable-cleanup failure instead of silently orphaning Access. Verifier
         refusals (baseline PID, creation or image mismatch) never kill and are reported
-        through ``AccessTermination.detail``.
+        through ``AccessTermination.detail``; the details of the PIDs that stayed unresolved
+        are kept so the caller's explicit cleanup failure can name each one.
         """
         if not self._owned_access:
             return True
@@ -396,6 +487,9 @@ class DocumentationRuntime:
             )
             if not outcome.exited:
                 established = False
+                # Kept for the explicit cleanup failure: which announced PID stayed
+                # unresolved, and why the fail-closed verifier refused or failed to reap it.
+                self._unresolved_access_details.append(outcome.detail)
         return established
 
     def _decode_evidence(self, returncode: int | None, output: bytes) -> EvidenceDoc:
@@ -416,10 +510,24 @@ class DocumentationRuntime:
             msg = "Documentation worker response did not include an evidence object"
             raise AccessMcpError(msg)
         document = EvidenceDoc.from_dict(evidence)
+        self._record_baseline_listing_warning(document)
         final = document.to_dict()
         final["status"] = document.status
         documentation_limits.ensure_evidence_within_limit(final)
         return document
+
+    def _record_baseline_listing_warning(self, document: EvidenceDoc) -> None:
+        """Publish a failed baseline listing as exactly one sanitized evidence warning.
+
+        A successful listing -- including a genuinely empty one -- adds nothing, so a run
+        with no failure keeps byte-identical evidence. The warning never changes
+        ``EvidenceDoc.status`` and never restates the baseline as a kill authorization.
+        """
+        if self._baseline_listing_error is None:
+            return
+        document.warnings.append(
+            _BASELINE_LISTING_WARNING.format(error_class=self._baseline_listing_error)
+        )
 
 
 def run_documentation_inspection(

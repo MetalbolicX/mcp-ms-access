@@ -50,6 +50,21 @@ class AccessProcessIdentity:
 
 
 @dataclass(frozen=True)
+class AccessBaseline:
+    """Outcome of one pre-spawn ``MSACCESS.EXE`` baseline listing.
+
+    ``pids`` is the baseline every kill decision is made against and is exactly the set
+    :func:`list_msaccess_pids` returns. ``error_class`` is the class name of the swallowed
+    enumeration error, or ``None`` when the listing succeeded -- so a genuinely empty
+    baseline stays distinguishable from an unreadable one without changing either the
+    baseline or its kill-denying semantics.
+    """
+
+    pids: frozenset[int]
+    error_class: str | None
+
+
+@dataclass(frozen=True)
 class AccessTermination:
     """Outcome of one fail-closed owned-Access termination attempt.
 
@@ -93,6 +108,27 @@ def list_msaccess_pids(
     This is the supervisor's pre-spawn baseline: any PID on it belongs to a caller-owned
     Access session and must never be killed by the documentation cleanup. Enumeration
     failure yields an empty set -- it never authorizes a kill by itself.
+
+    A caller that must *report* the failure instead of only acting on the set uses
+    :func:`read_msaccess_baseline`, which returns the same PIDs plus the swallowed error
+    class. This function keeps its exact public behavior: a failed probe is an empty set.
+    """
+    return set(read_msaccess_baseline(runner=runner, timeout=timeout).pids)
+
+
+def read_msaccess_baseline(
+    *,
+    runner: CommandRunner | None = None,
+    timeout: float = _DEFAULT_COMMAND_TIMEOUT_SECONDS,
+) -> AccessBaseline:
+    """List the pre-spawn ``MSACCESS.EXE`` baseline and say whether listing itself failed.
+
+    ``AccessBaseline.pids`` is byte-for-byte the PID set :func:`list_msaccess_pids` returns
+    (and therefore the set every kill decision is made against): a failed enumeration is
+    still the empty baseline, which only ever *denies* a kill. ``error_class`` carries the
+    class name of the swallowed enumeration error so a genuinely empty baseline stays
+    distinguishable from an unreadable one; the error message itself is never kept, because
+    it can carry paths or credentials.
     """
     run = _resolve_runner(runner)
     try:
@@ -100,10 +136,18 @@ def list_msaccess_pids(
             ["tasklist", "/FI", f"IMAGENAME eq {ACCESS_IMAGE_NAME}", "/FO", "CSV", "/NH"],
             timeout,
         )
-    except Exception:  # noqa: BLE001 - enumeration failure is reported as "no baseline"
-        return set()
+    except Exception as error:  # noqa: BLE001 - enumeration failure is reported as "no baseline"
+        return AccessBaseline(pids=frozenset(), error_class=type(error).__name__)
+    return AccessBaseline(
+        pids=frozenset(_baseline_pids_from_tasklist(result.stdout or "")),
+        error_class=None,
+    )
+
+
+def _baseline_pids_from_tasklist(stdout: str) -> set[int]:
+    """Parse the PID column of every ``MSACCESS.EXE`` row in one ``tasklist /FO CSV`` output."""
     pids: set[int] = set()
-    for line in (result.stdout or "").splitlines():
+    for line in stdout.splitlines():
         if ACCESS_IMAGE_NAME.casefold() not in line.casefold():
             continue
         fields = [field.strip().strip('"') for field in line.split(",")]
