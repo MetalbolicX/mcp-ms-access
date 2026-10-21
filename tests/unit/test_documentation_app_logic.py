@@ -343,9 +343,15 @@ def test_scratch_removal_warning_does_not_mask_a_degraded_tier_two_read(
 
     content = _reader(session, scratch_root=tmp_path).read(str(source))
 
-    assert len(content.warnings) == 2
-    assert any("could not be written" in warning for warning in content.warnings)
-    assert any("could not be removed" in warning for warning in content.warnings)
+    # S2 strict diagnostics: the exception text is suppressed, so each warning is
+    # identified by its authored prefix plus the class-only reason.
+    assert content.warnings == [
+        "Tier 2 app-logic content was not read "
+        "(the disposable copy of the source could not be created: OSError); the v1 and Tier 1 "
+        "app-logic facts are retained and every Tier 2 family and reference is reported as failed",
+        "The disposable scratch copy directory could not be removed (OSError); "
+        "the residue remains under the documentation scratch root",
+    ]
 
 
 def test_reader_emits_the_owned_identity_before_it_opens_the_armed_copy(tmp_path: Path) -> None:
@@ -644,7 +650,8 @@ def test_references_are_read_1_based_with_separated_property_diagnostics(tmp_pat
     assert second.name == "Broken"
     assert second.path.state == "observed"
     assert second.guid.state == "failed"
-    assert "excepinfo" in (second.guid.reason or "")
+    # S2 strict diagnostics: the property reason names the failure class, not its text.
+    assert second.guid.reason == "RuntimeError"
 
 
 # ---------------------------------------------------------------------------
@@ -898,15 +905,18 @@ _PROGRAMMER_DEFECTS = [
 def test_operational_whole_stage_failures_keep_partial_degradation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, make_error: Callable[[], BaseException]
 ) -> None:
-    """S1: filesystem/COM-shape failures at a whole-stage boundary still degrade."""
+    """S1/S2: filesystem/COM-shape failures at a whole-stage boundary still degrade class-only."""
 
     source = _source(tmp_path)
     original = source.read_bytes()
-    reader, session = _reader_with_stage_failure(stage, make_error(), tmp_path, monkeypatch)
+    error = make_error()
+    reader, session = _reader_with_stage_failure(stage, error, tmp_path, monkeypatch)
 
     content = reader.read(str(source))
 
-    _assert_failed_fallback(content, detail=_WHOLE_STAGE_PROBE)
+    # S2 strict diagnostics: the probe text is suppressed, so the class name is the whole
+    # reason tail (none of these errors carries a numeric OS code).
+    _assert_failed_fallback(content, detail=type(error).__name__)
     assert source.read_bytes() == original
     assert _scratch_dirs(tmp_path) == []
     if stage == "open":
@@ -950,7 +960,8 @@ def test_per_family_best_effort_catches_are_not_narrowed(tmp_path: Path) -> None
     form = next(item for item in content.content if item.category == "form")
     assert form.name == FAMILY_SCOPE_NAME
     assert form.content.state == "failed"
-    assert "wrong arity" in (form.content.reason or "")
+    # S2 strict diagnostics: only the class of the per-family defect reaches evidence.
+    assert form.content.reason == "TypeError"
     assert [item.name for item in content.content if item.category == "report"] == ["rptSales"]
     assert [item.name for item in content.content if item.category == "macro"] == ["AutoExec"]
     assert content.warnings == []
@@ -971,7 +982,7 @@ def test_copy_failure_returns_failed_family_facts_and_a_warning(
 
     content = _reader(session, scratch_root=tmp_path).read(str(source))
 
-    _assert_failed_fallback(content, detail="could not be written")
+    _assert_failed_fallback(content, detail="OSError")
     assert "open" not in session.events
     assert source.read_bytes() == original
     assert _scratch_dirs(tmp_path) == []
@@ -995,7 +1006,7 @@ def test_scratch_dir_creation_failure_returns_failed_family_facts(
 
     content = _reader(session, scratch_root=tmp_path).read(str(source))
 
-    _assert_failed_fallback(content, detail="could not be created")
+    _assert_failed_fallback(content, detail="OSError")
     assert "open" not in session.events
 
 
@@ -1010,7 +1021,7 @@ def test_launch_failure_returns_failed_family_facts_and_cleans_the_scratch_dir(t
 
     content = reader.read(str(source))
 
-    _assert_failed_fallback(content, detail="Class not registered")
+    _assert_failed_fallback(content, detail="_ComFaultError")
     assert _scratch_dirs(tmp_path) == []
 
 
@@ -1027,7 +1038,7 @@ def test_open_failure_returns_failed_family_facts_after_teardown(tmp_path: Path)
 
     content = _reader(session, scratch_root=tmp_path).read(str(source))
 
-    _assert_failed_fallback(content, detail="could not be locked")
+    _assert_failed_fallback(content, detail="_ComFaultError")
     assert "open" in session.events
     # Only the disposable copy was ever handed to the armed open.
     assert Path(session.opened_path or "") != source
@@ -1039,8 +1050,8 @@ def test_open_failure_returns_failed_family_facts_after_teardown(tmp_path: Path)
     assert _scratch_dirs(tmp_path) == []
 
 
-def test_open_failure_reason_is_scrubbed_of_connection_secrets(tmp_path: Path) -> None:
-    """S3: fallback reasons go through the same secret-redaction boundary as v1."""
+def test_open_failure_reason_is_class_only_so_no_connection_text_survives(tmp_path: Path) -> None:
+    """S2/S3: the fallback reason carries the failure class, so no connection text survives."""
 
     source = _source(tmp_path)
     session = _OpenFailingSession(
@@ -1051,9 +1062,14 @@ def test_open_failure_reason_is_scrubbed_of_connection_secrets(tmp_path: Path) -
 
     content = _reader(session, scratch_root=tmp_path).read(str(source))
 
-    serialized = json.dumps([item.content.reason for item in content.content] + content.warnings)
+    reasons = [item.content.reason for item in content.content]
+    assert reasons == [
+        "Tier 2 app-logic content was not read: the Tier 2 inspection failed: _ComFaultError"
+    ] * 4
+    serialized = json.dumps(reasons + content.warnings)
+    # Strict diagnostics go past redaction: the credential-bearing text is never carried.
     assert "hunter2secret" not in serialized
-    assert "PWD" in serialized
+    assert "PWD" not in serialized
 
 
 def test_security_set_failure_is_a_containment_error_not_a_fallback(tmp_path: Path) -> None:
@@ -1352,9 +1368,10 @@ def test_scratch_residue_warning_never_echoes_the_os_error_path(
 
     assert len(content.warnings) == 1
     warning = content.warnings[0]
+    # S2 strict diagnostics: class plus numeric code only, never ``strerror`` or a path.
     assert warning == (
         "The disposable scratch copy directory could not be removed "
-        "(PermissionError: [Errno 13] Access is denied); "
+        "(PermissionError: [Errno 13]); "
         "the residue remains under the documentation scratch root"
     )
     assert _FAKE_USER not in warning
@@ -1375,7 +1392,7 @@ def test_stage_failure_reason_never_echoes_the_os_error_path(
 
     content = _reader(session, scratch_root=tmp_path).read(str(source))
 
-    _assert_failed_fallback(content, detail="[Errno 13] Access is denied")
+    _assert_failed_fallback(content, detail="PermissionError: [Errno 13]")
     reasons = [item.content.reason or "" for item in content.content]
     assert all(_FAKE_USER not in reason for reason in reasons)
     assert all(_FAKE_USER not in warning for warning in content.warnings)
@@ -1396,17 +1413,22 @@ def test_windows_shaped_removal_error_reports_its_winerror_without_the_path(
 
     content = _reader(session, scratch_root=tmp_path).read(str(source))
 
+    # S2 strict diagnostics: the numeric winerror is preferred and ``strerror`` is dropped.
     assert content.warnings == [
         "The disposable scratch copy directory could not be removed "
-        "(PermissionError: [WinError 32] The process cannot access the file); "
+        "(PermissionError: [WinError 32]); "
         "the residue remains under the documentation scratch root"
     ]
 
 
-def test_stage_failure_reason_without_a_filename_is_unchanged(
+def test_stage_failure_reason_without_a_filename_is_class_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S2 regression pin: an OS error without a filename keeps its exact reason text."""
+    """S2 pin: an OS error without a filename is still class-only, never its text.
+
+    The previous text-passthrough contract is deliberately reversed here: even a
+    path-free message is arbitrary free text at a diagnostic boundary.
+    """
 
     def failing_copy(_source: object, _destination: object) -> None:
         raise OSError("the disposable copy could not be written")
@@ -1419,8 +1441,7 @@ def test_stage_failure_reason_without_a_filename_is_unchanged(
 
     assert {item.content.reason for item in content.content} == {
         "Tier 2 app-logic content was not read: "
-        "the disposable copy of the source could not be created: "
-        "the disposable copy could not be written"
+        "the disposable copy of the source could not be created: OSError"
     }
 
 
@@ -1445,6 +1466,138 @@ def test_residue_probe_failure_still_warns_and_never_raises(
     assert [item.name for item in content.content] == ["frmMain", "rptSales", "AutoExec"]
     assert content.warnings == [
         "The disposable scratch copy directory could not be removed "
-        "(PermissionError: [Errno 13] Access is denied); "
+        "(PermissionError: [Errno 13]); "
         "the residue remains under the documentation scratch root"
     ]
+
+
+# --- Strict class-only diagnostics (odd/tasks/documentation-strict-error-diagnostics.md) ---
+
+_STRICT_SECOND_FILE = rf"C:\Users\{_FAKE_USER}\AppData\Local\Temp\ms_access_doc_v2_y\source.accdb"
+_STRICT_SECRET_TEXT = f"copy failed for {_PATH_BEARING_FILE};PWD=hunter2secret"
+_COPY_STAGE_DETAIL = "the disposable copy of the source could not be created"
+
+
+def _copy_stage_failure_reader(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException, tmp_path: Path
+) -> tuple[AppLogicReader, _FakeSession]:
+    """A reader whose disposable-copy stage raises ``error``."""
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise error
+
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(copy2=failing_copy))
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+    return _reader(session, scratch_root=tmp_path), session
+
+
+def _assert_class_only_copy_failure(content: AppLogicContent, *, reason_tail: str) -> None:
+    """The whole-stage degradation carries exactly the class-only reason, never more text."""
+    expected = f"Tier 2 app-logic content was not read: {_COPY_STAGE_DETAIL}: {reason_tail}"
+    assert [item.content.reason for item in content.content] == [expected] * 4
+    reference = content.references[0]
+    assert [
+        fact.reason for fact in (reference.path, reference.guid, reference.major, reference.minor, reference.built_in)
+    ] == [expected] * 5
+    assert content.warnings == [
+        f"Tier 2 app-logic content was not read ({_COPY_STAGE_DETAIL}: {reason_tail}); the v1 and Tier 1 "
+        "app-logic facts are retained and every Tier 2 family and reference is reported as failed"
+    ]
+
+
+def _assert_no_user_text(content: AppLogicContent, secret: str = "hunter2secret") -> None:
+    serialized = json.dumps([item.content.reason for item in content.content] + content.warnings)
+    assert secret not in serialized
+    assert _FAKE_USER not in serialized
+    assert "ms_access_doc_v2_x" not in serialized
+
+
+def test_text_bearing_stage_error_reason_is_the_exception_class_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2/S5: a non-OSError stage failure exposes its class, never its credential-bearing text."""
+    reader, session = _copy_stage_failure_reader(
+        monkeypatch, _ComFaultError(COM_FAILURE, _STRICT_SECRET_TEXT), tmp_path
+    )
+
+    content = reader.read(str(_source(tmp_path)))
+
+    _assert_class_only_copy_failure(content, reason_tail="_ComFaultError")
+    _assert_no_user_text(content)
+    assert "open" not in session.events
+
+
+def test_path_bearing_strerror_is_never_echoed_in_a_stage_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2/S5: ``strerror`` is arbitrary free text, so only the numeric errno survives."""
+    reader, _session = _copy_stage_failure_reader(monkeypatch, OSError(13, _STRICT_SECRET_TEXT), tmp_path)
+
+    content = reader.read(str(_source(tmp_path)))
+
+    _assert_class_only_copy_failure(content, reason_tail="PermissionError: [Errno 13]")
+    _assert_no_user_text(content)
+
+
+def test_winerror_is_preferred_over_errno_and_the_paths_are_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2/S5: a real Windows OS error keeps its numeric winerror, never its paths or text."""
+    error = OSError(13, _STRICT_SECRET_TEXT, _PATH_BEARING_FILE, 32)
+    reader, _session = _copy_stage_failure_reader(monkeypatch, error, tmp_path)
+
+    content = reader.read(str(_source(tmp_path)))
+
+    _assert_class_only_copy_failure(content, reason_tail="PermissionError: [WinError 32]")
+    _assert_no_user_text(content)
+    assert "WinError 13" not in json.dumps([item.content.reason for item in content.content])
+
+
+def test_filename2_only_os_error_reason_uses_the_numeric_errno(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2/S5: ``filename2`` set without ``filename`` is still a path-bearing OS error."""
+    error = OSError(13, _STRICT_SECRET_TEXT)
+    error.filename2 = _STRICT_SECOND_FILE
+
+    reader, _session = _copy_stage_failure_reader(monkeypatch, error, tmp_path)
+
+    content = reader.read(str(_source(tmp_path)))
+
+    _assert_class_only_copy_failure(content, reason_tail="PermissionError: [Errno 13]")
+    _assert_no_user_text(content)
+
+
+def test_scratch_residue_warning_names_the_error_class_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S3: the residue warning delegates to the shared formatter, so no class prefix repeats."""
+
+    def failing_rmtree(_path: object, *_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(_STRICT_SECRET_TEXT)
+
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(rmtree=failing_rmtree))
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert content.warnings == [
+        "The disposable scratch copy directory could not be removed (RuntimeError); "
+        "the residue remains under the documentation scratch root"
+    ]
+    assert [item.name for item in content.content] == ["frmMain", "rptSales", "AutoExec"]
+
+
+def test_non_path_exception_text_is_also_suppressed_in_a_stage_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2/S5: the strict policy is class-only, so even a harmless message is not echoed."""
+    reader, _session = _copy_stage_failure_reader(
+        monkeypatch, _ComFaultError(COM_FAILURE, f"{_WHOLE_STAGE_PROBE}: the COM call failed"), tmp_path
+    )
+
+    content = reader.read(str(_source(tmp_path)))
+
+    _assert_class_only_copy_failure(content, reason_tail="_ComFaultError")
+    assert _WHOLE_STAGE_PROBE not in json.dumps([item.content.reason for item in content.content])

@@ -889,16 +889,29 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   best-effort: a removal that fails, or that reports success while the directory is still
   there, never raises from teardown and never hides the inspection's own result. If even
   the check for a leftover directory raises, the directory is treated as still present.
-  Instead of raising, the run carries one sanitized warning (error class plus redacted
-  reason) on `AppLogicContent.warnings`, which the merge adds to the document warnings. A
-  successful removal adds no warning, so a successful run's evidence and Markdown stay
-  byte-identical.
-- **OS error reasons never carry file paths.** An OS error that names a file
-  (`filename`/`filename2`) is rendered as its error code and `strerror` only, for example
-  `[Errno 13] Access is denied`, in the scratch-residue warning and in every degraded
-  Tier 2 reason (scratch directory, disposable copy, content reads). The path would name
-  the user profile and the scratch layout in shareable evidence. Other errors keep their
-  existing redacted text.
+  Instead of raising, the run carries one sanitized warning (error class plus
+  class-only reason) on `AppLogicContent.warnings`, which the merge adds to the document
+  warnings. A successful removal adds no warning, so a successful run's evidence and
+  Markdown stay byte-identical.
+- **Diagnostic reasons are class-only, never exception text.** Documentation evidence,
+  warnings, and the worker's error envelope are shareable, so the four diagnostic
+  boundaries that render an exception reason go through one shared formatter
+  (`documentation.safe_documentation_error_reason`): the Tier 2 app-logic reader's reason
+  (including the scratch-residue warning, whose class prefix is not duplicated), the
+  Tier 1/Tier 2 inspection reason (which keeps its authored `None` fallback text), the
+  ODBC read-only inspection-open wrapper, and the worker's catch-all error envelope. The
+  formatter keeps only the exception class name. An `OSError` adds its numeric code —
+  `winerror` when it is a real integer, otherwise `errno` — for example
+  `PermissionError: [WinError 32]` or `PermissionError: [Errno 13]`. It never renders
+  `str(error)`, `args`, `strerror`, `filename`, or `filename2`, because each of those can
+  carry a user profile path or a credential; a code that is not a plain integer (a
+  `bool`, a string, or another object) is ignored instead of formatted as code. Authored
+  text that is not exception text is unaffected: fixed stage prefixes, the
+  capability-limit and trust-prerequisite constants, standalone limitation reasons, and
+  the published `unavailable`/`failed`/`observed` states keep their meaning. This is a
+  rule for exception reasons at those boundaries, not universal sanitization of every
+  evidence field, and it deliberately loses the raw exception detail: an operator
+  diagnosing a failure reads the class and numeric code, not a driver message.
 - **Failure visibility uses the existing channels only.** The four formerly silent
   failure sites surface as sanitized warnings on the existing `EvidenceDoc.warnings` /
   `AppLogicContent.warnings` lists, or as error-message enrichment. No logging framework,

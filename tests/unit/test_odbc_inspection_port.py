@@ -511,7 +511,8 @@ def test_odbc_index_read_failure_is_failed_not_unavailable() -> None:
     )
     table = document.tables[0]
     assert table.primary_key.state == "failed"
-    assert "statistics failed" in table.primary_key.reason
+    # S2 strict diagnostics: only the failure class reaches the fact reason.
+    assert table.primary_key.reason == "RuntimeError"
     assert document.coverage.tables.failed["Customers"]
     assert document.coverage.tables.unsupported == {}
     assert document.status == "partial"
@@ -564,7 +565,8 @@ def test_odbc_zero_column_local_table_is_failed_not_observed_empty() -> None:
         OdbcInspectionPort(connection), tables=None, queries=None
     )
     reason = document.coverage.tables.failed["Empty"]
-    assert "no columns" in reason
+    # S2 strict diagnostics: the zero-column refusal keeps its class, not its message.
+    assert reason == "AccessMcpError"
     empty = next(table for table in document.tables if table.name == "Empty")
     assert empty.indexes == []
     assert empty.primary_key.state == "failed"
@@ -835,18 +837,20 @@ def test_open_odbc_inspection_port_does_not_leak_a_handle_when_wrapping_fails(mo
     assert connection.close_calls == 1
 
 
-def test_open_odbc_inspection_port_scrubs_credentials_from_open_failure() -> None:
-    """T2: an open failure reaches the caller as a scrubbed AccessMcpError."""
-    adapter = _FailingOpenAdapter(
-        RuntimeError(f"SQLDriverConnect failed: {_EXPECTED_CONN_STR}")
-    )
+def test_open_odbc_inspection_port_keeps_credentials_out_of_an_open_failure() -> None:
+    """T2/S2: an open failure reaches the caller as a class-only AccessMcpError."""
+    error = RuntimeError(f"SQLDriverConnect failed: {_EXPECTED_CONN_STR}")
+    adapter = _FailingOpenAdapter(error)
 
     with pytest.raises(AccessMcpError) as excinfo:
         open_odbc_inspection_port(adapter)
     message = str(excinfo.value)
     assert adapter.readonly_open_calls == 1
     assert "canary-secret" not in message
-    assert "PWD=***" in message
+    # Redaction used to keep ``PWD=***``; the class-only policy keeps no message text at all.
+    assert "PWD" not in message
+    assert message == "RuntimeError"
+    assert excinfo.value.__cause__ is error
 
 
 def test_open_odbc_inspection_port_rejects_an_adapter_without_the_readonly_seam() -> None:
@@ -856,3 +860,36 @@ def test_open_odbc_inspection_port_rejects_an_adapter_without_the_readonly_seam(
 
     with pytest.raises(AccessMcpError, match="read-only inspection"):
         open_odbc_inspection_port(_ConnectionOnlyAdapter())
+
+
+# --- Strict class-only diagnostics (odd/tasks/documentation-strict-error-diagnostics.md) ---
+
+_STRICT_FAKE_USER = "fakeuser123"
+_STRICT_PATH = rf"C:\Users\{_STRICT_FAKE_USER}\AppData\Local\Temp\ms_access_doc_v2_x\source.accdb"
+_STRICT_SECRET_TEXT = f"SQLDriverConnect failed for {_STRICT_PATH};PWD=canary-secret"
+
+
+def test_open_failure_message_is_the_exception_class_only() -> None:
+    """S2/S5: the open wrapper exposes the failure class, never the driver text or a path."""
+    error = RuntimeError(_STRICT_SECRET_TEXT)
+    adapter = _FailingOpenAdapter(error)
+
+    with pytest.raises(AccessMcpError) as excinfo:
+        open_odbc_inspection_port(adapter)
+
+    assert str(excinfo.value) == "RuntimeError"
+    assert excinfo.value.__cause__ is error
+    assert adapter.readonly_open_calls == 1
+
+
+def test_open_failure_message_keeps_only_the_numeric_os_code() -> None:
+    """S2/S5: an OS open failure keeps class plus numeric winerror, never ``strerror``."""
+    error = OSError(2, _STRICT_SECRET_TEXT, _STRICT_PATH, 2)
+    adapter = _FailingOpenAdapter(error)
+
+    with pytest.raises(AccessMcpError) as excinfo:
+        open_odbc_inspection_port(adapter)
+
+    assert str(excinfo.value) == "FileNotFoundError: [WinError 2]"
+    assert excinfo.value.__cause__ is error
+    assert adapter.readonly_open_calls == 1

@@ -392,11 +392,18 @@ def _reader(session: _ReaderSession, scratch_root: Path) -> AppLogicReader:
 
 _READER_VBA_CASES = [
     pytest.param(_ComError(TRUST_HRESULT), "unavailable", VBA_TRUST_PREREQUISITE, id="recognized-trust"),
-    pytest.param(_ComError(UNKNOWN_COM_HRESULT), "failed", "0x8000FFFF", id="unknown-com"),
+    # Strict class-only diagnostics (S2/S3): the recognized trust refusal is authored
+    # prerequisite text rendered from the constant, but an unknown COM status or a missing
+    # project is exception text, so the fact carries only the error class and the state
+    # keeps the classification.
+    pytest.param(_ComError(UNKNOWN_COM_HRESULT), "failed", "VbaProjectUnavailableError", id="unknown-com"),
     pytest.param(
-        _ComError(DISP_E_EXCEPTION, "catastrophic", UNKNOWN_COM_HRESULT), "failed", "0x8000FFFF", id="nested-unknown"
+        _ComError(DISP_E_EXCEPTION, "catastrophic", UNKNOWN_COM_HRESULT),
+        "failed",
+        "VbaProjectUnavailableError",
+        id="nested-unknown",
     ),
-    pytest.param(None, "failed", "no VBA project", id="no-project"),
+    pytest.param(None, "failed", "VbaProjectUnavailableError", id="no-project"),
 ]
 
 
@@ -418,6 +425,9 @@ def test_reader_reports_the_vba_family_from_the_production_session(
     assert expected_text in (vba.content.reason or "")
     if state == "failed":
         assert VBA_TRUST_PREREQUISITE not in (vba.content.reason or "")
+        # The strict policy suppresses the raw COM status and the session message too.
+        assert "0x8000FFFF" not in (vba.content.reason or "")
+        assert "no VBA project" not in (vba.content.reason or "")
     # The other families travel the same real session and stay observed: no over-degradation.
     form = next(item for item in content.content if item.category == "form")
     assert form.name == "frmMain"

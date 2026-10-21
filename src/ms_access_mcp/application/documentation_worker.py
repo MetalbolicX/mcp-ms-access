@@ -16,8 +16,9 @@ source path, resolves credentials, opens the database, and performs passive extr
   the ordinary server/CLI open does, and the allowed-directory guard runs inside the
   child through the same ``DatabaseUseCases`` open path.
 * The response is one JSON object written to stdout and flushed once. A known
-  application failure is reported as ``{"ok": false, "error": <scrubbed message>}`` with
-  exit status 0 so the parent can surface the exact reason; a crash or unparseable
+  application failure is reported as ``{"ok": false, "error": <error class>}`` (plus a
+  numeric OS code when there is one; never the exception text) with
+  exit status 0 so the parent can surface a stable diagnostic; a crash or unparseable
   stdout is a non-zero exit the parent maps to a generic failure.
 * **Owned-Access announcement.** An armed (app-logic) read instantiates
   ``Access.Application``, which a parent kill cannot reap through this Python child.
@@ -41,7 +42,7 @@ from typing import Any, NamedTuple
 
 from ..errors import AccessMcpError
 from .database import DatabaseUseCases, Err
-from .documentation import redact_connection_secrets
+from .documentation import redact_connection_secrets, safe_documentation_error_reason
 from .documentation_app_logic import apply_app_logic_content, read_tier2_content
 from .documentation_inspect import inspect_open_database
 from .documentation_limits import REQUEST_MAX_BYTES, ensure_evidence_within_limit
@@ -312,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = _run_request(request)
         response = {"ok": True, "evidence": payload}
     except BaseException as error:  # noqa: BLE001 - any child failure becomes a safe Err
-        message = redact_connection_secrets(str(error).strip() or type(error).__name__)
+        message = redact_connection_secrets(safe_documentation_error_reason(error))
         response = {"ok": False, "error": message or "Documentation inspection failed"}
     try:
         sys.stdout.buffer.write(encode_response(response))

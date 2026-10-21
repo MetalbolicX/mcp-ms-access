@@ -73,6 +73,7 @@ from .documentation import (
     FactStatus,
     ReferenceEvidence,
     redact_connection_secrets,
+    safe_documentation_error_reason,
 )
 from .process_identity import AccessProcessIdentity, read_process_identity
 
@@ -196,26 +197,8 @@ class AppLogicContent:
 
 
 def _reason(error: Exception) -> str:
-    if isinstance(error, OSError) and (error.filename is not None or error.filename2 is not None):
-        return redact_connection_secrets(_path_free_os_reason(error))
-    return redact_connection_secrets(str(error).strip() or type(error).__name__)
-
-
-def _path_free_os_reason(error: OSError) -> str:
-    """Render a path-bearing OS error without its ``filename``/``filename2``.
-
-    ``str(OSError)`` appends the offending paths, which on Windows carry the user name and
-    the scratch layout into shareable evidence. The error code and ``strerror`` already say
-    what went wrong, so only those are kept.
-    """
-    winerror = getattr(error, "winerror", None)
-    if winerror is not None:
-        code = f"[WinError {winerror}] "
-    elif error.errno is not None:
-        code = f"[Errno {error.errno}] "
-    else:
-        code = ""
-    return f"{code}{error.strerror or ''}".strip() or type(error).__name__
+    """One class-only diagnostic reason (S2), never arbitrary exception text."""
+    return redact_connection_secrets(safe_documentation_error_reason(error))
 
 
 def _is_operational_failure(error: Exception) -> bool:
@@ -286,7 +269,7 @@ class AppLogicReader:
         COM-shaped error carrying a failing HRESULT at the scratch directory, the
         disposable copy, the owned dispatch, the armed open, or a whole content read --
         degrade to :func:`_failed_content`: every Tier 2 family and reference is reported
-        ``failed`` with a sanitized reason plus one warning, and the caller's already
+        ``failed`` with a class-only reason (S2) plus one warning, and the caller's already
         collected v1/Tier 1 facts survive as ``partial`` evidence. An unexpected
         programmer defect is re-raised as a hard error; it never becomes partial evidence.
         Containment failures raise :class:`ContainmentError`, and interrupts are never
@@ -631,7 +614,7 @@ def _remove_scratch(workdir: Path) -> str | None:
     Teardown is best-effort (S2 A4): the directory is disposable, so a removal that fails
     -- or that reports success while the directory is still there -- must not mask the
     inspection's own result with a teardown error. Instead it returns one sanitized
-    warning naming the error class and its redacted reason. A removed directory, and an
+    warning naming the error class and its class-only reason. A removed directory, and an
     already absent one, return ``None`` so a successful run stays byte-identical.
     """
     failures: list[Exception] = []
@@ -660,7 +643,8 @@ def _remove_scratch(workdir: Path) -> str | None:
     if error is None:
         detail = "OSError: the directory is still present after removal"
     else:
-        detail = f"{type(error).__name__}: {_reason(error)}"
+        # ``_reason`` already names the class, so the prefix is never duplicated.
+        detail = _reason(error)
     return redact_connection_secrets(
         f"The disposable scratch copy directory could not be removed ({detail}); "
         "the residue remains under the documentation scratch root"

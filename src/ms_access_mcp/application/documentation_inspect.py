@@ -28,6 +28,7 @@ from .documentation import (
     StartupPropertyEvidence,
     TableEvidence,
     redact_connection_secrets,
+    safe_documentation_error_reason,
     sanitize_connection_string,
 )
 
@@ -602,7 +603,7 @@ def open_odbc_inspection_port(adapter: Any) -> OdbcInspectionPort:
     Additive to the adapter's CRUD connection: the adapter opens a new read-only handle
     and the returned port owns and closes it exactly once. There is no writable
     fallback -- a missing read-only seam, a failing open, or an unusable open result
-    raises (with credentials scrubbed) instead of reusing the adapter's writable
+    raises a class-only ``AccessMcpError`` instead of reusing the adapter's writable
     connection. A setup exception after the open still releases the new handle.
     """
     opener = getattr(adapter, "open_readonly_inspection_connection", None)
@@ -613,7 +614,7 @@ def open_odbc_inspection_port(adapter: Any) -> OdbcInspectionPort:
         connection: Any = opener()
     except Exception as error:
         raise AccessMcpError(
-            redact_connection_secrets(str(error).strip() or type(error).__name__)
+            redact_connection_secrets(safe_documentation_error_reason(error))
         ) from error
     if connection is None:
         msg = "ODBC inspection read-only connection open returned no connection"
@@ -935,9 +936,10 @@ def _select_objects(kind: str, eligible: list[Any], requested: list[str] | None)
 
 
 def _reason(error: Exception | None) -> str:
+    """One class-only diagnostic reason (S2), with the authored fallback for ``None``."""
     if error is None:
         return "Metadata read failed"
-    return redact_connection_secrets(str(error).strip() or type(error).__name__)
+    return redact_connection_secrets(safe_documentation_error_reason(error))
 
 
 def _engine_text(value: Any) -> str:
@@ -1018,8 +1020,8 @@ def _read_app_logic(port: InspectionPort) -> tuple[AppLogicEvidence, list[str]]:
 
     Every container reads in its own exception boundary and every startup property is
     its own fact, so one failed read never erases another category. An engine that
-    cannot expose DAO Containers/properties at all (ODBC) is ``unavailable`` with the
-    port's engine-limitation explanation, never a fabricated empty list. The returned
+    cannot expose DAO Containers/properties at all (ODBC) is ``unavailable`` with a
+    class-only reason, never a fabricated empty list. The returned
     warnings are the port's sanitized property-omission warnings (S2 A3); they are
     empty whenever the property catalogue was read completely.
     """

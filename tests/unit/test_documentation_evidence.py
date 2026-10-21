@@ -18,6 +18,7 @@ from ms_access_mcp.application.documentation import (
     SourceEvidence,
     TableEvidence,
     redact_connection_secrets,
+    safe_documentation_error_reason,
     sanitize_connection_string,
 )
 
@@ -353,3 +354,55 @@ def test_the_shape_checks_keep_the_existing_messages_for_missing_and_wrong_types
     with pytest.raises(ValueError) as excinfo:
         vba_content(value).validate()
     assert str(excinfo.value) == message
+
+
+# ---------------------------------------------------------------------------
+# Strict class-only diagnostics: the OS code is a real int or nothing (S2)
+# ---------------------------------------------------------------------------
+
+_HOSTILE_PATH = "C:/Users/fakeuser123/secret"
+
+
+class _FormattingCode(int):
+    """An ``int`` subclass whose ``__format__`` returns arbitrary text (a leak vector)."""
+
+    def __format__(self, _spec: str) -> str:
+        return _HOSTILE_PATH
+
+
+def _os_error_with(*, errno: object = None, winerror: object = None) -> OSError:
+    """A bare ``OSError`` whose numeric fields are set exactly as given."""
+    error = OSError("hidden")
+    error.errno = errno  # type: ignore[assignment]
+    error.winerror = winerror  # type: ignore[attr-defined]
+    return error
+
+
+@pytest.mark.parametrize(
+    ("errno", "winerror", "expected"),
+    [
+        pytest.param(_FormattingCode(13), None, "OSError", id="subclass-errno"),
+        pytest.param(_FormattingCode(13), 32, "OSError: [WinError 32]", id="subclass-errno-real-winerror"),
+        pytest.param(13, _FormattingCode(32), "OSError: [Errno 13]", id="subclass-winerror"),
+        pytest.param(True, None, "OSError", id="bool-errno"),
+        pytest.param(13, True, "OSError: [Errno 13]", id="bool-winerror"),
+        pytest.param(_HOSTILE_PATH, None, "OSError", id="string-errno"),
+        pytest.param(13, _HOSTILE_PATH, "OSError: [Errno 13]", id="string-winerror"),
+        pytest.param(_HOSTILE_PATH, _HOSTILE_PATH, "OSError", id="both-hostile"),
+    ],
+)
+def test_non_int_os_codes_are_rejected_instead_of_formatted(
+    errno: object, winerror: object, expected: str
+) -> None:
+    """S2: only a real ``int`` code is rendered; a bool, a string, or an int subclass is not."""
+    reason = safe_documentation_error_reason(_os_error_with(errno=errno, winerror=winerror))
+
+    assert reason == expected
+    assert _HOSTILE_PATH not in reason
+
+
+def test_genuine_int_os_codes_keep_the_established_output() -> None:
+    """PRESERVE: real integer codes keep the class/code shape (winerror preferred)."""
+    assert safe_documentation_error_reason(_os_error_with(errno=13)) == "OSError: [Errno 13]"
+    assert safe_documentation_error_reason(_os_error_with(errno=13, winerror=32)) == "OSError: [WinError 32]"
+    assert safe_documentation_error_reason(_os_error_with()) == "OSError"

@@ -641,7 +641,8 @@ def test_worker_keeps_a_containment_failure_a_hard_error(
 
     assert exit_code == 0
     assert response["ok"] is False
-    assert "AutomationSecurity" in response["error"]
+    # S2 strict diagnostics: the envelope carries the class, not the raised message.
+    assert response["error"] == "ContainmentError"
     assert "evidence" not in response
     assert session.opened is False
     assert database.closed is True
@@ -752,7 +753,11 @@ def test_worker_degrades_an_operational_com_copy_failure_as_partial(
     assert evidence["status"] == "partial"
     content = evidence["data"]["app_logic"]["content"]
     assert all(item["content"]["state"] == "failed" for item in content)
-    assert any("COM call failed" in (item["content"]["reason"] or "") for item in content)
+    # S2 strict diagnostics: every degraded reason names the failure class only.
+    assert {item["content"]["reason"] for item in content} == {
+        "Tier 2 app-logic content was not read: the disposable copy of the source "
+        "could not be created: _ComOperationalError"
+    }
     assert identities == []
     assert source.read_bytes() == original
     assert database.closed is True
@@ -779,7 +784,8 @@ def test_worker_reports_a_programming_defect_as_a_hard_error(
 
     assert exit_code == 0
     assert response["ok"] is False
-    assert "documentation reader defect" in response["error"]
+    # S2 strict diagnostics: the defect's text is suppressed, only its class survives.
+    assert response["error"] == "ValueError"
     assert "hunter2secret" not in response["error"]
     assert "evidence" not in response
     assert identities == []
@@ -789,11 +795,14 @@ def test_worker_reports_a_programming_defect_as_a_hard_error(
 
 
 _VBA_FAILURES = [
+    # The recognized trust refusal is authored prerequisite text rendered from the
+    # constant, so it survives the strict policy. Unknown COM detail is exception text and
+    # is therefore class-only (S2/S3): the state, not the text, carries the classification.
     pytest.param(VbaTrustRefusedError(VBA_TRUST_PREREQUISITE), "unavailable", "Trust access", id="trust-refusal"),
     pytest.param(
         VbaProjectUnavailableError("the VBA project could not be read (unknown COM failure 0x8000FFFF)"),
         "failed",
-        "0x8000FFFF",
+        "VbaProjectUnavailableError",
         id="unknown-com-failure",
     ),
 ]
@@ -821,9 +830,63 @@ def test_worker_reports_the_vba_family_by_classification(
     assert expected_text in (vba["content"]["reason"] or "")
     if state == "failed":
         assert VBA_TRUST_PREREQUISITE not in (vba["content"]["reason"] or "")
+        assert "0x8000FFFF" not in (vba["content"]["reason"] or "")
     # The observed form export and the teardown survive the VBA classification.
     form = next(item for item in evidence["data"]["app_logic"]["content"] if item["category"] == "form")
     assert form["content"]["state"] == "observed"
     assert session.closed is True and session.quit_called is True
     assert database.closed is True
     assert _scratch_dirs(tmp_path) == []
+
+
+# --- Strict class-only diagnostics (odd/tasks/documentation-strict-error-diagnostics.md) ---
+
+_STRICT_FAKE_USER = "fakeuser123"
+_STRICT_PATH = rf"C:\Users\{_STRICT_FAKE_USER}\AppData\Local\Temp\ms_access_doc_v2_x\source.accdb"
+
+
+def test_worker_catch_all_reports_the_exception_class_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2/S5: the child catch-all exposes the class, never a credential-bearing text."""
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise RuntimeError(f"copy failed for {_STRICT_PATH};PWD=hunter2secret")
+
+    monkeypatch.setenv(documentation_app_logic.SCRATCH_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(documentation_app_logic, "shutil", SimpleNamespace(copy2=failing_copy, rmtree=shutil.rmtree))
+    source = tmp_path / "core.accdb"
+    source.write_bytes(b"not-a-real-access-file")
+    original = source.read_bytes()
+    database = _FakeDatabase()
+    _patch_worker_database(monkeypatch, database)
+
+    exit_code, identities, response = _run_protocol(monkeypatch, _armed_request(source))
+
+    assert exit_code == 0
+    assert response == {"ok": False, "error": "RuntimeError"}
+    assert "hunter2secret" not in json.dumps(response)
+    assert _STRICT_FAKE_USER not in json.dumps(response)
+    assert identities == []
+    assert source.read_bytes() == original
+    assert database.closed is True
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_worker_catch_all_keeps_only_the_numeric_os_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2/S5: an OS failure at the catch-all keeps its class and numeric errno only."""
+    error = OSError(2, f"request read failed for {_STRICT_PATH}", None, None, _STRICT_PATH)
+
+    def failing_decode(_payload: bytes) -> Any:
+        raise error
+
+    monkeypatch.setattr(documentation_worker, "decode_request", failing_decode)
+
+    exit_code, identities, response = _run_protocol(monkeypatch, _armed_request(tmp_path / "core.accdb"))
+
+    assert exit_code == 0
+    assert response == {"ok": False, "error": "FileNotFoundError: [Errno 2]"}
+    assert _STRICT_FAKE_USER not in json.dumps(response)
+    assert identities == []

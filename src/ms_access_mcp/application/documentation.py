@@ -149,6 +149,42 @@ def redact_connection_secrets(text: str) -> str:
     return "".join(result)
 
 
+def safe_documentation_error_reason(error: BaseException) -> str:
+    """Render one documentation diagnostic from the error's class, never its text.
+
+    Documentation evidence, warnings, and the worker's error envelope are shareable, so a
+    diagnostic boundary must never forward arbitrary exception text: ``str(error)``,
+    ``args``, ``strerror``, ``filename``, and ``filename2`` can each carry a user profile
+    path or a credential. Only the exception class name is kept. An ``OSError`` adds its
+    *numeric* OS code -- ``winerror`` when it is a real integer, otherwise ``errno`` -- so
+    an operator still gets a stable, machine-readable cause without any free text. A code
+    that is not a plain integer (a ``bool``, a string, or any other object) is ignored
+    rather than formatted as code, so a caller cannot smuggle text through it.
+    """
+    name = type(error).__name__
+    if not isinstance(error, OSError):
+        return name
+    winerror = _numeric_os_code(getattr(error, "winerror", None))
+    if winerror is not None:
+        return f"{name}: [WinError {winerror}]"
+    errno = _numeric_os_code(error.errno)
+    if errno is not None:
+        return f"{name}: [Errno {errno}]"
+    return name
+
+
+def _numeric_os_code(value: object) -> int | None:
+    """Return ``value`` only when it is exactly an ``int`` OS code.
+
+    ``type(value) is int`` is deliberate: ``isinstance`` would also accept a ``bool`` and an
+    ``int`` subclass whose ``__format__`` (or ``__str__``) returns arbitrary text, so a
+    hostile object could smuggle a path into the reason through the f-string. A rejected
+    value is never formatted or converted; the caller falls back to the next real code or
+    to the class name alone.
+    """
+    return value if type(value) is int else None  # exact type check, not isinstance
+
+
 @dataclass
 class FactProvenance:
     object_kind: str

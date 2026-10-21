@@ -265,7 +265,8 @@ def test_index_failure_is_recorded_and_other_table_continues() -> None:
     )
     document = inspect_with(fake)
     assert document.tables[0].primary_key.state == "failed"
-    assert "index read failed" in document.tables[0].primary_key.reason
+    # S2 strict diagnostics: only the failure class reaches the fact reason.
+    assert document.tables[0].primary_key.reason == "RuntimeError"
     assert document.tables[1].primary_key.state == "observed"
     assert document.coverage.tables.failed["Broken"]
     assert document.status == "partial"
@@ -342,7 +343,8 @@ def test_query_parameter_read_failure_is_failed_not_fabricated_empty() -> None:
     )
     parameters = document.queries[0].parameters
     assert parameters.state == "failed"
-    assert "parameter read failed" in (parameters.reason or "")
+    # S2 strict diagnostics: only the failure class reaches the fact reason.
+    assert parameters.reason == "RuntimeError"
     assert document.coverage.queries.failed["Q"]
     assert document.status == "partial"
 
@@ -639,8 +641,10 @@ def test_unreadable_index_capability_is_unsupported_not_failed() -> None:
     assert table.kind == "local"
     assert [field.name for field in table.fields] == ["id"]
     assert table.primary_key.state == "unavailable"
-    assert table.primary_key.reason == "indexes are not exposed"
-    assert document.coverage.tables.unsupported["T"] == "indexes are not exposed"
+    # S2 strict diagnostics: a capability gap is still ``unavailable``, but its text is
+    # suppressed like any other exception text.
+    assert table.primary_key.reason == "InspectionCapabilityUnavailableError"
+    assert document.coverage.tables.unsupported["T"] == "InspectionCapabilityUnavailableError"
     assert document.coverage.tables.failed == {}
 
 
@@ -664,8 +668,8 @@ def test_link_metadata_credentials_are_removed_before_evidence() -> None:
     assert "canary-secret" not in json.dumps(document.to_dict())
 
 
-def test_credentials_in_a_read_error_are_redacted_from_coverage() -> None:
-    """T1: a credential embedded in an error message is redacted before coverage."""
+def test_credentials_in_a_read_error_never_reach_coverage() -> None:
+    """T1/S2: the strict diagnostic drops the whole message, so no credential can survive."""
     fake = port(
         tables=[TableInfo("T")],
         link_metadata={"T": RuntimeError("open failed for ;DATABASE=x.accdb;PWD=canary-secret")},
@@ -673,7 +677,9 @@ def test_credentials_in_a_read_error_are_redacted_from_coverage() -> None:
     document = inspect_with(fake)
     reason = document.coverage.tables.failed["T"]
     assert "canary-secret" not in reason
-    assert "PWD=***" in reason
+    # Redaction used to keep ``PWD=***``; the class-only policy keeps no message text at all.
+    assert "PWD" not in reason
+    assert reason == "RuntimeError"
     assert document.tables[0].primary_key.reason == reason
 
 
@@ -702,7 +708,8 @@ def test_link_metadata_read_failure_marks_the_table_failed() -> None:
     )
     document = inspect_with(fake)
     assert document.tables[0].name == "LinkedCustomers"
-    assert "link metadata read failed" in document.coverage.tables.failed["LinkedCustomers"]
+    # S2 strict diagnostics: only the failure class reaches the coverage reason.
+    assert document.coverage.tables.failed["LinkedCustomers"] == "RuntimeError"
     assert document.status == "partial"
 
 
@@ -822,10 +829,14 @@ def test_odbc_port_reports_every_app_logic_category_unavailable_with_the_engine_
     assert app_logic is not None
     assert len(app_logic.containers) == 4
     assert all(item.objects.state == "unavailable" for item in app_logic.containers)
-    assert all("ODBC" in (item.objects.reason or "") for item in app_logic.containers)
+    # S2 strict diagnostics: the engine-limitation text is exception text, so the fact
+    # names the capability-gap class instead; ``unavailable`` still carries the meaning.
+    assert all(item.objects.reason == "InspectionCapabilityUnavailableError" for item in app_logic.containers)
     assert app_logic.startup_properties
     assert all(item.value.state == "unavailable" for item in app_logic.startup_properties)
-    assert all("ODBC" in (item.value.reason or "") for item in app_logic.startup_properties)
+    assert all(
+        item.value.reason == "InspectionCapabilityUnavailableError" for item in app_logic.startup_properties
+    )
     assert document.status == "partial"
 
 
@@ -856,7 +867,8 @@ def test_one_container_failure_stays_failed_and_does_not_erase_the_other_facts()
     assert app_logic is not None
     by_category = {item.category: item for item in app_logic.containers}
     assert by_category["form_inventory"].objects.state == "failed"
-    assert "Forms container read failed" in (by_category["form_inventory"].objects.reason or "")
+    # S2 strict diagnostics: the failed fact names the class, not the raised message.
+    assert by_category["form_inventory"].objects.reason == "RuntimeError"
     assert by_category["report_inventory"].objects.state == "observed"
     assert by_category["report_inventory"].objects.value == [{"name": "rptSales"}]
     # An empty container is a known-empty observation, distinct from an unread one.
@@ -878,7 +890,7 @@ def test_startup_property_read_failure_is_failed_for_every_allowlisted_property(
     assert app_logic is not None
     assert app_logic.startup_properties
     assert all(item.value.state == "failed" for item in app_logic.startup_properties)
-    assert all("properties read failed" in (item.value.reason or "") for item in app_logic.startup_properties)
+    assert all(item.value.reason == "RuntimeError" for item in app_logic.startup_properties)
     assert all(item.objects.state == "observed" for item in app_logic.containers)
 
 
@@ -1242,3 +1254,55 @@ def test_property_omission_warning_is_never_read_without_the_app_logic_opt_in() 
 
     assert document.warnings == []
     assert fake.app_logic_calls == []
+
+
+# --- Strict class-only diagnostics (odd/tasks/documentation-strict-error-diagnostics.md) ---
+
+_STRICT_FAKE_USER = "fakeuser123"
+_STRICT_PATH = rf"C:\Users\{_STRICT_FAKE_USER}\AppData\Local\Temp\ms_access_doc_v2_x\source.accdb"
+_STRICT_SECOND_PATH = rf"C:\Users\{_STRICT_FAKE_USER}\AppData\Local\Temp\ms_access_doc_v2_y\source.accdb"
+_STRICT_SECRET_TEXT = f"open failed for {_STRICT_PATH};PWD=hunter2secret"
+
+
+def test_read_error_reason_is_the_exception_class_only() -> None:
+    """S2/S5: a credential- and path-bearing read failure exposes its class, never its text."""
+    fake = port(tables=[TableInfo("T")], link_metadata={"T": RuntimeError(_STRICT_SECRET_TEXT)})
+
+    document = inspect_with(fake)
+
+    assert document.coverage.tables.failed["T"] == "RuntimeError"
+    assert document.tables[0].primary_key.reason == "RuntimeError"
+    assert document.status == "partial"
+    assert [table.name for table in document.tables] == ["T"]
+    serialized = json.dumps(document.to_dict())
+    assert "hunter2secret" not in serialized
+    assert _STRICT_FAKE_USER not in serialized
+
+
+def test_os_read_error_reason_keeps_only_the_numeric_code() -> None:
+    """S2/S5: an OS read failure keeps class plus numeric code, never ``strerror`` or a path."""
+    error = OSError(2, _STRICT_SECRET_TEXT)
+    error.filename2 = _STRICT_SECOND_PATH
+    fake = port(tables=[TableInfo("T")], link_metadata={"T": error})
+
+    document = inspect_with(fake)
+
+    assert document.coverage.tables.failed["T"] == "FileNotFoundError: [Errno 2]"
+    assert document.tables[0].primary_key.reason == "FileNotFoundError: [Errno 2]"
+    assert _STRICT_FAKE_USER not in json.dumps(document.to_dict())
+
+
+def test_metadata_read_failure_fallback_text_is_preserved() -> None:
+    """PRESERVE: ``_reason(None)`` keeps its authored fallback instead of a class name."""
+
+    class _NoneQueryPort(FakePort):
+        """A port that answers "no query catalogue" without raising."""
+
+        def get_queries(self) -> Any:
+            return None
+
+    document = inspect_with(_NoneQueryPort(tables=[], indexes={}, relationships=[], queries=[]))
+
+    assert document.coverage.queries.failed["queries"] == "Metadata read failed"
+    # The fallback is authored text, not a class name, and the derived status is unchanged.
+    assert document.status == "partial"
