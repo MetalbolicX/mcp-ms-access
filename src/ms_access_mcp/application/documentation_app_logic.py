@@ -196,7 +196,26 @@ class AppLogicContent:
 
 
 def _reason(error: Exception) -> str:
+    if isinstance(error, OSError) and (error.filename is not None or error.filename2 is not None):
+        return redact_connection_secrets(_path_free_os_reason(error))
     return redact_connection_secrets(str(error).strip() or type(error).__name__)
+
+
+def _path_free_os_reason(error: OSError) -> str:
+    """Render a path-bearing OS error without its ``filename``/``filename2``.
+
+    ``str(OSError)`` appends the offending paths, which on Windows carry the user name and
+    the scratch layout into shareable evidence. The error code and ``strerror`` already say
+    what went wrong, so only those are kept.
+    """
+    winerror = getattr(error, "winerror", None)
+    if winerror is not None:
+        code = f"[WinError {winerror}] "
+    elif error.errno is not None:
+        code = f"[Errno {error.errno}] "
+    else:
+        code = ""
+    return f"{code}{error.strerror or ''}".strip() or type(error).__name__
 
 
 def _is_operational_failure(error: Exception) -> bool:
@@ -626,7 +645,12 @@ def _remove_scratch(workdir: Path) -> str | None:
         shutil.rmtree(workdir, onerror=record)
     except Exception as error:  # noqa: BLE001 - teardown never raises
         failures.append(error)
-    if not workdir.exists():
+    try:
+        present = workdir.exists()
+    except Exception as error:  # noqa: BLE001 - an unanswerable probe counts as residue
+        failures.append(error)
+        present = True
+    if not present:
         # The residue itself is the authority: an already removed directory is success.
         return None
     error: Exception | None = next(

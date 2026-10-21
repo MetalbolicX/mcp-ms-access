@@ -286,7 +286,8 @@ def terminate_verified_access(
             terminated=False,
             exited=True,
             detail=(
-                f"announced image {image!r} is not {ACCESS_IMAGE_NAME}; no kill was attempted"
+                f"announced image {_image_name(image)!r} is not {ACCESS_IMAGE_NAME}; "
+                "no kill was attempted"
             ),
         )
     live = read_process_identity(pid, runner=run, timeout=timeout)
@@ -309,8 +310,9 @@ def terminate_verified_access(
             terminated=False,
             exited=True,
             detail=(
-                f"live process identity (creation={live.creation}, image={live.image!r}) does "
-                f"not match the announced identity (creation={creation}, image={image!r}); "
+                f"live process identity (creation={live.creation}, "
+                f"image={_image_name(live.image)!r}) does not match the announced identity "
+                f"(creation={creation}, image={_image_name(image)!r}); "
                 "no kill was attempted"
             ),
         )
@@ -344,6 +346,11 @@ def terminate_verified_access(
             )
         ),
     )
+
+
+def _image_name(image: object) -> str:
+    """The executable file name only: the decisions compare names, and a directory may name the user."""
+    return Path(str(image)).name
 
 
 def _wait_for_exit(pid: int, grace_seconds: float, run: CommandRunner, timeout: float) -> bool:

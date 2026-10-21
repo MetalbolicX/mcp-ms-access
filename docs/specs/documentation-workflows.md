@@ -887,11 +887,18 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   `ACCESS_MCP_DOC_SCRATCH_DIR` override when set (otherwise the system temp directory).
   The original is never opened by `Access.Application`. Removal in the `finally` is
   best-effort: a removal that fails, or that reports success while the directory is still
-  there, never raises from teardown and never hides the inspection's own result. Instead
-  the run carries one sanitized warning (error class plus redacted reason, never the
-  scratch path and never an exception message verbatim) on `AppLogicContent.warnings`,
-  which the merge adds to the document warnings. A successful removal adds no warning, so
-  a successful run's evidence and Markdown stay byte-identical.
+  there, never raises from teardown and never hides the inspection's own result. If even
+  the check for a leftover directory raises, the directory is treated as still present.
+  Instead of raising, the run carries one sanitized warning (error class plus redacted
+  reason) on `AppLogicContent.warnings`, which the merge adds to the document warnings. A
+  successful removal adds no warning, so a successful run's evidence and Markdown stay
+  byte-identical.
+- **OS error reasons never carry file paths.** An OS error that names a file
+  (`filename`/`filename2`) is rendered as its error code and `strerror` only, for example
+  `[Errno 13] Access is denied`, in the scratch-residue warning and in every degraded
+  Tier 2 reason (scratch directory, disposable copy, content reads). The path would name
+  the user profile and the scratch layout in shareable evidence. Other errors keep their
+  existing redacted text.
 - **Failure visibility uses the existing channels only.** The four formerly silent
   failure sites surface as sanitized warnings on the existing `EvidenceDoc.warnings` /
   `AppLogicContent.warnings` lists, or as error-message enrichment. No logging framework,
@@ -904,7 +911,8 @@ Qualification records engine version/bitness, host requirements, passive/read-on
     behaviour of `list_msaccess_pids` are unchanged.
   - *Termination.* When cleanup cannot be established, the raised error message carries
     the per-PID termination detail plus any swallowed kill-attempt error class; the kill,
-    retry, grace, and established/not-established decisions are unchanged.
+    retry, grace, and established/not-established decisions are unchanged. Termination
+    details name an image by its executable file name only, never its directory.
   - *DAO properties.* Unreadable database properties are still omitted and readable
     siblings are still recorded as their own observed startup-property facts, but the
     omission is no longer silent: the successful path carries one warning stating how

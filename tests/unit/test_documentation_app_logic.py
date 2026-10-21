@@ -1323,3 +1323,128 @@ def test_read_level_interrupt_propagates_and_teardown_still_removes_the_workdir(
 
     assert len(created) == 1
     assert not created[0].exists()
+
+
+# --- Evidence path hardening (odd/tasks/documentation-evidence-path-hardening.md) ---
+
+_FAKE_USER = "fakeuser123"
+_PATH_BEARING_FILE = rf"C:\Users\{_FAKE_USER}\AppData\Local\Temp\ms_access_doc_v2_x\source.accdb"
+
+
+def _path_bearing_error() -> PermissionError:
+    """A real-shaped OS error whose ``str()`` embeds the offending path."""
+    return PermissionError(13, "Access is denied", _PATH_BEARING_FILE)
+
+
+def test_scratch_residue_warning_never_echoes_the_os_error_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2: a path-bearing removal error is reported by class and reason, never its path."""
+
+    def failing_rmtree(_path: object, *_args: object, **_kwargs: object) -> None:
+        raise _path_bearing_error()
+
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(rmtree=failing_rmtree))
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert len(content.warnings) == 1
+    warning = content.warnings[0]
+    assert warning == (
+        "The disposable scratch copy directory could not be removed "
+        "(PermissionError: [Errno 13] Access is denied); "
+        "the residue remains under the documentation scratch root"
+    )
+    assert _FAKE_USER not in warning
+    assert r"C:\Users" not in warning
+
+
+def test_stage_failure_reason_never_echoes_the_os_error_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2: a path-bearing copy error degrades with a path-free reason and warning."""
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise _path_bearing_error()
+
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(copy2=failing_copy))
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    _assert_failed_fallback(content, detail="[Errno 13] Access is denied")
+    reasons = [item.content.reason or "" for item in content.content]
+    assert all(_FAKE_USER not in reason for reason in reasons)
+    assert all(_FAKE_USER not in warning for warning in content.warnings)
+    assert "open" not in session.events
+
+
+def test_windows_shaped_removal_error_reports_its_winerror_without_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2: a real Windows OS error (with ``winerror``) keeps its code, never its path."""
+
+    def failing_rmtree(_path: object, *_args: object, **_kwargs: object) -> None:
+        raise PermissionError(13, "The process cannot access the file", _PATH_BEARING_FILE, 32)
+
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(rmtree=failing_rmtree))
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert content.warnings == [
+        "The disposable scratch copy directory could not be removed "
+        "(PermissionError: [WinError 32] The process cannot access the file); "
+        "the residue remains under the documentation scratch root"
+    ]
+
+
+def test_stage_failure_reason_without_a_filename_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2 regression pin: an OS error without a filename keeps its exact reason text."""
+
+    def failing_copy(_source: object, _destination: object) -> None:
+        raise OSError("the disposable copy could not be written")
+
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(copy2=failing_copy))
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert {item.content.reason for item in content.content} == {
+        "Tier 2 app-logic content was not read: "
+        "the disposable copy of the source could not be created: "
+        "the disposable copy could not be written"
+    }
+
+
+def test_residue_probe_failure_still_warns_and_never_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S3: when the leftover-directory check itself raises, teardown warns instead of raising."""
+
+    class _ProbeFailingPath(type(Path())):  # type: ignore[misc]
+        def exists(self, *args: Any, **kwargs: Any) -> bool:
+            if self.name.startswith("ms_access_doc_v2_"):
+                raise _path_bearing_error()
+            return super().exists(*args, **kwargs)
+
+    monkeypatch.setattr(documentation_app_logic, "Path", _ProbeFailingPath)
+    monkeypatch.setattr(documentation_app_logic, "shutil", _shutil_seam(rmtree=lambda *_a, **_k: None))
+    source = _source(tmp_path)
+    session = _FakeSession(objects=_default_objects(), exports=_default_exports())
+
+    content = _reader(session, scratch_root=tmp_path).read(str(source))
+
+    assert [item.name for item in content.content] == ["frmMain", "rptSales", "AutoExec"]
+    assert content.warnings == [
+        "The disposable scratch copy directory could not be removed "
+        "(PermissionError: [Errno 13] Access is denied); "
+        "the residue remains under the documentation scratch root"
+    ]

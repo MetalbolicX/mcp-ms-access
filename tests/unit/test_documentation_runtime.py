@@ -1507,3 +1507,39 @@ def test_runtime_facades_expose_the_source_opt_in_defaulting_off() -> None:
     for callable_object in (runtime_module.DocumentationRuntime.inspect, runtime_module.run_documentation_inspection):
         parameter = inspect_module.signature(callable_object).parameters["include_app_logic_source"]
         assert parameter.default is False
+
+
+# --- Evidence path hardening (odd/tasks/documentation-evidence-path-hardening.md) ---
+
+
+@pytest.mark.parametrize(
+    ("image", "runner_kwargs", "expected_name"),
+    [
+        (r"C:\Users\fakeuser123\Apps\WINWORD.EXE", {}, "WINWORD.EXE"),
+        (
+            r"C:\Users\fakeuser123\Apps\MSACCESS.EXE",
+            {"creation": ACCESS_CREATION + 1},
+            "MSACCESS.EXE",
+        ),
+    ],
+    ids=["announced-image-refusal", "identity-mismatch-refusal"],
+)
+def test_termination_detail_names_only_the_image_file_name(
+    image: str, runner_kwargs: dict[str, Any], expected_name: str
+) -> None:
+    """S4: refusal details name the executable file only, never its directory."""
+    runner = _CommandRunner(**runner_kwargs)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=image,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.terminated is False
+    assert _taskkill_calls(runner) == []
+    assert expected_name in outcome.detail
+    assert "fakeuser123" not in outcome.detail
+    assert r"C:\Users" not in outcome.detail
