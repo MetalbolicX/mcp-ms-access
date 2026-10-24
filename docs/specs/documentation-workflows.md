@@ -893,9 +893,9 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   class-only reason) on `AppLogicContent.warnings`, which the merge adds to the document
   warnings. A successful removal adds no warning, so a successful run's evidence and
   Markdown stay byte-identical.
-- **Diagnostic reasons are class-only, never exception text.** Documentation evidence,
-  warnings, and the worker's error envelope are shareable, so the four diagnostic
-  boundaries that render an exception reason go through one shared formatter
+- **Diagnostic reasons are class-only, never runtime exception text.** Documentation
+  evidence, warnings, and the worker's error envelope are shareable, so the four
+  diagnostic boundaries that render an exception reason go through one shared formatter
   (`documentation.safe_documentation_error_reason`): the Tier 2 app-logic reader's reason
   (including the scratch-residue warning, whose class prefix is not duplicated), the
   Tier 1/Tier 2 inspection reason (which keeps its authored `None` fallback text), the
@@ -912,6 +912,24 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   rule for exception reasons at those boundaries, not universal sanitization of every
   evidence field, and it deliberately loses the raw exception detail: an operator
   diagnosing a failure reads the class and numeric code, not a driver message.
+- **Authored detail is the one exception, and it is literal-only.** A class-only reason
+  alone could not say *which* check failed, so a project-defined exception that subclasses
+  `documentation.AuthoredDiagnostic` carries an authored, compile-time literal detail that
+  renders as `<Class>: <detail>`. Three adoption sites use it: `ContainmentError` (the six
+  containment raises, so the user-facing worker error names the failed check),
+  `InspectionCapabilityUnavailableError` (so an ODBC capability fact reads
+  `InspectionCapabilityUnavailableError: Access ODBC SQLForeignKeys is unsupported (IM001) …`
+  instead of only a class name), and `WorkerRequestError` (child-side request validation,
+  so a rejected field is named). The rule is enforced twice: `detail` is typed
+  `LiteralString`, so pyright (which gates `src`) rejects an f-string or any other runtime
+  value at the raise site, and the formatter additionally requires `type(detail) is str`
+  and a non-empty value, so a `str` subclass with a hostile `__format__`/`__str__`/`__repr__`
+  or an empty string falls back to the class-only reason. A chained `__cause__` is appended
+  as `(cause: <class-only reason>)` — one level only, never the cause's own authored
+  detail, and never an implicit `__context__`. Runtime text still never passes: a
+  message that needs a runtime value (an observed `AutomationSecurity` readback, a
+  container name, the IPC byte budget, a backend error, a database path) stays a plain
+  `AccessMcpError` message and renders class-only.
 - **Failure visibility uses the existing channels only.** The four formerly silent
   failure sites surface as sanitized warnings on the existing `EvidenceDoc.warnings` /
   `AppLogicContent.warnings` lists, or as error-message enrichment. No logging framework,
@@ -999,7 +1017,8 @@ Qualification records engine version/bitness, host requirements, passive/read-on
 |---|---|---|
 | T3 containment (Job Object + PID kill net) | GATE PASSED, 9/9 cells | `odd/evidence/documentation-v2-containment-20261017.zip` (sha `d5eb52eb…f81`) |
 | T4 content reads (References 1-based, `SaveAsText` form/report/macro, VBA-trust read) | GATE PASSED, 9/9 cells / 13/13 checks | `odd/evidence/documentation-v2-content-reads-20261017.zip` (sha `7d4006a6…e64`) |
-| T5 embedded event macros | BLOCKED-with-evidence (L14); vector stays UNQUALIFIED | `odd/evidence/documentation-v2-embedded-blocked-20261017.zip` (sha `c37f7640…0d4`) |
+| T5 embedded event macros (2026-10-17) | BLOCKED-with-evidence (L14): every candidate used an invented block keyword, so Access rejected it at import | `odd/evidence/documentation-v2-embedded-blocked-20261017.zip` (sha `c37f7640…0d4`) |
+| T5 embedded event macros, re-qualified (2026-10-23) | GATE PASSED, 9/9 cells: positive control (`AutomationSecurity=1`) inserted the canary row 3/3; force-disable 3/3 and the shipped `AppLogicReader` 3/3 left it empty | `odd/evidence/documentation-v2-embedded-macro-requal-20261023.zip` (sha `939dbfc6…e1e`) |
 
 ### 8.3 App-logic coverage matrix (fixture scope, measured runtime only)
 
@@ -1013,7 +1032,8 @@ runtimes are safe.
 | AutoExec `RunCode` → VBA | QUALIFIED (fixture scope) |
 | Startup-form `OnLoad` expression → VBA | QUALIFIED (fixture scope) |
 | AutoExec `OpenQuery` (non-VBA action) | QUALIFIED (fixture scope) |
-| Embedded event macros | UNQUALIFIED (blocked, L14; ground truth unavailable) |
+| Startup-form embedded `OnLoad` macro (`OpenQuery`, non-VBA) | QUALIFIED (fixture scope; re-qualified 2026-10-23 with the real `OnLoadEmMacro` export grammar) |
+| Embedded macros on other events or controls | UNQUALIFIED (only the startup-form `OnLoad` trigger was measured) |
 | AutoKeys | UNSUPPORTED (no input synthesis; never claimed suppressed) |
 | `SaveAsText` / References / VBA-trust reads | QUALIFIED (T4) |
 | Any other Access runtime/version | UNQUALIFIED (single-host scope; facts report `unavailable`) |

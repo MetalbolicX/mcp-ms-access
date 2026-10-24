@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, LiteralString, TypeVar
 
 from .documentation_limits import ensure_evidence_within_limit
 
@@ -149,8 +149,29 @@ def redact_connection_secrets(text: str) -> str:
     return "".join(result)
 
 
+class AuthoredDiagnostic(Exception):  # noqa: N818 - S2 names this marker type; it is not a raised class itself
+    """A diagnostic whose detail is authored, compile-time literal text (never runtime text).
+
+    Documentation evidence, warnings, and the worker's error envelope are shareable, so a
+    diagnostic reason may not forward arbitrary exception text. A project-defined exception
+    may still explain *which* check failed, because its detail is literal text written in
+    this repository rather than a value read at runtime -- it cannot carry a user profile
+    path, a credential, or a database value.
+
+    The ``LiteralString`` parameter is the compile-time half of that rule: pyright (which
+    gates ``src``) rejects an f-string or any other runtime value passed here, so a caller
+    cannot interpolate ``str(error)``, a file name, or a database value into the detail.
+    A caller may still pass an f-string at runtime from unchecked code, so the formatter
+    keeps the runtime half too (``type(detail) is str`` and non-empty).
+    """
+
+    def __init__(self, detail: LiteralString) -> None:
+        super().__init__(detail)
+        self.authored_detail: str = detail
+
+
 def safe_documentation_error_reason(error: BaseException) -> str:
-    """Render one documentation diagnostic from the error's class, never its text.
+    """Render one documentation diagnostic from the error's class, never its runtime text.
 
     Documentation evidence, warnings, and the worker's error envelope are shareable, so a
     diagnostic boundary must never forward arbitrary exception text: ``str(error)``,
@@ -160,7 +181,30 @@ def safe_documentation_error_reason(error: BaseException) -> str:
     an operator still gets a stable, machine-readable cause without any free text. A code
     that is not a plain integer (a ``bool``, a string, or any other object) is ignored
     rather than formatted as code, so a caller cannot smuggle text through it.
+
+    The one exception is authored detail (S2): an :class:`AuthoredDiagnostic` whose
+    ``authored_detail`` is *exactly* ``str`` and non-empty renders as
+    ``<Class>: <detail>``. That detail is compile-time literal text this project wrote, so
+    it cannot hold runtime data -- a ``str`` subclass, an empty string, or any other value
+    is rejected and falls back to the class-only reason. A chained ``__cause__`` is
+    appended as ``(cause: <class-only reason of the cause>)``: one level only, never the
+    cause's own authored detail, and never an implicit ``__context__``.
     """
+    if isinstance(error, AuthoredDiagnostic):
+        # getattr: the formatter is a failure boundary, so a subclass that skipped
+        # AuthoredDiagnostic.__init__ falls back to class-only instead of raising.
+        detail = getattr(error, "authored_detail", None)
+        if type(detail) is str and detail:
+            name = type(error).__name__
+            cause = error.__cause__
+            if cause is None:
+                return f"{name}: {detail}"
+            return f"{name}: {detail} (cause: {_class_only_reason(cause)})"
+    return _class_only_reason(error)
+
+
+def _class_only_reason(error: BaseException) -> str:
+    """Render one error as its class plus, for an ``OSError``, a real numeric OS code."""
     name = type(error).__name__
     if not isinstance(error, OSError):
         return name

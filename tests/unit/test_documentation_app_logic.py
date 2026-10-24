@@ -36,6 +36,7 @@ from ms_access_mcp.application.documentation import (
     FactStatus,
     RunMetadata,
     SourceEvidence,
+    safe_documentation_error_reason,
 )
 from ms_access_mcp.application.documentation_app_logic import (
     ACCESS_APPLICATION_METHOD,
@@ -1601,3 +1602,56 @@ def test_non_path_exception_text_is_also_suppressed_in_a_stage_reason(
 
     _assert_class_only_copy_failure(content, reason_tail="_ComFaultError")
     assert _WHOLE_STAGE_PROBE not in json.dumps([item.content.reason for item in content.content])
+
+
+# --- Authored containment detail (odd/tasks/documentation-authored-diagnostics-embedded-macro.md) ---
+
+
+class _PathBearingSecuritySetFailingSession(_FakeSession):
+    """A session whose ForceDisable write fails with a path-bearing message."""
+
+    def set_automation_security(self, level: int) -> None:
+        self.events.append(("security_set", level))
+        raise RuntimeError(f"AutomationSecurity is locked by policy for {_PATH_BEARING_FILE}")
+
+
+_CONTAINMENT_SECURITY_SET_DETAIL = (
+    "Documentation app-logic reader could not set AutomationSecurity=3 and read it back "
+    "before opening any source"
+)
+
+
+def test_containment_error_surfaces_its_authored_detail_and_a_class_only_cause(tmp_path: Path) -> None:
+    """S3: the containment message says which check failed; its cause stays class-only."""
+    source = _source(tmp_path)
+    session = _PathBearingSecuritySetFailingSession(objects=_default_objects(), exports=_default_exports())
+
+    with pytest.raises(ContainmentError) as raised:
+        _reader(session, scratch_root=tmp_path).read(str(source))
+
+    error = raised.value
+    # The authored literal is what the user-facing boundary will render.
+    assert str(error) == _CONTAINMENT_SECURITY_SET_DETAIL
+    reason = safe_documentation_error_reason(error)
+    assert reason == f"ContainmentError: {_CONTAINMENT_SECURITY_SET_DETAIL} (cause: RuntimeError)"
+    # The path-bearing cause text is never carried, so no profile path escapes.
+    assert _FAKE_USER not in reason
+    assert _FAKE_USER not in str(error)
+
+
+def test_the_readback_mismatch_containment_message_is_its_own_exact_literal(
+    tmp_path: Path,
+) -> None:
+    """S3: the readback mismatch names the check without echoing the observed value."""
+    source = _source(tmp_path)
+    session = _FakeSession(security_readback=1, objects=_default_objects(), exports=_default_exports())
+
+    with pytest.raises(ContainmentError) as raised:
+        _reader(session, scratch_root=tmp_path).read(str(source))
+
+    detail = (
+        "Documentation app-logic reader set AutomationSecurity=3 but read back a different "
+        "value; the inspection aborted without opening any source"
+    )
+    assert str(raised.value) == detail
+    assert safe_documentation_error_reason(raised.value) == f"ContainmentError: {detail}"

@@ -38,11 +38,11 @@ import json
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, LiteralString, NamedTuple
 
 from ..errors import AccessMcpError
 from .database import DatabaseUseCases, Err
-from .documentation import redact_connection_secrets, safe_documentation_error_reason
+from .documentation import AuthoredDiagnostic, redact_connection_secrets, safe_documentation_error_reason
 from .documentation_app_logic import apply_app_logic_content, read_tier2_content
 from .documentation_inspect import inspect_open_database
 from .documentation_limits import REQUEST_MAX_BYTES, ensure_evidence_within_limit
@@ -50,6 +50,16 @@ from .documentation_limits import REQUEST_MAX_BYTES, ensure_evidence_within_limi
 _ALLOWED_BACKENDS = frozenset({"auto", "dao", "odbc"})
 _RESPONSE_ENCODING = "utf-8"
 _ACCESS_IDENTITY_PREFIX = b"@@ACCESS_IDENTITY@@ "
+
+
+class WorkerRequestError(AccessMcpError, AuthoredDiagnostic):
+    """A child-side request rejection whose detail is an authored literal.
+
+    The child's failure envelope is shareable, so it must never carry request text: a
+    rejected ``db_path``, filter value, or directory can hold a profile path or a
+    credential. The detail is therefore literal text naming the rejected field, and the
+    accepted backends are spelled out rather than interpolated from the allowed set.
+    """
 
 
 def build_request(
@@ -96,51 +106,64 @@ def encode_request(request: dict[str, Any]) -> bytes:
 
 
 def decode_request(data: bytes) -> dict[str, Any]:
-    """Decode and validate a bounded structured request; reject malformed content."""
+    """Decode and validate a bounded structured request; reject malformed content.
+
+    Every rejection is a :class:`WorkerRequestError` carrying an authored literal, so the
+    child's ``{"ok": false, "error": ...}`` envelope names the rejected field instead of
+    only its class. The over-cap check stays a plain ``AccessMcpError``: its message needs
+    the runtime byte budget, so it cannot be authored literal text.
+    """
     if len(data) > REQUEST_MAX_BYTES:
-        msg = (
+        limit_msg = (
             f"Documentation inspection request exceeds the allowed {REQUEST_MAX_BYTES} byte "
             "IPC request limit"
         )
-        raise AccessMcpError(msg)
+        raise AccessMcpError(limit_msg)
     try:
         request = json.loads(data.decode(_RESPONSE_ENCODING))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        msg = "Documentation worker received a malformed request"
-        raise AccessMcpError(msg) from error
+        msg: LiteralString = "Documentation worker received a malformed request"
+        raise WorkerRequestError(msg) from error
     if not isinstance(request, dict):
-        msg = "Documentation worker request must be a JSON object"
-        raise AccessMcpError(msg)
+        msg: LiteralString = "Documentation worker request must be a JSON object"
+        raise WorkerRequestError(msg)
     if not isinstance(request.get("db_path"), str) or not request.get("db_path"):
-        msg = "Documentation worker request requires a non-empty db_path"
-        raise AccessMcpError(msg)
+        msg: LiteralString = "Documentation worker request requires a non-empty db_path"
+        raise WorkerRequestError(msg)
     if request.get("backend") not in _ALLOWED_BACKENDS:
-        msg = f"Documentation worker request backend must be one of {sorted(_ALLOWED_BACKENDS)}"
-        raise AccessMcpError(msg)
+        # The sanctioned backends are spelled out rather than interpolated from the set,
+        # so the detail stays authored literal text.
+        msg: LiteralString = "Documentation worker request backend must be one of auto, dao, odbc"
+        raise WorkerRequestError(msg)
     if not isinstance(request.get("allowed_dirs"), list):
-        msg = "Documentation worker request requires an allowed_dirs list"
-        raise AccessMcpError(msg)
+        msg: LiteralString = "Documentation worker request requires an allowed_dirs list"
+        raise WorkerRequestError(msg)
     for key in ("tables", "queries"):
         value = request.get(key)
         if value is not None and (not isinstance(value, list) or any(not isinstance(name, str) for name in value)):
-            msg = f"Documentation worker request field {key!r} must be a list of strings or null"
-            raise AccessMcpError(msg)
+            # One authored literal per field: no key is interpolated into the message.
+            msg: LiteralString = (
+                "Documentation worker request field 'tables' must be a list of strings or null"
+                if key == "tables"
+                else "Documentation worker request field 'queries' must be a list of strings or null"
+            )
+            raise WorkerRequestError(msg)
     # Strict bool validation with a default: an absent key is ``False``; any present
     # non-bool (including 0/1) is a malformed request rather than a truthy coercion.
     include_query_sql = request.get("include_query_sql", False)
     if not isinstance(include_query_sql, bool):
-        msg = "Documentation worker request field 'include_query_sql' must be a boolean"
-        raise AccessMcpError(msg)
+        msg: LiteralString = "Documentation worker request field 'include_query_sql' must be a boolean"
+        raise WorkerRequestError(msg)
     request["include_query_sql"] = include_query_sql
     include_app_logic = request.get("include_app_logic", False)
     if not isinstance(include_app_logic, bool):
-        msg = "Documentation worker request field 'include_app_logic' must be a boolean"
-        raise AccessMcpError(msg)
+        msg: LiteralString = "Documentation worker request field 'include_app_logic' must be a boolean"
+        raise WorkerRequestError(msg)
     request["include_app_logic"] = include_app_logic
     include_app_logic_source = request.get("include_app_logic_source", False)
     if not isinstance(include_app_logic_source, bool):
-        msg = "Documentation worker request field 'include_app_logic_source' must be a boolean"
-        raise AccessMcpError(msg)
+        msg: LiteralString = "Documentation worker request field 'include_app_logic_source' must be a boolean"
+        raise WorkerRequestError(msg)
     request["include_app_logic_source"] = include_app_logic_source
     return request
 

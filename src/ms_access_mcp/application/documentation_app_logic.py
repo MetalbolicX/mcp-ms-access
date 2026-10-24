@@ -55,7 +55,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, LiteralString, Protocol, runtime_checkable
 
 from ..backends.access.app_logic_session import (  # noqa: F401 - re-exported seam contract
     VBA_TRUST_PREREQUISITE,
@@ -67,6 +67,7 @@ from .documentation import (
     ACCESS_APPLICATION_METHOD,
     REFERENCE_PROPERTIES,
     AppLogicEvidence,
+    AuthoredDiagnostic,
     ContentObjectEvidence,
     EvidenceDoc,
     FactProvenance,
@@ -121,7 +122,7 @@ class JobHandle(Protocol):
     def close(self) -> None: ...
 
 
-class ContainmentError(AccessMcpError):
+class ContainmentError(AccessMcpError, AuthoredDiagnostic):
     """A containment step failed, so the read is a hard error and never partial evidence.
 
     Force-disable set/readback, owned-identity capture (including an invalid PID read),
@@ -129,6 +130,11 @@ class ContainmentError(AccessMcpError):
     assignment are containment: an uncertain ownership or armed state is reported as a
     safe error instead of being degraded into partial app-logic facts. Interrupts
     (``KeyboardInterrupt``/``SystemExit``) are never converted to this type.
+
+    Every message is an authored literal (:class:`AuthoredDiagnostic`) naming the check
+    that failed, so the user-facing boundary and the evidence facts say which of the six
+    containment checks aborted the read without ever echoing runtime text. The underlying
+    error is chained with ``from`` and renders as a class-only ``(cause: ...)``.
     """
 
 
@@ -197,7 +203,7 @@ class AppLogicContent:
 
 
 def _reason(error: Exception) -> str:
-    """One class-only diagnostic reason (S2), never arbitrary exception text."""
+    """One diagnostic reason (S2): class-only, plus an authored literal detail when present."""
     return redact_connection_secrets(safe_documentation_error_reason(error))
 
 
@@ -392,17 +398,17 @@ class AppLogicReader:
             session.set_automation_security(AUTOMATION_SECURITY_FORCE_DISABLE)
             readback = session.read_automation_security()
         except Exception as error:
-            msg = (
-                f"Documentation app-logic reader could not set AutomationSecurity="
-                f"{AUTOMATION_SECURITY_FORCE_DISABLE} and read it back before opening any "
-                f"source: {_reason(error)}"
+            msg: LiteralString = (
+                "Documentation app-logic reader could not set AutomationSecurity=3 and read "
+                "it back before opening any source"
             )
             raise ContainmentError(msg) from error
         if readback != AUTOMATION_SECURITY_FORCE_DISABLE:
-            msg = (
-                f"Documentation app-logic reader set AutomationSecurity="
-                f"{AUTOMATION_SECURITY_FORCE_DISABLE} but read back {readback!r}; the "
-                "inspection aborted without opening any source"
+            # The observed value is runtime data, so the message says a different value was
+            # read back instead of echoing it.
+            msg: LiteralString = (
+                "Documentation app-logic reader set AutomationSecurity=3 but read back a "
+                "different value; the inspection aborted without opening any source"
             )
             raise ContainmentError(msg)
 
@@ -418,10 +424,10 @@ class AppLogicReader:
         try:
             return self._assign_verified_job(identity)
         except Exception as error:
-            msg = (
+            msg: LiteralString = (
                 "Documentation app-logic reader could not verify the owned Access process "
-                f"identity for Job Object assignment ({_reason(error)}); the inspection "
-                "aborted without opening any source"
+                "identity for Job Object assignment; the inspection aborted without "
+                "opening any source"
             )
             raise ContainmentError(msg) from error
 
@@ -430,14 +436,13 @@ class AppLogicReader:
             pid = session.access_application_pid()
             identity = self._identity_reader(pid)
         except Exception as error:
-            msg = (
+            msg: LiteralString = (
                 "Documentation app-logic reader could not capture the owned Access process "
-                f"identity ({_reason(error)}); the inspection aborted without opening any "
-                "source"
+                "identity; the inspection aborted without opening any source"
             )
             raise ContainmentError(msg) from error
         if identity is None:
-            msg = (
+            msg: LiteralString = (
                 "Documentation app-logic reader could not capture the owned Access process "
                 "identity; the inspection aborted without opening any source"
             )
@@ -449,9 +454,9 @@ class AppLogicReader:
         try:
             self._emit_identity(identity.pid, identity.creation, identity.image)
         except Exception as error:
-            msg = (
+            msg: LiteralString = (
                 "Documentation app-logic reader could not announce the owned Access process "
-                f"identity to the supervisor ({_reason(error)}); no source was opened"
+                "identity to the supervisor; no source was opened"
             )
             raise ContainmentError(msg) from error
 

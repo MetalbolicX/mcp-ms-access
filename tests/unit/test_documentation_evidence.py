@@ -5,6 +5,7 @@ from collections.abc import Callable
 import pytest
 
 from ms_access_mcp.application.documentation import (
+    AuthoredDiagnostic,
     ContentObjectEvidence,
     Coverage,
     CoverageStatus,
@@ -21,6 +22,7 @@ from ms_access_mcp.application.documentation import (
     safe_documentation_error_reason,
     sanitize_connection_string,
 )
+from ms_access_mcp.errors import AccessMcpError
 
 
 def provenance(kind: str = "query", name: str = "Q", prop: str = "sql") -> FactProvenance:
@@ -406,3 +408,183 @@ def test_genuine_int_os_codes_keep_the_established_output() -> None:
     assert safe_documentation_error_reason(_os_error_with(errno=13)) == "OSError: [Errno 13]"
     assert safe_documentation_error_reason(_os_error_with(errno=13, winerror=32)) == "OSError: [WinError 32]"
     assert safe_documentation_error_reason(_os_error_with()) == "OSError"
+
+
+# ---------------------------------------------------------------------------
+# Authored diagnostic detail: literal-only, exact-``str``, one class-only cause (S2)
+# ---------------------------------------------------------------------------
+
+_AUTHORED_DETAIL = "the disposable copy of the source could not be created"
+
+
+class _AuthoredError(AuthoredDiagnostic):
+    """An in-test exception type that carries authored, compile-time literal detail."""
+
+
+class _CauseAuthoredError(AuthoredDiagnostic):
+    """A second authored type, used to prove a cause's own detail is never rendered."""
+
+
+class _HostileStr(str):
+    """A ``str`` subclass whose every textual rendering is the hostile path."""
+
+    def __format__(self, _spec: str) -> str:
+        return _HOSTILE_PATH
+
+    def __str__(self) -> str:
+        return _HOSTILE_PATH
+
+    def __repr__(self) -> str:
+        return _HOSTILE_PATH
+
+
+def _authored_error_with_cause(cause: BaseException) -> AuthoredDiagnostic:
+    """Return an authored error raised ``from`` ``cause`` (an explicit ``__cause__``)."""
+    try:
+        try:
+            raise cause
+        except BaseException:  # noqa: BLE001 - the cause is re-raised as an authored error
+            raise _AuthoredError(_AUTHORED_DETAIL) from cause
+    except AuthoredDiagnostic as error:
+        return error
+
+
+def _authored_error_with_context(context: BaseException) -> AuthoredDiagnostic:
+    """Return an authored error raised while handling ``context`` (``__cause__`` stays None)."""
+    try:
+        try:
+            raise context
+        except BaseException:  # noqa: BLE001 - the implicit context is what is being tested
+            raise _AuthoredError(_AUTHORED_DETAIL)
+    except AuthoredDiagnostic as error:
+        return error
+
+
+def test_authored_detail_is_rendered_after_the_exception_class() -> None:
+    """S2: an authored literal detail is kept verbatim, after the class name."""
+    reason = safe_documentation_error_reason(_AuthoredError(_AUTHORED_DETAIL))
+
+    assert reason == f"_AuthoredError: {_AUTHORED_DETAIL}"
+
+
+def test_a_chained_cause_is_rendered_class_only_one_level() -> None:
+    """S2: ``__cause__`` adds only its class plus numeric code, never its text or paths."""
+    cause = OSError(13, f"copy failed for {_HOSTILE_PATH}")
+    cause.filename = _HOSTILE_PATH
+    cause.filename2 = _HOSTILE_PATH
+
+    reason = safe_documentation_error_reason(_authored_error_with_cause(cause))
+
+    assert reason == f"_AuthoredError: {_AUTHORED_DETAIL} (cause: PermissionError: [Errno 13])"
+    assert _HOSTILE_PATH not in reason
+
+
+def test_a_cause_that_is_itself_authored_never_renders_its_own_detail() -> None:
+    """S2: the cause goes through the class-only formatter, so its detail is dropped."""
+    cause = _CauseAuthoredError("a cause detail that must never be rendered")
+
+    reason = safe_documentation_error_reason(_authored_error_with_cause(cause))
+
+    assert reason == f"_AuthoredError: {_AUTHORED_DETAIL} (cause: _CauseAuthoredError)"
+    assert "a cause detail that must never be rendered" not in reason
+
+
+def test_an_implicit_context_is_never_rendered() -> None:
+    """S2: only ``__cause__`` is rendered; ``__context__`` text never reaches the reason."""
+    reason = safe_documentation_error_reason(_authored_error_with_context(ValueError(f"for {_HOSTILE_PATH}")))
+
+    assert reason == f"_AuthoredError: {_AUTHORED_DETAIL}"
+    assert "cause:" not in reason
+    assert _HOSTILE_PATH not in reason
+
+
+def test_a_str_subclass_detail_is_rejected_and_never_formatted() -> None:
+    """S2: the exact-type rule rejects a ``str`` subclass instead of formatting it."""
+    reason = safe_documentation_error_reason(_AuthoredError(_HostileStr(_HOSTILE_PATH)))
+
+    assert reason == "_AuthoredError"
+    assert _HOSTILE_PATH not in reason
+
+
+def test_an_empty_authored_detail_falls_back_to_the_class_only_reason() -> None:
+    """S2: an empty detail is no detail, so the class-only reason is unchanged."""
+    assert safe_documentation_error_reason(_AuthoredError("")) == "_AuthoredError"
+
+
+def test_runtime_text_stays_class_only_for_types_that_are_not_authored() -> None:
+    """PRESERVE: a plain exception's text is still dropped, whatever it contains."""
+    assert safe_documentation_error_reason(RuntimeError(_HOSTILE_PATH)) == "RuntimeError"
+    assert safe_documentation_error_reason(AccessMcpError(_HOSTILE_PATH)) == "AccessMcpError"
+    assert safe_documentation_error_reason(ValueError(_HOSTILE_PATH)) == "ValueError"
+
+
+# ---------------------------------------------------------------------------
+# Durable pin: an int subclass hostile through format, str, and repr (S4)
+# ---------------------------------------------------------------------------
+
+
+class _HostileFormattingCode(int):
+    """An ``int`` subclass whose every rendering path returns the hostile path."""
+
+    def __format__(self, _spec: str) -> str:
+        return _HOSTILE_PATH
+
+    def __str__(self) -> str:
+        return _HOSTILE_PATH
+
+    def __repr__(self) -> str:
+        return _HOSTILE_PATH
+
+
+@pytest.mark.parametrize(
+    ("errno", "winerror", "expected"),
+    [
+        pytest.param(_HostileFormattingCode(13), None, "OSError", id="hostile-code-as-errno"),
+        pytest.param(13, _HostileFormattingCode(32), "OSError: [Errno 13]", id="hostile-code-as-winerror"),
+        pytest.param(_HostileFormattingCode(13), _HostileFormattingCode(32), "OSError", id="hostile-code-both"),
+    ],
+)
+def test_an_int_subclass_hostile_through_format_str_and_repr_never_reaches_a_reason(
+    errno: object, winerror: object, expected: str
+) -> None:
+    """S4: no rendering path (``format``, ``str``, ``repr``) can carry the hostile text."""
+    reason = safe_documentation_error_reason(_os_error_with(errno=errno, winerror=winerror))
+
+    assert reason == expected
+    assert _HOSTILE_PATH not in reason
+
+
+class _UninitializedAuthored(AuthoredDiagnostic):
+    """An authored subclass whose ``__init__`` never sets ``authored_detail``."""
+
+    def __init__(self) -> None:  # noqa: D107 - deliberately skips AuthoredDiagnostic.__init__
+        Exception.__init__(self, _HOSTILE_PATH)
+
+
+def test_authored_subclass_without_detail_falls_back_instead_of_raising() -> None:
+    """S2: the formatter is a failure boundary, so a missing detail never raises."""
+    reason = safe_documentation_error_reason(_UninitializedAuthored())
+
+    assert reason == "_UninitializedAuthored"
+    assert _HOSTILE_PATH not in reason
+
+
+def test_an_added_note_is_never_rendered() -> None:
+    """S2: ``__notes__`` (``add_note``) never reaches the reason."""
+    error = _AuthoredError(_AUTHORED_DETAIL)
+    error.add_note(f"see {_HOSTILE_PATH}")
+
+    reason = safe_documentation_error_reason(error)
+
+    assert reason == f"_AuthoredError: {_AUTHORED_DETAIL}"
+    assert _HOSTILE_PATH not in reason
+
+
+def test_a_chained_cause_with_a_hostile_int_subclass_code_stays_class_only() -> None:
+    """S2/S4: a cause's OS code also goes through the exact-int rule."""
+    cause = _os_error_with(errno=_HostileFormattingCode(13), winerror=_HostileFormattingCode(32))
+
+    reason = safe_documentation_error_reason(_authored_error_with_cause(cause))
+
+    assert reason == f"_AuthoredError: {_AUTHORED_DETAIL} (cause: OSError)"
+    assert _HOSTILE_PATH not in reason

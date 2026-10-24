@@ -641,10 +641,12 @@ def test_unreadable_index_capability_is_unsupported_not_failed() -> None:
     assert table.kind == "local"
     assert [field.name for field in table.fields] == ["id"]
     assert table.primary_key.state == "unavailable"
-    # S2 strict diagnostics: a capability gap is still ``unavailable``, but its text is
-    # suppressed like any other exception text.
-    assert table.primary_key.reason == "InspectionCapabilityUnavailableError"
-    assert document.coverage.tables.unsupported["T"] == "InspectionCapabilityUnavailableError"
+    # S2 S3: a capability gap is still ``unavailable``; an authored literal reason is
+    # rendered after the class, and no other exception text ever is.
+    assert table.primary_key.reason == "InspectionCapabilityUnavailableError: indexes are not exposed"
+    assert document.coverage.tables.unsupported["T"] == (
+        "InspectionCapabilityUnavailableError: indexes are not exposed"
+    )
     assert document.coverage.tables.failed == {}
 
 
@@ -829,14 +831,20 @@ def test_odbc_port_reports_every_app_logic_category_unavailable_with_the_engine_
     assert app_logic is not None
     assert len(app_logic.containers) == 4
     assert all(item.objects.state == "unavailable" for item in app_logic.containers)
-    # S2 strict diagnostics: the engine-limitation text is exception text, so the fact
-    # names the capability-gap class instead; ``unavailable`` still carries the meaning.
-    assert all(item.objects.reason == "InspectionCapabilityUnavailableError" for item in app_logic.containers)
+    # S2 S3: the engine-limitation literal is authored, so it is rendered after the class;
+    # ``unavailable`` still carries the meaning.
+    containers_reason = (
+        "InspectionCapabilityUnavailableError: Access ODBC does not expose DAO Containers; "
+        "engine-level container inventory requires the DAO engine"
+    )
+    assert all(item.objects.reason == containers_reason for item in app_logic.containers)
     assert app_logic.startup_properties
     assert all(item.value.state == "unavailable" for item in app_logic.startup_properties)
-    assert all(
-        item.value.reason == "InspectionCapabilityUnavailableError" for item in app_logic.startup_properties
+    properties_reason = (
+        "InspectionCapabilityUnavailableError: Access ODBC does not expose DAO database "
+        "properties; startup properties require the DAO engine"
     )
+    assert all(item.value.reason == properties_reason for item in app_logic.startup_properties)
     assert document.status == "partial"
 
 
@@ -1144,6 +1152,34 @@ def test_dao_port_reports_no_omission_warning_when_every_property_is_readable() 
     assert dao_port.get_database_properties() == {"AppTitle": "Acme"}
     assert dao_port.database_property_omissions() == []
 
+
+class _UnreadableProperties:
+    """A DAO ``Properties`` collection whose enumeration fails before any property."""
+
+    def __iter__(self) -> Any:
+        raise RuntimeError("DAO 3265: the property collection could not be enumerated")
+
+
+def test_a_failed_property_reread_discards_the_previous_omission_warnings() -> None:
+    """S5: omissions describe only the latest read, so a failed re-read reports none."""
+    database = _FakeDaoDatabase(
+        properties=[
+            _FakeDaoProperty("AppTitle", "Acme"),
+            _FakeDaoProperty("Connection", RuntimeError("DAO 5003251")),
+        ]
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    # A successful read that skips one property reports the omission.
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme"}
+    assert len(dao_port.database_property_omissions()) == 1
+
+    # A later read that raises mid-iteration leaves no warning about the older read.
+    database.Properties = _UnreadableProperties()
+    with pytest.raises(RuntimeError):
+        dao_port.get_database_properties()
+
+    assert dao_port.database_property_omissions() == []
 
 # ---------------------------------------------------------------------------
 # Service-side app-logic normalization: malformed container entries, startup values
