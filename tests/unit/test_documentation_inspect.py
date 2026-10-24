@@ -1153,6 +1153,34 @@ def test_dao_port_reports_no_omission_warning_when_every_property_is_readable() 
     assert dao_port.database_property_omissions() == []
 
 
+class _UnreadableProperties:
+    """A DAO ``Properties`` collection whose enumeration fails before any property."""
+
+    def __iter__(self) -> Any:
+        raise RuntimeError("DAO 3265: the property collection could not be enumerated")
+
+
+def test_a_failed_property_reread_discards_the_previous_omission_warnings() -> None:
+    """S5: omissions describe only the latest read, so a failed re-read reports none."""
+    database = _FakeDaoDatabase(
+        properties=[
+            _FakeDaoProperty("AppTitle", "Acme"),
+            _FakeDaoProperty("Connection", RuntimeError("DAO 5003251")),
+        ]
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    # A successful read that skips one property reports the omission.
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme"}
+    assert len(dao_port.database_property_omissions()) == 1
+
+    # A later read that raises mid-iteration leaves no warning about the older read.
+    database.Properties = _UnreadableProperties()
+    with pytest.raises(RuntimeError):
+        dao_port.get_database_properties()
+
+    assert dao_port.database_property_omissions() == []
+
 # ---------------------------------------------------------------------------
 # Service-side app-logic normalization: malformed container entries, startup values
 # ---------------------------------------------------------------------------

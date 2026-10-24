@@ -292,8 +292,13 @@ class DaoInspectionPort:
         absent from the mapping. The omission is never silent: the skipped count (and
         the names that were themselves readable) is recorded as one sanitized warning
         for the service to add to the evidence (S2 A3).
+
+        The warnings are cleared *before* the iteration, so they describe only the latest
+        property read (S5): a read that raises part-way through leaves no omission warning
+        about an earlier, successful read behind for the service to report.
         """
         database = self._dispatcher.current_db
+        self._property_omissions = []
         properties: dict[str, str] = {}
         skipped = 0
         readable_names: list[str] = []

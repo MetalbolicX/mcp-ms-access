@@ -33,7 +33,7 @@ Merge/push/PR remain the user's decisions.
 
 ## Tasks
 
-- T1 | S2,S3,S4,S7 | worker + parent, strict TDD; Risk item 2 → independent verify PASS | commit: `fix(documentation): restore authored diagnostic detail without runtime text` (S4 pin rides here: it is a formatter test)
+- T1 | S2,S3,S4,S7 | worker + parent, strict TDD; Risk item 2 → independent verify PASS | commit: `f441778` `fix(documentation): restore authored diagnostic detail without runtime text` (S4 pin rides here: it is a formatter test)
 - T2 | S5 | worker, test-first | commit: `fix(documentation): reset property omissions at each read`
 - T3 | S6,S7 | inline live run (D: scratch `db/fixtures/embedded-macro-requal/`) | commit: —
 - T4 | S1 | close: qualification, assess/review, ledger | commit: —
