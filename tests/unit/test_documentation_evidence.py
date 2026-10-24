@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from ms_access_mcp.application.documentation import (
+    ContentObjectEvidence,
     Coverage,
     CoverageStatus,
     EvidenceDoc,
@@ -15,6 +18,7 @@ from ms_access_mcp.application.documentation import (
     SourceEvidence,
     TableEvidence,
     redact_connection_secrets,
+    safe_documentation_error_reason,
     sanitize_connection_string,
 )
 
@@ -209,3 +213,196 @@ def test_redact_connection_secrets_handles_multiple_escaped_pairs_and_keeps_cont
     redacted = redact_connection_secrets("PWD={can}}ary};UID={u}}v} tail")
     assert redacted == "PWD=***;UID=*** tail"
     assert "ary" not in redacted and "u}}v" not in redacted
+
+
+VBA_SHA256 = "d" * 64
+
+
+def vba_content(value: object = None, *, name: str = "modMain", state: str = "observed", reason: str | None = None) -> ContentObjectEvidence:
+    prop = provenance("vba_module", name, "content")
+    fact = FactStatus.observed(value, prop) if state == "observed" else getattr(FactStatus, state)(reason, prop)
+    return ContentObjectEvidence("vba_module", name, "access-application", fact)
+
+
+def form_content(value: object = None, *, name: str = "frmMain", state: str = "observed", reason: str | None = None) -> ContentObjectEvidence:
+    prop = provenance("form", name, "content")
+    fact = FactStatus.observed(value, prop) if state == "observed" else getattr(FactStatus, state)(reason, prop)
+    return ContentObjectEvidence("form", name, "access-application", fact)
+
+
+# The two validator branches that share the digest/size contract (S3 H1).
+CONTENT_BRANCHES = [
+    pytest.param(vba_content, "Observed vba_module content", id="vba_module"),
+    pytest.param(form_content, "Observed form/report/macro content", id="form"),
+]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"type": "Standard", "procedures": ["Main"], "bytes": 42},
+        {"type": "Standard", "procedures": ["Main"], "sha256": "", "bytes": 42},
+        {"type": "Standard", "procedures": ["Main"], "sha256": 42, "bytes": 42},
+    ],
+    ids=["missing", "empty", "non-string"],
+)
+def test_observed_vba_module_content_requires_a_sha256_string(value: dict[str, object]) -> None:
+    """S1: observed VBA evidence carries a digest exactly like SaveAsText content."""
+    with pytest.raises(ValueError, match="Observed vba_module content requires a sha256 string") as excinfo:
+        vba_content(value).validate()
+    assert str(excinfo.value) == "Observed vba_module content requires a sha256 string"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"type": "Standard", "sha256": VBA_SHA256},
+        {"type": "Standard", "sha256": VBA_SHA256, "bytes": True},
+        {"type": "Standard", "sha256": VBA_SHA256, "bytes": 42.0},
+    ],
+    ids=["missing", "bool", "float"],
+)
+def test_observed_vba_module_content_requires_a_byte_size_integer(value: dict[str, object]) -> None:
+    """S1: a byte size must be an int and never a bool or a float."""
+    with pytest.raises(ValueError, match="Observed vba_module content requires a byte size integer") as excinfo:
+        vba_content(value).validate()
+    assert str(excinfo.value) == "Observed vba_module content requires a byte size integer"
+
+
+def test_minimal_observed_vba_module_content_with_a_digest_is_valid() -> None:
+    """S1: type plus procedures plus the digest is the minimal accepted shape."""
+    evidence = vba_content({"type": "Standard", "procedures": ["Main"], "sha256": VBA_SHA256, "bytes": 42})
+    assert evidence.validate() is None
+    assert ContentObjectEvidence.from_dict(evidence.to_dict()) == evidence
+
+
+def test_observed_vba_module_content_stays_valid_without_type_and_procedures() -> None:
+    """S1: ``type``/``procedures`` stay optional; only the digest is required."""
+    assert vba_content({"sha256": VBA_SHA256, "bytes": 42}).validate() is None
+
+
+@pytest.mark.parametrize("state", ["failed", "unavailable"])
+def test_non_observed_vba_module_family_fact_needs_no_digest(state: str) -> None:
+    """S1: a non-observed family fact returns early and stays valid without a digest."""
+    fact = vba_content(None, name="<all objects>", state=state, reason="VBProject access failed")
+    assert fact.validate() is None
+
+
+@pytest.mark.parametrize(
+    "digest",
+    [
+        "D" * 64,
+        "d" * 63,
+        "d" * 65,
+        "g" * 64,
+        " d" * 32,
+        "sha256:" + "d" * 64,
+    ],
+    ids=["uppercase", "too-short", "too-long", "non-hex", "whitespace", "prefixed"],
+)
+@pytest.mark.parametrize(("make_content", "prefix"), CONTENT_BRANCHES)
+def test_observed_content_sha256_must_be_64_lowercase_hex(
+    make_content: Callable[..., ContentObjectEvidence], prefix: str, digest: str
+) -> None:
+    """S3 H1: a recorded digest must be exactly 64 lowercase hex characters."""
+    with pytest.raises(ValueError) as excinfo:
+        make_content({"sha256": digest, "bytes": 42}).validate()
+
+    assert str(excinfo.value) == f"{prefix} requires a 64-character lowercase hexadecimal sha256"
+
+
+@pytest.mark.parametrize(("make_content", "prefix"), CONTENT_BRANCHES)
+def test_observed_content_byte_size_must_not_be_negative(
+    make_content: Callable[..., ContentObjectEvidence], prefix: str
+) -> None:
+    """S3 H1: a byte size is a count, so a negative integer is rejected in both branches."""
+    with pytest.raises(ValueError) as excinfo:
+        make_content({"sha256": VBA_SHA256, "bytes": -1}).validate()
+
+    assert str(excinfo.value) == f"{prefix} requires a non-negative byte size"
+
+
+@pytest.mark.parametrize("size", [0, 4096])
+@pytest.mark.parametrize(("make_content", "prefix"), CONTENT_BRANCHES)
+def test_observed_content_accepts_zero_and_positive_byte_sizes(
+    make_content: Callable[..., ContentObjectEvidence], prefix: str, size: int
+) -> None:
+    """S3 H1: zero and positive sizes stay valid, so an empty export is still recorded."""
+    assert make_content({"sha256": VBA_SHA256, "bytes": size}).validate() is None
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ({"type": "Standard", "bytes": 42}, "Observed vba_module content requires a sha256 string"),
+        (
+            {"type": "Standard", "sha256": 42, "bytes": 42},
+            "Observed vba_module content requires a sha256 string",
+        ),
+        ({"type": "Standard", "sha256": VBA_SHA256}, "Observed vba_module content requires a byte size integer"),
+        (
+            {"type": "Standard", "sha256": VBA_SHA256, "bytes": True},
+            "Observed vba_module content requires a byte size integer",
+        ),
+    ],
+    ids=["missing-digest", "non-string-digest", "missing-size", "bool-size"],
+)
+def test_the_shape_checks_keep_the_existing_messages_for_missing_and_wrong_types(
+    value: dict[str, object], message: str
+) -> None:
+    """PRESERVE: a valid digest with a missing/bool size still reports the original message."""
+    with pytest.raises(ValueError) as excinfo:
+        vba_content(value).validate()
+    assert str(excinfo.value) == message
+
+
+# ---------------------------------------------------------------------------
+# Strict class-only diagnostics: the OS code is a real int or nothing (S2)
+# ---------------------------------------------------------------------------
+
+_HOSTILE_PATH = "C:/Users/fakeuser123/secret"
+
+
+class _FormattingCode(int):
+    """An ``int`` subclass whose ``__format__`` returns arbitrary text (a leak vector)."""
+
+    def __format__(self, _spec: str) -> str:
+        return _HOSTILE_PATH
+
+
+def _os_error_with(*, errno: object = None, winerror: object = None) -> OSError:
+    """A bare ``OSError`` whose numeric fields are set exactly as given."""
+    error = OSError("hidden")
+    error.errno = errno  # type: ignore[assignment]
+    error.winerror = winerror  # type: ignore[attr-defined]
+    return error
+
+
+@pytest.mark.parametrize(
+    ("errno", "winerror", "expected"),
+    [
+        pytest.param(_FormattingCode(13), None, "OSError", id="subclass-errno"),
+        pytest.param(_FormattingCode(13), 32, "OSError: [WinError 32]", id="subclass-errno-real-winerror"),
+        pytest.param(13, _FormattingCode(32), "OSError: [Errno 13]", id="subclass-winerror"),
+        pytest.param(True, None, "OSError", id="bool-errno"),
+        pytest.param(13, True, "OSError: [Errno 13]", id="bool-winerror"),
+        pytest.param(_HOSTILE_PATH, None, "OSError", id="string-errno"),
+        pytest.param(13, _HOSTILE_PATH, "OSError: [Errno 13]", id="string-winerror"),
+        pytest.param(_HOSTILE_PATH, _HOSTILE_PATH, "OSError", id="both-hostile"),
+    ],
+)
+def test_non_int_os_codes_are_rejected_instead_of_formatted(
+    errno: object, winerror: object, expected: str
+) -> None:
+    """S2: only a real ``int`` code is rendered; a bool, a string, or an int subclass is not."""
+    reason = safe_documentation_error_reason(_os_error_with(errno=errno, winerror=winerror))
+
+    assert reason == expected
+    assert _HOSTILE_PATH not in reason
+
+
+def test_genuine_int_os_codes_keep_the_established_output() -> None:
+    """PRESERVE: real integer codes keep the class/code shape (winerror preferred)."""
+    assert safe_documentation_error_reason(_os_error_with(errno=13)) == "OSError: [Errno 13]"
+    assert safe_documentation_error_reason(_os_error_with(errno=13, winerror=32)) == "OSError: [WinError 32]"
+    assert safe_documentation_error_reason(_os_error_with()) == "OSError"

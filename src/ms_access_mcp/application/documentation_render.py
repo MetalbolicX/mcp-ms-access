@@ -11,6 +11,15 @@ inferred from relationship flags. Relationship auto-indexes (an index whose name
 matches a relationship on that table's same child columns) remain listed as
 observed but cannot justify uniqueness at either diagram endpoint, even when DAO
 reports Unique=True. Independent primary/unique keys still justify uniqueness.
+
+The opt-in application-logic catalogue (v2, R3) is rendered as labeled sections from
+evidence facts alone: the VBA module catalogue, the form/report/macro source catalogues,
+the engine-level inventories, project references, and startup properties. Observed form/
+report/macro facts carry the recorded ``sha256`` and byte size, and every raw source object
+is referenced by its evidence ID; the source text itself is never inlined. Facts the
+reader could not observe are recorded as visible limitation lines (``unavailable``/``failed``)
+or coverage notes (``excluded``) instead of fabricated values. Evidence without any
+app-logic facts renders exactly the v1 Markdown.
 """
 
 from __future__ import annotations
@@ -21,9 +30,15 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ms_access_mcp.application.documentation import (
+    REFERENCE_PROPERTIES,
+    AppLogicEvidence,
+    ContainerInventoryEvidence,
+    ContentObjectEvidence,
     EvidenceDoc,
     FactStatus,
+    ReferenceEvidence,
     RelationshipEvidence,
+    StartupPropertyEvidence,
     sanitize_connection_string,
 )
 from ms_access_mcp.application.documentation_limits import (
@@ -103,6 +118,9 @@ def render_document(
     sections = ["# Access database documentation", _overview(evidence, include_queries=kind == "database")]
     sections.extend((_dictionary(evidence), _keys(evidence), _relationships(evidence)))
     sections.append(_diagram(evidence))
+    app_logic = _app_logic(evidence)
+    if app_logic:
+        sections.append(app_logic)
     if kind == "database":
         sections.extend((_queries(evidence), _coverage(evidence)))
     if interpretations:
@@ -267,6 +285,224 @@ def _coverage_summary(evidence: EvidenceDoc) -> dict[str, Any]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Opt-in application-logic catalogue (v2/R3)
+# ---------------------------------------------------------------------------
+
+# The reader records a whole-family failure under this scope name
+# (``documentation_app_logic.FAMILY_SCOPE_NAME``); such a fact is a family-level
+# limitation, never an invented object row. Keep the sentinel local so this pure renderer
+# does not import the reader module.
+_FAMILY_SCOPE = "<all objects>"
+_VBA = "vba_module"
+_SOURCE_FAMILIES: tuple[tuple[str, str], ...] = (("form", "Forms"), ("report", "Reports"), ("macro", "Macros"))
+_CONTENT_SINGULAR = {"vba_module": "VBA module", "form": "Form", "report": "Report", "macro": "Macro"}
+_CONTENT_FAMILY = {"vba_module": "VBA modules", "form": "Forms", "report": "Reports", "macro": "Macros"}
+
+
+def _app_logic(evidence: EvidenceDoc) -> str:
+    """Render the app-logic catalogue, or ``""`` when no app-logic facts exist.
+
+    An absent category, or one carrying no facts at all, contributes nothing, so
+    evidence without app-logic data keeps the exact v1 Markdown bytes.
+    """
+    app_logic = evidence.app_logic
+    if app_logic is None:
+        return ""
+    blocks: list[str] = []
+    vba = _objects_of(app_logic.content, _VBA)
+    if vba:
+        blocks.append(_app_logic_vba(vba))
+    for category, title in _SOURCE_FAMILIES:
+        objects = _objects_of(app_logic.content, category)
+        if objects:
+            blocks.append(_app_logic_sources(title, objects))
+    inventories = _app_logic_inventories(app_logic.containers)
+    if inventories:
+        blocks.append(inventories)
+    if app_logic.references:
+        blocks.append(_app_logic_references(app_logic.references))
+    if app_logic.startup_properties:
+        blocks.append(_app_logic_startup(app_logic.startup_properties))
+    limitations, notes = _app_logic_state_lines(app_logic)
+    if limitations:
+        blocks.append("\n".join(["### Limitations", *limitations]))
+    if notes:
+        blocks.append("\n".join(["### Coverage notes", *notes]))
+    if not blocks:
+        return ""
+    return "\n\n".join(["## Application logic", *blocks])
+
+
+def _objects_of(content: list[ContentObjectEvidence], category: str) -> list[ContentObjectEvidence]:
+    return [item for item in content if item.category == category and item.name != _FAMILY_SCOPE]
+
+
+def _app_logic_vba(items: list[ContentObjectEvidence]) -> str:
+    lines = [
+        "### VBA modules",
+        "",
+        "| Module | Type | Procedures | Source sha256 | Bytes | Source evidence |",
+        "|---|---|---|---:|---:|---|",
+    ]
+    for item in items:
+        value = _observed_value(item.content)
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    _cell(item.name),
+                    _cell(str(value["type"])) if value.get("type") else "—",
+                    _procedures_cell(value.get("procedures")),
+                    _digest_cell(value.get("sha256")),
+                    _bytes_cell(value.get("bytes")),
+                    _evidence_cell(item.content),
+                )
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def _app_logic_sources(title: str, items: list[ContentObjectEvidence]) -> str:
+    lines = [
+        f"### {title}",
+        "",
+        f"| {title[:-1]} | Source sha256 | Bytes | Source evidence |",
+        "|---|---:|---:|---|",
+    ]
+    for item in items:
+        value = _observed_value(item.content)
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    _cell(item.name),
+                    _digest_cell(value.get("sha256")),
+                    _bytes_cell(value.get("bytes")),
+                    _evidence_cell(item.content),
+                )
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def _app_logic_inventories(containers: list[ContainerInventoryEvidence]) -> str:
+    observed = [item for item in containers if item.objects.state == "observed"]
+    if not observed:
+        return ""
+    lines = ["### Engine-level inventories"]
+    for item in observed:
+        names = ", ".join(_inline(str(entry.get("name", ""))) for entry in item.objects.value)
+        lines.append(f"- {_container_label(item.category)} (container `{_cell(item.container)}`): {names or 'observed empty'}")
+    return "\n".join(lines)
+
+
+def _app_logic_references(references: list[ReferenceEvidence]) -> str:
+    lines = ["### References", "", "| Reference | Path | GUID | Version | Built-in |", "|---|---|---|---|---|"]
+    for item in references:
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    _cell(item.name),
+                    _observed_cell(item.path),
+                    _observed_cell(item.guid),
+                    _version_cell(item.major, item.minor),
+                    _observed_cell(item.built_in),
+                )
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def _app_logic_startup(properties: list[StartupPropertyEvidence]) -> str:
+    observed = [item for item in properties if item.value.state == "observed"]
+    if not observed:
+        return ""
+    lines = ["### Startup properties"]
+    lines.extend(f"- {_inline(item.name)} = {_inline(str(item.value.value))}" for item in observed)
+    return "\n".join(lines)
+
+
+def _app_logic_state_lines(app_logic: AppLogicEvidence) -> tuple[list[str], list[str]]:
+    """Collect the non-observed app-logic facts as limitation lines and coverage notes.
+
+    ``unavailable``/``failed`` facts are limitations; ``excluded`` facts are an output
+    policy and stay coverage notes. An observed fact needs no line, and the table cells
+    render ``—`` for the facts recorded here. An observed content fact is digest-complete
+    by contract (:meth:`ContentObjectEvidence.validate` requires the 64-hex ``sha256`` and
+    a non-negative ``bytes`` before any render), so there is no digest-gap line.
+    """
+    limitations: list[str] = []
+    notes: list[str] = []
+
+    def record(label: str, fact: FactStatus[Any]) -> None:
+        if fact.state in ("unavailable", "failed"):
+            limitations.append(f"- {label}: {fact.state} — {_inline(fact.reason or '')}")
+        elif fact.state == "excluded":
+            notes.append(f"- {label}: excluded — {_inline(fact.reason or '')}")
+
+    for item in app_logic.content:
+        record(_content_label(item), item.content)
+    for item in app_logic.containers:
+        record(f"{_container_label(item.category)} (container `{_cell(item.container)}`)", item.objects)
+    for item in app_logic.references:
+        for prop, fact in zip(REFERENCE_PROPERTIES, (item.path, item.guid, item.major, item.minor, item.built_in)):
+            record(f'Reference "{_inline(item.name)}" {prop}', fact)
+    for item in app_logic.startup_properties:
+        record(f'Startup property "{_inline(item.name)}"', item.value)
+    return limitations, notes
+
+
+def _observed_value(fact: FactStatus[Any]) -> dict[str, Any]:
+    if fact.state != "observed" or not isinstance(fact.value, dict):
+        return {}
+    return fact.value
+
+
+def _procedures_cell(procedures: Any) -> str:
+    if not isinstance(procedures, list):
+        return "—"
+    if not procedures:
+        return "0"
+    return f"{len(procedures)} — " + ", ".join(_inline(str(name)) for name in procedures)
+
+
+def _digest_cell(value: Any) -> str:
+    return f"`{value}`" if isinstance(value, str) and value else "—"
+
+
+def _bytes_cell(value: Any) -> str:
+    return str(value) if isinstance(value, int) and not isinstance(value, bool) else "—"
+
+
+def _evidence_cell(fact: FactStatus[Any]) -> str:
+    return f"`{_fact_ref(fact)}`"
+
+
+def _observed_cell(fact: FactStatus[Any]) -> str:
+    return _cell(str(fact.value)) if fact.state == "observed" else "—"
+
+
+def _version_cell(major: FactStatus[Any], minor: FactStatus[Any]) -> str:
+    if major.state == "observed" and minor.state == "observed":
+        return f"{major.value}.{minor.value}"
+    return "—"
+
+
+def _content_label(item: ContentObjectEvidence) -> str:
+    if item.name == _FAMILY_SCOPE:
+        return _CONTENT_FAMILY[item.category]
+    return f'{_CONTENT_SINGULAR[item.category]} "{_inline(item.name)}"'
+
+
+def _container_label(category: str) -> str:
+    return category.removesuffix("_inventory").replace("_", " ").title() + " inventory"
+
+
 def _known_refs(evidence: EvidenceDoc) -> set[str]:
     refs: set[str] = set()
     for table in evidence.tables:
@@ -279,6 +515,16 @@ def _known_refs(evidence: EvidenceDoc) -> set[str]:
     for query in evidence.queries:
         for fact in (query.sql, query.type, query.parameters):
             refs.add(_fact_ref(fact))
+    if evidence.app_logic is not None:
+        for item in evidence.app_logic.content:
+            refs.add(_fact_ref(item.content))
+        for item in evidence.app_logic.containers:
+            refs.add(_fact_ref(item.objects))
+        for item in evidence.app_logic.startup_properties:
+            refs.add(_fact_ref(item.value))
+        for reference in evidence.app_logic.references:
+            for prop, fact in zip(REFERENCE_PROPERTIES, (reference.path, reference.guid, reference.major, reference.minor, reference.built_in)):
+                refs.add(_fact_ref(fact))
     return refs
 
 

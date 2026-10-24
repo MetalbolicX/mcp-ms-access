@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from ms_access_mcp.application.documentation import (
+    AppLogicEvidence,
+    ContainerInventoryEvidence,
+    ContentObjectEvidence,
     Coverage,
     CoverageStatus,
     EvidenceDoc,
@@ -11,10 +16,16 @@ from ms_access_mcp.application.documentation import (
     FieldEvidence,
     IndexEvidence,
     QueryEvidence,
+    ReferenceEvidence,
     RelationshipEvidence,
     RunMetadata,
     SourceEvidence,
+    StartupPropertyEvidence,
     TableEvidence,
+)
+from ms_access_mcp.application.documentation_app_logic import (
+    FAMILY_SCOPE_NAME,
+    VBA_TRUST_PREREQUISITE,
 )
 from ms_access_mcp.application.documentation_render import ReportDoc, render_document
 
@@ -300,3 +311,242 @@ def test_partial_status_propagates_from_evidence() -> None:
 def test_only_english_is_accepted() -> None:
     with pytest.raises(ValueError, match="language"):
         render_document(make_evidence(), language="fr")
+
+
+# ---------------------------------------------------------------------------
+# T8/R3: application-logic catalogue sections (evidence-derived, never inlined)
+# ---------------------------------------------------------------------------
+
+# sha256 of the v1 database Markdown for ``make_evidence()``; the app-logic section must
+# be purely additive, so evidence without app-logic facts keeps these exact bytes.
+V1_DATABASE_MARKDOWN_SHA256 = "333c4c22a15cac74dd1d5c661438f4ca6181ad8e44c1fee2fc106ea9cd2042f9"
+APP_LOGIC_METHOD = "access-application"
+ENGINE_CONTAINER_METHOD = "engine_dao_containers"
+FORM_SHA = "a" * 64
+REPORT_SHA = "b" * 64
+MACRO_SHA = "c" * 64
+VBA_SHA = "d" * 64
+VBA_SOURCE = 'Attribute VB_Name = "modMain"\nSub Main()\nVBA_SOURCE_SENTINEL\nEnd Sub'
+FORM_SOURCE = "Version =20\nFORM_SOURCE_SENTINEL\nEnd\n"
+
+
+def app_content(
+    category: str,
+    name: str,
+    value: dict | None = None,
+    *,
+    state: str = "observed",
+    reason: str | None = None,
+) -> ContentObjectEvidence:
+    prop = provenance(category, name, "content")
+    fact = FactStatus.observed(value, prop) if state == "observed" else getattr(FactStatus, state)(reason, prop)
+    return ContentObjectEvidence(category, name, APP_LOGIC_METHOD, fact)
+
+
+def app_reference(name: str) -> ReferenceEvidence:
+    values = {"path": "C:/vba.dll", "guid": "{GUID}", "major": 7, "minor": 1, "built_in": True}
+    return ReferenceEvidence(
+        name,
+        APP_LOGIC_METHOD,
+        *[FactStatus.observed(values[prop], provenance("reference", name, prop)) for prop in ("path", "guid", "major", "minor", "built_in")],
+    )
+
+
+def app_startup(name: str, value=None, *, state: str = "observed", reason: str | None = None) -> StartupPropertyEvidence:
+    prop = provenance("startup_property", name, "value")
+    fact = FactStatus.observed(value, prop) if state == "observed" else getattr(FactStatus, state)(reason, prop)
+    return StartupPropertyEvidence(name, "engine_dao_properties", fact)
+
+
+def app_container(category: str, container: str, objects: list | None = None, *, state: str = "observed", reason: str | None = None) -> ContainerInventoryEvidence:
+    prop = provenance(category, container, "objects")
+    fact = FactStatus.observed(objects, prop) if state == "observed" else getattr(FactStatus, state)(reason, prop)
+    return ContainerInventoryEvidence(category, container, ENGINE_CONTAINER_METHOD, fact)
+
+
+def catalogue_evidence() -> EvidenceDoc:
+    evidence = make_evidence()
+    evidence.queries[0].parameters = FactStatus.observed([], provenance("query", "Q", "parameters"))
+    evidence.app_logic = AppLogicEvidence(
+        containers=[app_container("form_inventory", "Forms", [{"name": "frmMain"}])],
+        startup_properties=[app_startup("AppTitle", "My App")],
+        content=[
+            app_content("vba_module", "modMain", {"type": "Standard", "procedures": ["Main", "Helper"], "sha256": VBA_SHA, "bytes": 73, "source": VBA_SOURCE}),
+            app_content("form", "frmMain", {"sha256": FORM_SHA, "bytes": 5130, "source": FORM_SOURCE}),
+            app_content("report", "rptSales", {"sha256": REPORT_SHA, "bytes": 120}),
+            app_content("macro", "AutoExec", {"sha256": MACRO_SHA, "bytes": 30}),
+        ],
+        references=[app_reference("VBA")],
+    )
+    return evidence
+
+
+def test_evidence_without_app_logic_renders_the_v1_markdown_byte_for_byte() -> None:
+    """R3/S4: the app-logic section is strictly additive; no app-logic data means v1 bytes."""
+    baseline = render_document(make_evidence())
+    assert hashlib.sha256(baseline.markdown.encode("utf-8")).hexdigest() == V1_DATABASE_MARKDOWN_SHA256
+    assert "Application logic" not in baseline.markdown
+    empty = make_evidence()
+    empty.app_logic = AppLogicEvidence()
+    assert render_document(empty).markdown == baseline.markdown
+
+
+def test_app_logic_renders_catalogue_names_hashes_references_and_startup_values() -> None:
+    """R3: labeled sections list facts and reference source by evidence ID plus hash."""
+    markdown = render_document(catalogue_evidence()).markdown
+    assert "## Application logic" in markdown
+    assert "### VBA modules" in markdown
+    assert f"| modMain | Standard | 2 — Main, Helper | `{VBA_SHA}` | 73 | `vba_module:modMain.content` |" in markdown
+    assert "### Forms" in markdown
+    assert f"| frmMain | `{FORM_SHA}` | 5130 | `form:frmMain.content` |" in markdown
+    assert f"| rptSales | `{REPORT_SHA}` | 120 | `report:rptSales.content` |" in markdown
+    assert f"| AutoExec | `{MACRO_SHA}` | 30 | `macro:AutoExec.content` |" in markdown
+    assert "### Engine-level inventories" in markdown
+    assert "- Form inventory (container `Forms`): frmMain" in markdown
+    assert "### References" in markdown
+    assert "| VBA | C:/vba.dll | {GUID} | 7.1 | True |" in markdown
+    assert "### Startup properties" in markdown
+    assert "- AppTitle = My App" in markdown
+
+
+def test_app_logic_unavailable_family_and_failed_object_render_limitation_lines() -> None:
+    """R3: unavailable/failed facts become visible limitation lines naming the reason."""
+    evidence = make_evidence()
+    evidence.app_logic = AppLogicEvidence(
+        content=[
+            app_content("vba_module", FAMILY_SCOPE_NAME, state="unavailable", reason=VBA_TRUST_PREREQUISITE),
+            app_content("form", "frmBroken", state="failed", reason="SaveAsText export failed: form import error"),
+        ]
+    )
+    markdown = render_document(evidence).markdown
+    assert "### Limitations" in markdown
+    assert "- VBA modules: unavailable — VBProject access requires the operator" in markdown
+    assert '- Form "frmBroken": failed — SaveAsText export failed: form import error' in markdown
+
+
+def test_app_logic_excluded_fact_renders_a_coverage_note_without_a_gap() -> None:
+    """R3: exclusion is output policy, so it is a coverage note and never a partial doc."""
+    evidence = make_evidence()
+    evidence.queries[0].parameters = FactStatus.observed([], provenance("query", "Q", "parameters"))
+    evidence.app_logic = AppLogicEvidence(
+        startup_properties=[app_startup("AppTitle", state="excluded", reason="Startup values are excluded by caller policy")]
+    )
+    report = render_document(evidence)
+    assert "### Coverage notes" in report.markdown
+    assert '- Startup property "AppTitle": excluded — Startup values are excluded by caller policy' in report.markdown
+    assert "### Limitations" not in report.markdown
+    assert report.status == "complete"
+
+
+def test_app_logic_vba_digest_and_byte_cells_render_without_a_gap() -> None:
+    """A recorded digest fills the VBA table cells and suppresses the digest gap."""
+    evidence = make_evidence()
+    evidence.app_logic = AppLogicEvidence(
+        content=[
+            app_content(
+                "vba_module",
+                "modMain",
+                {"type": "Standard", "procedures": [], "sha256": VBA_SHA, "bytes": 73},
+            )
+        ]
+    )
+
+    markdown = render_document(evidence).markdown
+
+    assert f"| modMain | Standard | 0 | `{VBA_SHA}` | 73 | `vba_module:modMain.content` |" in markdown
+    assert "source digest (sha256/bytes) is not recorded" not in markdown
+
+
+def test_renderer_rejects_digestless_vba_evidence_before_reaching_the_removed_gap() -> None:
+    """S3 H2: the removed limitation branch was unreachable; the validator rejects first."""
+    evidence = make_evidence()
+    evidence.app_logic = AppLogicEvidence(
+        content=[app_content("vba_module", "modMain", {"type": "Standard", "procedures": [], "bytes": 73})]
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        render_document(evidence)
+
+    assert str(excinfo.value) == "Observed vba_module content requires a sha256 string"
+
+
+def test_app_logic_opt_in_source_is_referenced_by_evidence_id_and_never_inlined() -> None:
+    """R3: raw source is referenced by evidence ID; the text itself never reaches Markdown."""
+    markdown = render_document(catalogue_evidence()).markdown
+    assert "VBA_SOURCE_SENTINEL" not in markdown
+    assert "FORM_SOURCE_SENTINEL" not in markdown
+    assert "`vba_module:modMain.content`" in markdown
+    assert "`form:frmMain.content`" in markdown
+
+
+def test_app_logic_rendering_is_deterministic_and_part_of_the_fingerprint() -> None:
+    """S4/Requirement 2: same evidence + options yields the same Markdown and fingerprint."""
+    evidence = catalogue_evidence()
+    first = render_document(evidence)
+    second = render_document(evidence)
+    assert first.markdown == second.markdown
+    assert first.sha256 == second.sha256
+    assert first.sha256 != V1_DATABASE_MARKDOWN_SHA256
+
+
+def test_app_logic_sections_do_not_disturb_v1_sections_or_the_er_diagram() -> None:
+    """PRESERVE: v1 sections and the schema-only Mermaid diagram are unchanged."""
+    markdown = render_document(catalogue_evidence(), kind="database").markdown
+    for section in (
+        "Overview & inspection summary",
+        "Data dictionary",
+        "Keys & indexes",
+        "Relationship catalogue",
+        "Mermaid ER diagram",
+        "Saved queries",
+        "Coverage & limitations",
+    ):
+        assert section in markdown
+    er = render_document(catalogue_evidence(), kind="er").markdown
+    assert "## Application logic" in er
+    assert "Saved queries" not in er
+    diagram = er.split("```mermaid", 1)[1].split("```", 1)[0]
+    assert "modMain" not in diagram and "frmMain" not in diagram
+
+
+def test_interpretations_may_cite_app_logic_evidence_ids() -> None:
+    """R3: app-logic facts join the known evidence-ID set; unknown IDs still fail."""
+    report = render_document(
+        catalogue_evidence(),
+        interpretations=[{"evidence_ref": "form:frmMain.content", "text": "Main entry form"}],
+    )
+    assert "`form:frmMain.content` — Main entry form" in report.markdown
+    with pytest.raises(ValueError, match="evidence"):
+        render_document(catalogue_evidence(), interpretations=[{"evidence_ref": "form:Missing.content", "text": "guess"}])
+
+
+def test_whole_family_fallback_renders_failed_limitations_not_absent_families() -> None:
+    """S3: a Tier 2 fallback renders explicit failed families, distinct from absent ones."""
+    evidence = make_evidence()
+    evidence.app_logic = AppLogicEvidence(
+        content=[
+            app_content(category, FAMILY_SCOPE_NAME, state="failed", reason="the disposable copy could not be written")
+            for category in ("form", "report", "macro", "vba_module")
+        ],
+        references=[
+            ReferenceEvidence(
+                FAMILY_SCOPE_NAME,
+                "Access.Application",
+                *[
+                    FactStatus.failed("the disposable copy could not be written", provenance("reference", FAMILY_SCOPE_NAME, prop))
+                    for prop in ("path", "guid", "major", "minor", "built_in")
+                ],
+            )
+        ],
+    )
+
+    report = render_document(evidence)
+
+    assert report.status == "partial"
+    assert "### Limitations" in report.markdown
+    for label in ("VBA modules", "Forms", "Reports", "Macros"):
+        assert f"- {label}: failed — the disposable copy could not be written" in report.markdown
+    assert "the disposable copy could not be written" in report.markdown.split("### Limitations", 1)[1]
+    # The retained v1 sections are untouched by the degraded Tier 2 families.
+    assert "## Data dictionary" in report.markdown
+    assert "| Parent" in report.markdown

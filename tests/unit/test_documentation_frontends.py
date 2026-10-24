@@ -163,6 +163,37 @@ def test_documentation_cli_surfaces_failed_envelope(action, tmp_path, capsys):
     assert not (tmp_path / "report.md").exists()
 
 
+def test_documentation_inspect_app_logic_parameter_defaults_off() -> None:
+    """Requirement 6: the MCP tool exposes the app-logic opt-in as a default-off boolean."""
+    schema = _tool_schema("analysis", "documentation_inspect")
+    assert "include_app_logic" in schema["properties"]
+    assert schema["properties"]["include_app_logic"]["default"] is False
+
+
+def test_documentation_inspect_passes_the_app_logic_opt_in_to_the_service(monkeypatch) -> None:
+    """Requirement 6: default off, and the flag-on value reaches the inspection facade."""
+    from ms_access_mcp.mcp_tools import analysis
+
+    seen: list[bool] = []
+
+    def _capture(_path: str, **kwargs: object) -> EvidenceDoc:
+        seen.append(bool(kwargs["include_app_logic"]))
+        return EvidenceDoc.from_dict(_minimal_evidence())
+
+    monkeypatch.setattr(analysis, "run_documentation_inspection", _capture)
+
+    default_call = analysis.documentation_inspect("db.accdb")
+    opted_in = analysis.documentation_inspect("db.accdb", include_app_logic=True)
+
+    assert seen == [False, True]
+    assert json.loads(default_call.content[0].text)["success"] is True
+    assert json.loads(opted_in.content[0].text)["success"] is True
+    default_data = json.loads(default_call.content[0].text)["data"]
+    # Default off adds no category; the emitted data stays the v1 shape (+status).
+    assert set(default_data) == {"schema", "run", "source", "coverage", "warnings", "data", "status"}
+    assert "app_logic" not in json.dumps(default_data)
+
+
 def test_documentation_prompts_render_deterministically_and_use_real_tools():
     import asyncio
 
@@ -184,3 +215,46 @@ def test_documentation_prompts_render_deterministically_and_use_real_tools():
     assert "no query extraction" not in er.lower()
     assert "--include-query-sql" in er
     assert "default" in er.lower()
+
+
+def test_documentation_inspect_source_opt_in_parameter_defaults_off() -> None:
+    """Requirement 6/R1: the MCP tool exposes the raw-source opt-in as a default-off boolean."""
+    schema = _tool_schema("analysis", "documentation_inspect")
+    assert "include_app_logic_source" in schema["properties"]
+    assert schema["properties"]["include_app_logic_source"]["default"] is False
+
+
+def test_documentation_inspect_passes_the_source_opt_in_to_the_service(monkeypatch) -> None:
+    """R1: the source opt-in reaches the inspection facade alongside the catalogue opt-in."""
+    from ms_access_mcp.mcp_tools import analysis
+
+    seen: list[tuple[bool, bool]] = []
+
+    def _capture(_path: str, **kwargs: object) -> EvidenceDoc:
+        seen.append((bool(kwargs["include_app_logic"]), bool(kwargs["include_app_logic_source"])))
+        return EvidenceDoc.from_dict(_minimal_evidence())
+
+    monkeypatch.setattr(analysis, "run_documentation_inspection", _capture)
+
+    analysis.documentation_inspect("db.accdb")
+    analysis.documentation_inspect("db.accdb", include_app_logic=True, include_app_logic_source=True)
+
+    assert seen == [(False, False), (True, True)]
+
+
+def test_documentation_prompts_describe_the_app_logic_catalogue_and_its_opt_ins() -> None:
+    """T8/R1/R3: guidance names the catalogue, the source-flag precedence, and the unqualified vectors."""
+    import asyncio
+
+    server = build_server("core")
+    for prompt_name, path in (("document_database", "db.accdb"), ("generate_er_documentation", "er.accdb")):
+        text = asyncio.run(server.get_prompt(prompt_name, {"path": path})).messages[0].content.text
+        assert "include_app_logic" in text
+        assert "--include-app-logic" in text
+        assert "include_app_logic_source" in text
+        assert "--include-app-logic-source" in text
+        assert "AutoKeys" in text
+        # The source flag without the catalogue flag is an error, and raw code is never inline.
+        assert "is an error" in text.lower()
+        assert "never inlined" in text.lower()
+        assert "unqualified" in text.lower()

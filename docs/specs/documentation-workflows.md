@@ -851,6 +851,177 @@ reintroduce the only inventoried route to instantiation-level code.
 
 Qualification records engine version/bitness, host requirements, passive/read-only evidence, QueryDefs SQL availability, relationship/index fidelity, fixture results, and failure behavior. No qualification means unsupported/unknown coverage, never implied support.
 
+## 8. v2 application reverse engineering (unit-implemented; runtime gates at T9)
+
+> **Status:** every item in §8.1 is implemented and covered by unit tests
+> (`application/documentation_app_logic.py`, `application/documentation_render.py`,
+> `application/documentation_worker.py`, `backends/access/app_logic_session.py`).
+> **RUNTIME NOT QUALIFIED until T9.** No live `Access.Application` app-logic read is
+> claimed here; the T3–T5 live gates qualified containment and content reads at fixture
+> scope only, and §8.3 records exactly what is and is not qualified. Absence of a claim
+> is never implied support.
+
+### 8.1 Implemented at unit level
+
+- **App-logic inventory + content reader.** `documentation_inspect` accepts the
+  default-off opt-ins `include_app_logic` and `include_app_logic_source` (CLI
+  `--include-app-logic`, `--include-app-logic-source`; MCP arguments of the same names).
+  Tier 1 reads the DAO `Containers` (Forms, Reports, Scripts, Modules) and the allowlisted
+  startup database properties; Tier 2 (`documentation_app_logic.AppLogicReader`) reads VBA
+  modules, `SaveAsText` form/report/macro exports, and `Application.References` from one
+  disposable Access instance. The new fact categories are additive to
+  `access.documentation.evidence/1`, and a default-off call keeps the v1 evidence bytes
+  (S4).
+- **Containment design.** Both T3 layers are registered. The worker assigns the owned
+  Access PID to a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so supervisor
+  death reaps Access through the handle close; the supervisor's T2 PID+creation-scoped
+  kill net covers the deadline and crash paths. Kills are PID-scoped (`/IM` is never
+  used), and a failed Job Object assignment degrades to the kill net with a visible
+  warning rather than a partial `Ok` (contract 6).
+- **Flag contract.** Raw source is opt-in and never default: `include_app_logic_source`
+  without `include_app_logic` is an `Err` (precedence is checked before any read). Raw
+  code is never rendered inline in Markdown — reports reference it by evidence ID and
+  hash — and opt-in source still counts against the existing 32 MiB evidence / 16 MiB
+  Markdown caps (above the cap stays an `Err`, never truncation).
+- **Scratch copy.** One unique disposable directory per inspection, under the
+  `ACCESS_MCP_DOC_SCRATCH_DIR` override when set (otherwise the system temp directory).
+  The original is never opened by `Access.Application`. Removal in the `finally` is
+  best-effort: a removal that fails, or that reports success while the directory is still
+  there, never raises from teardown and never hides the inspection's own result. If even
+  the check for a leftover directory raises, the directory is treated as still present.
+  Instead of raising, the run carries one sanitized warning (error class plus
+  class-only reason) on `AppLogicContent.warnings`, which the merge adds to the document
+  warnings. A successful removal adds no warning, so a successful run's evidence and
+  Markdown stay byte-identical.
+- **Diagnostic reasons are class-only, never exception text.** Documentation evidence,
+  warnings, and the worker's error envelope are shareable, so the four diagnostic
+  boundaries that render an exception reason go through one shared formatter
+  (`documentation.safe_documentation_error_reason`): the Tier 2 app-logic reader's reason
+  (including the scratch-residue warning, whose class prefix is not duplicated), the
+  Tier 1/Tier 2 inspection reason (which keeps its authored `None` fallback text), the
+  ODBC read-only inspection-open wrapper, and the worker's catch-all error envelope. The
+  formatter keeps only the exception class name. An `OSError` adds its numeric code —
+  `winerror` when it is a real integer, otherwise `errno` — for example
+  `PermissionError: [WinError 32]` or `PermissionError: [Errno 13]`. It never renders
+  `str(error)`, `args`, `strerror`, `filename`, or `filename2`, because each of those can
+  carry a user profile path or a credential; a code that is not a plain integer (a
+  `bool`, a string, or another object) is ignored instead of formatted as code. Authored
+  text that is not exception text is unaffected: fixed stage prefixes, the
+  capability-limit and trust-prerequisite constants, standalone limitation reasons, and
+  the published `unavailable`/`failed`/`observed` states keep their meaning. This is a
+  rule for exception reasons at those boundaries, not universal sanitization of every
+  evidence field, and it deliberately loses the raw exception detail: an operator
+  diagnosing a failure reads the class and numeric code, not a driver message.
+- **Failure visibility uses the existing channels only.** The four formerly silent
+  failure sites surface as sanitized warnings on the existing `EvidenceDoc.warnings` /
+  `AppLogicContent.warnings` lists, or as error-message enrichment. No logging framework,
+  schema change, or derived-status change is involved: `EvidenceDoc.status` keeps
+  reflecting facts and coverage only, so a warning never turns a `complete` document
+  `partial`.
+  - *Baseline listing.* A failed `MSACCESS.EXE` baseline listing is distinguishable from a
+    genuinely empty baseline and reaches the successful path as one `EvidenceDoc.warnings`
+    entry. The empty-baseline decision, its kill-denying semantics, and the public
+    behaviour of `list_msaccess_pids` are unchanged.
+  - *Termination.* When cleanup cannot be established, the raised error message carries
+    the per-PID termination detail plus any swallowed kill-attempt error class; the kill,
+    retry, grace, and established/not-established decisions are unchanged. Termination
+    details name an image by its executable file name only, never its directory.
+  - *DAO properties.* Unreadable database properties are still omitted and readable
+    siblings are still recorded as their own observed startup-property facts, but the
+    omission is no longer silent: the successful path carries one warning stating how
+    many properties were skipped and naming only those whose *name* was itself readable
+    (an unreadable name is counted, never guessed). A fully readable catalogue adds no
+    warning.
+  - *Scratch residue.* A failed scratch-directory removal is reported as described in the
+    scratch-copy bullet above.
+- **Tier 2 degradation is fact-level, never silent — and only for operational failures.**
+  Tier 2 is optional, so an *operational* failure of that whole stage — a filesystem/OS
+  error, or a COM-shaped error carrying a failing HRESULT, at the scratch directory, the
+  disposable copy, the owned dispatch, the armed open, or a whole content read — returns
+  one `failed` fact per content family (form, report, macro, vba_module) plus one `failed`
+  reference family fact per reference property, with the sanitized reason and one warning.
+  The already collected v1 and Tier 1 facts are retained and the document's derived status
+  becomes `partial`, so a failed Tier 2 family is **not** absent: absence means no such
+  fact exists (no opt-in, or a filtered-out object), while `failed` names an attempt that
+  errored and `unavailable` names one the runtime/prerequisite cannot provide. The
+  classification is duck-typed (`hresult`, `args[0]`, or a nested COM `excepinfo` status
+  normalized to unsigned; an `int`/`bool` that is not a failing HRESULT never counts), so
+  the application layer still imports no pywin32/Win32. An unexpected **programmer
+  defect** (`ValueError`, `TypeError`, `AttributeError`, a bare `RuntimeError`) at those
+  same whole-stage boundaries is a hard error: it is never reported as successful partial
+  evidence. The narrowing applies to those outer boundaries only; the documented
+  per-family best-effort catches still turn one failed family into that family's own
+  `failed` fact. Containment is not degradable: ForceDisable set/readback, owned-identity
+  capture (including an invalid-PID read), the owned-identity announcement, and the
+  identity re-read guarding the Job Object assignment raise `ContainmentError` (a hard
+  `Err` at the worker boundary), and `KeyboardInterrupt`/`SystemExit` are never converted
+  to partial success. No schema change is involved; the worker protocol's `ok:true` +
+  `partial` shape is how a caller sees the retained evidence.
+- **VBA trust is classified by status code, never by message text.** The documentation
+  session reads the VBProject in the shared helper's optional `strict=True` mode, while
+  every existing caller keeps the default swallow-and-DEBUG-log behaviour (an unreadable
+  VBE still yields `None`, an empty project list still yields `None`). In strict mode a
+  *positively recognized* trust refusal — the Microsoft-documented `0x800A17B4`/6068
+  status, whether on `hresult`, on `args[0]`, or nested in a COM `excepinfo` — raises
+  `VbaTrustRefusedError` and the reader reports the `vba_module` family `unavailable`
+  together with the operator prerequisite (enable “Trust access to the VBA project object
+  model”); no Trust Center setting is ever read or changed. Corruption, a truncated or
+  unknown COM status such as `0x8000FFFF`, a plain failure, and an empty project list are
+  **real failures**: they are reported `failed` and are never described as a trust
+  refusal. Localized or English message text is never matched, and a successful read keeps
+  its cached `VBProject` and observed facts unchanged.
+- **Catalogue-only rendering.** The report gains a labeled `## Application logic` section
+  (VBA modules, form/report/macro source catalogues, engine-level inventories, references,
+  startup properties) plus `### Limitations` / `### Coverage notes`. Non-observed facts are
+  visible limitation lines (`unavailable`/`failed`) or coverage notes (`excluded`), and the
+  Markdown never contains raw source. Secret scrubbing applies at the error/reason
+  boundary as in v1; embedded opt-in source stays raw untrusted text (the
+  include_query_sql precedent) and is referenced by evidence ID + sha256 only.
+  Agreement 9 is fully closed: every source object
+  family — form/report/macro exports and VBA modules — always carries `sha256`/`bytes`
+  (VBA digests are over the UTF-8 encoding of the module source, since modules have no
+  `SaveAsText` file); an earlier known-gap note about missing VBA digests is superseded
+  by the `a33fb5b` fix. Validation now holds that parity: observed `vba_module` evidence
+  must carry a non-empty `sha256` string and an integer `bytes`, exactly like observed
+  `SaveAsText` content, so older or hand-built evidence that lacks the digest no longer
+  validates. Both branches enforce the recorded shape, not only its presence: `sha256`
+  must be exactly 64 lowercase hexadecimal characters (the `hashlib.hexdigest` form the
+  reader always emits) and `bytes` must be a non-negative integer (a negative size is
+  rejected as a shape error). Because the reader always satisfies that contract, the
+  renderer has no digest-gap limitation line: digest-complete content is validated before
+  any render, so the removed branch was unreachable rather than untested. In strict VBA
+  mode a classified raise replaces the default "vb project unavailable" DEBUG wording,
+  which now belongs to the non-strict swallow path only.
+
+### 8.2 Control-flow gate outcomes (evidence archives)
+
+| Gate | Outcome | Evidence archive |
+|---|---|---|
+| T3 containment (Job Object + PID kill net) | GATE PASSED, 9/9 cells | `odd/evidence/documentation-v2-containment-20261017.zip` (sha `d5eb52eb…f81`) |
+| T4 content reads (References 1-based, `SaveAsText` form/report/macro, VBA-trust read) | GATE PASSED, 9/9 cells / 13/13 checks | `odd/evidence/documentation-v2-content-reads-20261017.zip` (sha `7d4006a6…e64`) |
+| T5 embedded event macros | BLOCKED-with-evidence (L14); vector stays UNQUALIFIED | `odd/evidence/documentation-v2-embedded-blocked-20261017.zip` (sha `c37f7640…0d4`) |
+
+### 8.3 App-logic coverage matrix (fixture scope, measured runtime only)
+
+All rows are fixture scope on the single measured Access 16.0 runtime on this host. When a
+vector was exercised, its entry function was **suppressed at fixture scope on the qualified
+runtime**; this section does not claim that arbitrary databases, hostile inputs, or other
+runtimes are safe.
+
+| Vector | Status |
+|---|---|
+| AutoExec `RunCode` → VBA | QUALIFIED (fixture scope) |
+| Startup-form `OnLoad` expression → VBA | QUALIFIED (fixture scope) |
+| AutoExec `OpenQuery` (non-VBA action) | QUALIFIED (fixture scope) |
+| Embedded event macros | UNQUALIFIED (blocked, L14; ground truth unavailable) |
+| AutoKeys | UNSUPPORTED (no input synthesis; never claimed suppressed) |
+| `SaveAsText` / References / VBA-trust reads | QUALIFIED (T4) |
+| Any other Access runtime/version | UNQUALIFIED (single-host scope; facts report `unavailable`) |
+
+> **No security overclaim.** Every suppression statement in this document is bounded to
+> "suppressed at fixture scope on the qualified runtime". Nothing here claims that an
+> arbitrary or unsupported database is safe to open.
+
 ## Agreement-to-section map
 
 | Agreement | Spec section(s) |

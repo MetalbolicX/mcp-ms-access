@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ from ms_access_mcp.application.documentation_inspect import (
     InspectionCapabilities,
     InspectionCapabilityUnavailableError,
     InspectionPort,
+    OdbcInspectionPort,
 )
 from ms_access_mcp.backends.schema_inspector import QueryParameterInfo
 from ms_access_mcp.errors import AccessMcpError
@@ -29,6 +31,13 @@ class FakePort:
     query_parameters: dict[str, list[QueryParameterInfo] | Exception] | None = None
     caps: InspectionCapabilities = field(default_factory=InspectionCapabilities)
     closed: bool = False
+    container_objects: dict[str, Any] | None = None
+    database_properties: dict[str, str] | Exception | None = None
+    # Sanitized warnings the port recorded while reading the property catalogue (S2 A3).
+    property_omissions: list[str] = field(default_factory=list)
+    # Records every engine-level app-logic read, so "default off means never read" is
+    # observable rather than inferred.
+    app_logic_calls: list[str] = field(default_factory=list)
 
     def capabilities(self) -> InspectionCapabilities:
         return self.caps
@@ -70,6 +79,32 @@ class FakePort:
             raise self.queries
         return self.queries
 
+    def list_container_objects(self, container_name: str) -> list[dict[str, Any]]:
+        self.app_logic_calls.append(f"container:{container_name}")
+        if self.container_objects is None:
+            # The default double models an engine (ODBC) with no DAO Containers surface.
+            raise InspectionCapabilityUnavailableError(
+                "Access ODBC does not expose DAO Containers; engine-level container inventory requires the DAO engine"
+            )
+        result = self.container_objects.get(container_name, [])
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def get_database_properties(self) -> dict[str, str]:
+        self.app_logic_calls.append("properties")
+        if self.database_properties is None:
+            # The default double models an engine (ODBC) with no DAO Properties surface.
+            raise InspectionCapabilityUnavailableError(
+                "Access ODBC does not expose DAO database properties; startup properties require the DAO engine"
+            )
+        if isinstance(self.database_properties, Exception):
+            raise self.database_properties
+        return self.database_properties
+
+    def database_property_omissions(self) -> list[str]:
+        return list(self.property_omissions)
+
     def close(self) -> None:
         self.closed = True
 
@@ -83,6 +118,9 @@ def port(
     link_metadata: dict[str, dict[str, Any] | Exception] | None = None,
     query_parameters: dict[str, list[QueryParameterInfo] | Exception] | None = None,
     caps: InspectionCapabilities | None = None,
+    container_objects: dict[str, Any] | None = None,
+    database_properties: dict[str, str] | Exception | None = None,
+    database_property_omissions: list[str] | None = None,
 ) -> FakePort:
     return FakePort(
         tables=[] if tables is None else tables,
@@ -92,6 +130,9 @@ def port(
         link_metadata={} if link_metadata is None else link_metadata,
         query_parameters=query_parameters,
         caps=caps if caps is not None else InspectionCapabilities(),
+        container_objects=container_objects,
+        database_properties=database_properties,
+        property_omissions=[] if database_property_omissions is None else database_property_omissions,
     )
 
 
@@ -101,9 +142,14 @@ def inspect_with(
     queries: list[str] | None = None,
     *,
     include_query_sql: bool = False,
+    include_app_logic: bool = False,
 ):
     return DocumentationInspectService().inspect(
-        fake, tables=tables, queries=queries, include_query_sql=include_query_sql
+        fake,
+        tables=tables,
+        queries=queries,
+        include_query_sql=include_query_sql,
+        include_app_logic=include_app_logic,
     )
 
 
@@ -116,6 +162,7 @@ def test_fake_port_signatures_match_production_port() -> None:
         "get_relationships",
         "get_queries",
         "get_query_parameters",
+        "database_property_omissions",
         "close",
     ):
         assert inspect.signature(getattr(FakePort, method_name)) == inspect.signature(
@@ -218,7 +265,8 @@ def test_index_failure_is_recorded_and_other_table_continues() -> None:
     )
     document = inspect_with(fake)
     assert document.tables[0].primary_key.state == "failed"
-    assert "index read failed" in document.tables[0].primary_key.reason
+    # S2 strict diagnostics: only the failure class reaches the fact reason.
+    assert document.tables[0].primary_key.reason == "RuntimeError"
     assert document.tables[1].primary_key.state == "observed"
     assert document.coverage.tables.failed["Broken"]
     assert document.status == "partial"
@@ -295,7 +343,8 @@ def test_query_parameter_read_failure_is_failed_not_fabricated_empty() -> None:
     )
     parameters = document.queries[0].parameters
     assert parameters.state == "failed"
-    assert "parameter read failed" in (parameters.reason or "")
+    # S2 strict diagnostics: only the failure class reaches the fact reason.
+    assert parameters.reason == "RuntimeError"
     assert document.coverage.queries.failed["Q"]
     assert document.status == "partial"
 
@@ -592,8 +641,10 @@ def test_unreadable_index_capability_is_unsupported_not_failed() -> None:
     assert table.kind == "local"
     assert [field.name for field in table.fields] == ["id"]
     assert table.primary_key.state == "unavailable"
-    assert table.primary_key.reason == "indexes are not exposed"
-    assert document.coverage.tables.unsupported["T"] == "indexes are not exposed"
+    # S2 strict diagnostics: a capability gap is still ``unavailable``, but its text is
+    # suppressed like any other exception text.
+    assert table.primary_key.reason == "InspectionCapabilityUnavailableError"
+    assert document.coverage.tables.unsupported["T"] == "InspectionCapabilityUnavailableError"
     assert document.coverage.tables.failed == {}
 
 
@@ -617,8 +668,8 @@ def test_link_metadata_credentials_are_removed_before_evidence() -> None:
     assert "canary-secret" not in json.dumps(document.to_dict())
 
 
-def test_credentials_in_a_read_error_are_redacted_from_coverage() -> None:
-    """T1: a credential embedded in an error message is redacted before coverage."""
+def test_credentials_in_a_read_error_never_reach_coverage() -> None:
+    """T1/S2: the strict diagnostic drops the whole message, so no credential can survive."""
     fake = port(
         tables=[TableInfo("T")],
         link_metadata={"T": RuntimeError("open failed for ;DATABASE=x.accdb;PWD=canary-secret")},
@@ -626,7 +677,9 @@ def test_credentials_in_a_read_error_are_redacted_from_coverage() -> None:
     document = inspect_with(fake)
     reason = document.coverage.tables.failed["T"]
     assert "canary-secret" not in reason
-    assert "PWD=***" in reason
+    # Redaction used to keep ``PWD=***``; the class-only policy keeps no message text at all.
+    assert "PWD" not in reason
+    assert reason == "RuntimeError"
     assert document.tables[0].primary_key.reason == reason
 
 
@@ -655,7 +708,8 @@ def test_link_metadata_read_failure_marks_the_table_failed() -> None:
     )
     document = inspect_with(fake)
     assert document.tables[0].name == "LinkedCustomers"
-    assert "link metadata read failed" in document.coverage.tables.failed["LinkedCustomers"]
+    # S2 strict diagnostics: only the failure class reaches the coverage reason.
+    assert document.coverage.tables.failed["LinkedCustomers"] == "RuntimeError"
     assert document.status == "partial"
 
 
@@ -664,3 +718,591 @@ def test_port_close_runs_even_when_enumeration_raises() -> None:
     with pytest.raises(Exception, match="enumeration broke"):
         inspect_with(fake)
     assert fake.closed
+
+
+# ---------------------------------------------------------------------------
+# Tier 1 engine-level inventory: include_app_logic (default false)
+# ---------------------------------------------------------------------------
+
+
+def _app_logic_port(
+    *,
+    container_objects: dict[str, Any] | None = None,
+    database_properties: dict[str, str] | Exception | None = None,
+    database_property_omissions: list[str] | None = None,
+) -> FakePort:
+    return port(
+        container_objects=container_objects,
+        database_properties=database_properties,
+        database_property_omissions=database_property_omissions,
+    )
+
+
+def test_include_app_logic_defaults_off_and_keeps_the_v1_evidence_shape() -> None:
+    """Default off (S4/agreement 10): no new category, no new warning, no app-logic read.
+
+    The v1 evidence shape is pinned byte-for-byte at the key/category level: the top
+    level is unchanged and ``data`` still carries exactly status/tables/relationships/
+    queries. The fake records every engine-level app-logic read, so "never read when
+    off" is observed rather than inferred.
+    """
+    fake = _app_logic_port()
+    document = inspect_with(fake, include_app_logic=False)
+    payload = document.to_dict()
+    assert set(payload) == {"schema", "run", "source", "coverage", "warnings", "data"}
+    assert set(payload["data"]) == {"status", "tables", "relationships", "queries"}
+    assert payload["warnings"] == []
+    assert "app_logic" not in json.dumps(payload)
+    assert fake.app_logic_calls == []
+    # The opt-in is default-off at the service seam itself, not only in this test.
+    parameter = inspect.signature(DocumentationInspectService.inspect).parameters["include_app_logic"]
+    assert parameter.default is False
+
+
+def test_include_app_logic_true_reads_engine_dao_containers_and_startup_properties() -> None:
+    """On: the five additive categories carry observed engine-level facts."""
+    fake = _app_logic_port(
+        container_objects={
+            "Forms": [
+                {"name": "frmMain", "last_modified": "2024-01-02", "date_created": "2023-12-01"}
+            ],
+            "Reports": [{"name": "rptSales"}],
+            "Scripts": [{"name": "AutoExec"}],
+            "Modules": [{"name": "modMain"}],
+        },
+        database_properties={
+            "StartupForm": "frmMain",
+            "AppTitle": "Acme",
+            "AllowFullMenus": "-1",
+            "NotAStartupProperty": "ignored",
+        },
+    )
+    document = inspect_with(fake, include_app_logic=True)
+    app_logic = document.app_logic
+    assert app_logic is not None
+    assert [item.category for item in app_logic.containers] == [
+        "form_inventory",
+        "report_inventory",
+        "macro_inventory",
+        "module_inventory",
+    ]
+    by_category = {item.category: item for item in app_logic.containers}
+    assert by_category["form_inventory"].container == "Forms"
+    assert by_category["form_inventory"].method == "engine_dao_containers"
+    assert by_category["form_inventory"].objects.state == "observed"
+    assert by_category["form_inventory"].objects.value == [
+        {"name": "frmMain", "last_modified": "2024-01-02", "date_created": "2023-12-01"}
+    ]
+    assert by_category["report_inventory"].objects.value == [{"name": "rptSales"}]
+    assert by_category["macro_inventory"].objects.value == [{"name": "AutoExec"}]
+    assert by_category["module_inventory"].objects.value == [{"name": "modMain"}]
+    properties = {item.name: item for item in app_logic.startup_properties}
+    # Generic enumeration filtered to the startup allowlist: unknown properties are absent.
+    assert set(properties) == {"StartupForm", "AppTitle", "AllowFullMenus"}
+    assert properties["StartupForm"].method == "engine_dao_properties"
+    assert properties["StartupForm"].value.state == "observed"
+    assert properties["StartupForm"].value.value == "frmMain"
+    assert properties["AllowFullMenus"].value.value == "-1"
+    # Stable evidence IDs follow the existing ``kind:name.property`` provenance scheme.
+    refs = {
+        f"{item.objects.provenance.object_kind}:{item.objects.provenance.object_name}."
+        f"{item.objects.provenance.property}"
+        for item in app_logic.containers
+    }
+    assert refs == {
+        "form_inventory:Forms.objects",
+        "report_inventory:Reports.objects",
+        "macro_inventory:Scripts.objects",
+        "module_inventory:Modules.objects",
+    }
+    assert properties["StartupForm"].value.provenance.object_kind == "startup_property"
+    assert properties["StartupForm"].value.provenance.object_name == "StartupForm"
+    assert properties["StartupForm"].value.provenance.property == "value"
+    assert "app_logic" in document.to_dict()["data"]
+    assert document.status == "complete"
+
+
+def test_odbc_port_reports_every_app_logic_category_unavailable_with_the_engine_limit() -> None:
+    """Fail-honest: an engine without DAO Containers/Properties is unavailable, never empty."""
+    document = inspect_with(_app_logic_port(), include_app_logic=True)
+    app_logic = document.app_logic
+    assert app_logic is not None
+    assert len(app_logic.containers) == 4
+    assert all(item.objects.state == "unavailable" for item in app_logic.containers)
+    # S2 strict diagnostics: the engine-limitation text is exception text, so the fact
+    # names the capability-gap class instead; ``unavailable`` still carries the meaning.
+    assert all(item.objects.reason == "InspectionCapabilityUnavailableError" for item in app_logic.containers)
+    assert app_logic.startup_properties
+    assert all(item.value.state == "unavailable" for item in app_logic.startup_properties)
+    assert all(
+        item.value.reason == "InspectionCapabilityUnavailableError" for item in app_logic.startup_properties
+    )
+    assert document.status == "partial"
+
+
+def test_odbc_inspection_port_names_the_engine_limitation_for_app_logic_reads() -> None:
+    """The real ODBC port refuses both app-logic surfaces with a DAO limitation reason."""
+    odbc = OdbcInspectionPort(None)
+    with pytest.raises(InspectionCapabilityUnavailableError) as containers:
+        odbc.list_container_objects("Forms")
+    assert "DAO" in str(containers.value)
+    with pytest.raises(InspectionCapabilityUnavailableError) as properties:
+        odbc.get_database_properties()
+    assert "DAO" in str(properties.value)
+
+
+def test_one_container_failure_stays_failed_and_does_not_erase_the_other_facts() -> None:
+    """Per-category isolation: one failed container leaves every other fact intact."""
+    fake = _app_logic_port(
+        container_objects={
+            "Forms": RuntimeError("Forms container read failed"),
+            "Reports": [{"name": "rptSales"}],
+            "Scripts": [],
+            "Modules": [{"name": "modMain"}],
+        },
+        database_properties={"StartupForm": "frmMain"},
+    )
+    document = inspect_with(fake, include_app_logic=True)
+    app_logic = document.app_logic
+    assert app_logic is not None
+    by_category = {item.category: item for item in app_logic.containers}
+    assert by_category["form_inventory"].objects.state == "failed"
+    # S2 strict diagnostics: the failed fact names the class, not the raised message.
+    assert by_category["form_inventory"].objects.reason == "RuntimeError"
+    assert by_category["report_inventory"].objects.state == "observed"
+    assert by_category["report_inventory"].objects.value == [{"name": "rptSales"}]
+    # An empty container is a known-empty observation, distinct from an unread one.
+    assert by_category["macro_inventory"].objects.state == "observed"
+    assert by_category["macro_inventory"].objects.value == []
+    assert by_category["module_inventory"].objects.value == [{"name": "modMain"}]
+    assert [item.value.state for item in app_logic.startup_properties] == ["observed"]
+    assert document.status == "partial"
+
+
+def test_startup_property_read_failure_is_failed_for_every_allowlisted_property() -> None:
+    """A failed property enumeration is one ``failed`` fact per allowlisted property."""
+    fake = _app_logic_port(
+        container_objects={"Forms": [], "Reports": [], "Scripts": [], "Modules": []},
+        database_properties=RuntimeError("properties read failed"),
+    )
+    document = inspect_with(fake, include_app_logic=True)
+    app_logic = document.app_logic
+    assert app_logic is not None
+    assert app_logic.startup_properties
+    assert all(item.value.state == "failed" for item in app_logic.startup_properties)
+    assert all(item.value.reason == "RuntimeError" for item in app_logic.startup_properties)
+    assert all(item.objects.state == "observed" for item in app_logic.containers)
+
+
+# ---------------------------------------------------------------------------
+# T7: source opt-in precedence is validated at the extraction service seam
+# ---------------------------------------------------------------------------
+
+
+def test_service_rejects_source_opt_in_without_the_app_logic_opt_in() -> None:
+    """Requirement 6: raw source text is only meaningful with the catalogue opt-in.
+
+    The contradictory request fails closed at the service seam (the same seam that
+    validates unknown requested names) instead of silently reading nothing.
+    """
+    fake = _app_logic_port()
+    with pytest.raises(AccessMcpError, match="include_app_logic"):
+        DocumentationInspectService().inspect(
+            fake,
+            tables=None,
+            queries=None,
+            include_app_logic=False,
+            include_app_logic_source=True,
+        )
+    assert fake.app_logic_calls == []
+
+
+def test_service_accepts_the_source_opt_in_alongside_app_logic() -> None:
+    """PRESERVE: the opt-in pair is accepted; the service itself reads no Tier 2 content."""
+    fake = _app_logic_port()
+    document = DocumentationInspectService().inspect(
+        fake,
+        tables=None,
+        queries=None,
+        include_app_logic=True,
+        include_app_logic_source=True,
+    )
+    assert document.app_logic is not None
+
+
+def test_service_source_opt_in_defaults_off() -> None:
+    parameter = inspect.signature(DocumentationInspectService.inspect).parameters["include_app_logic_source"]
+    assert parameter.default is False
+
+
+# ---------------------------------------------------------------------------
+# DAO port normalization: ACE NUL padding, optional dates, per-property isolation
+# ---------------------------------------------------------------------------
+# These drive the production ``DaoInspectionPort`` over a fake DAO ``Database``
+# handle, so the normalization is observed through the port's public reads and not
+# by calling the module's private text/date helpers directly. No COM, no ACE.
+
+_ABSENT = object()
+
+
+def _dao_date(attribute: str, value: Any) -> Any:
+    """Model a DAO date read: missing attributes are absent, ``Exception``s raise."""
+    if value is _ABSENT:
+        msg = f"DAO Document does not expose {attribute}"
+        raise AttributeError(msg)
+    if isinstance(value, Exception):
+        raise value
+    return value
+
+
+class _FakeDaoDocument:
+    """DAO ``Document`` double for the two optional date attributes."""
+
+    def __init__(self, name: Any, *, last_updated: Any = _ABSENT, date_created: Any = _ABSENT) -> None:
+        self.Name = name
+        self._last_updated = last_updated
+        self._date_created = date_created
+
+    @property
+    def LastUpdated(self) -> Any:
+        return _dao_date("LastUpdated", self._last_updated)
+
+    @property
+    def DateCreated(self) -> Any:
+        return _dao_date("DateCreated", self._date_created)
+
+
+class _FakeDaoProperty:
+    """DAO ``Property`` double whose name or value read may fail."""
+
+    def __init__(self, name: Any, value: Any = "") -> None:
+        self._name = name
+        self._value = value
+
+    @property
+    def Name(self) -> Any:
+        if isinstance(self._name, Exception):
+            raise self._name
+        return self._name
+
+    @property
+    def Value(self) -> Any:
+        if isinstance(self._value, Exception):
+            raise self._value
+        return self._value
+
+
+class _FakeDaoContainer:
+    """DAO ``Container`` double exposing its ``Documents`` collection."""
+
+    def __init__(self, documents: list[Any]) -> None:
+        self.Documents = list(documents)
+
+
+class _FakeDaoDatabase:
+    """Fake DAO ``Database`` handle: per-container Documents plus Properties."""
+
+    def __init__(
+        self,
+        *,
+        documents: dict[str, list[Any]] | None = None,
+        properties: list[Any] | None = None,
+    ) -> None:
+        self.documents = documents or {}
+        self.Properties = list(properties or [])
+
+    def Containers(self, container_name: str) -> _FakeDaoContainer:
+        return _FakeDaoContainer(self.documents.get(container_name, []))
+
+
+class _InlineDaoDispatcher:
+    """Dispatcher double that runs every dispatched read inline over a fake handle."""
+
+    def __init__(self, database: _FakeDaoDatabase) -> None:
+        self.current_db = database
+
+    def call(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
+        return operation(*args, **kwargs)
+
+
+def test_dao_port_strips_ace_nul_padding_from_names_and_property_values() -> None:
+    """ACE pads engine strings with trailing NULs; evidence never carries them."""
+    database = _FakeDaoDatabase(
+        documents={"Forms": [_FakeDaoDocument("frmMain\x00\x00")]},
+        properties=[_FakeDaoProperty("AppTitle\x00", "Acme\x00\x00")],
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.list_container_objects("Forms") == [{"name": "frmMain"}]
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme"}
+
+
+def test_dao_port_omits_only_the_dates_the_engine_does_not_expose() -> None:
+    """An absent, raising, or null date is omitted; a readable one is recorded."""
+    database = _FakeDaoDatabase(
+        documents={
+            "Forms": [
+                _FakeDaoDocument("frmMain", last_updated="2024-01-02 10:00:00"),
+                _FakeDaoDocument("frmSales", last_updated=RuntimeError("DAO 3251"), date_created=None),
+                _FakeDaoDocument("frmOrders", last_updated="2024-02-03", date_created="2023-12-01"),
+            ]
+        }
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.list_container_objects("Forms") == [
+        {"name": "frmMain", "last_modified": "2024-01-02 10:00:00"},
+        {"name": "frmSales"},
+        {"name": "frmOrders", "last_modified": "2024-02-03", "date_created": "2023-12-01"},
+    ]
+
+
+def test_dao_port_records_a_real_datetime_date_as_its_stripped_string() -> None:
+    """S3 H4: a DAO date is a real ``datetime``, recorded as the documented stripped text."""
+    database = _FakeDaoDatabase(
+        documents={
+            "Forms": [
+                _FakeDaoDocument(
+                    "frmMain",
+                    last_updated=datetime(2024, 1, 2, 10, 30, 15),
+                    date_created=datetime(2023, 12, 1, 0, 0, 0),
+                )
+            ]
+        }
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.list_container_objects("Forms") == [
+        {
+            "name": "frmMain",
+            "last_modified": "2024-01-02 10:30:15",
+            "date_created": "2023-12-01 00:00:00",
+        }
+    ]
+
+
+def test_dao_port_keeps_sibling_properties_when_one_property_read_fails() -> None:
+    """One unreadable property (live DAO 5003251) never erases the whole catalogue."""
+    database = _FakeDaoDatabase(
+        properties=[
+            _FakeDaoProperty("AppTitle", "Acme"),
+            _FakeDaoProperty("Connection", RuntimeError("DAO 5003251")),
+            _FakeDaoProperty(RuntimeError("DAO 3265: property name unreadable"), "orphan"),
+            _FakeDaoProperty("StartupForm\x00", "frmMain"),
+        ]
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme", "StartupForm": "frmMain"}
+
+
+def test_dao_port_reports_the_skipped_property_count_and_readable_names() -> None:
+    """S2 A3: omissions are still omitted, and one warning names how many were skipped."""
+    database = _FakeDaoDatabase(
+        properties=[
+            _FakeDaoProperty("AppTitle", "Acme"),
+            _FakeDaoProperty("Connection", RuntimeError("DAO 5003251")),
+            _FakeDaoProperty(RuntimeError("DAO 3265: property name unreadable"), "orphan"),
+            _FakeDaoProperty("StartupForm\x00", "frmMain"),
+        ]
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme", "StartupForm": "frmMain"}
+    # One sanitized warning: the count plus only the names that were themselves readable.
+    assert dao_port.database_property_omissions() == [
+        "2 database properties could not be read and were omitted from the "
+        "startup-property catalogue (readable names: Connection)"
+    ]
+    # The failure detail never reaches the warning: only the readable name is echoed.
+    assert all("5003251" not in warning and "3265" not in warning for warning in dao_port.database_property_omissions())
+
+
+def test_dao_port_reports_a_single_skipped_property_without_a_readable_name() -> None:
+    """S2 A3: an unreadable name is counted but never guessed or invented."""
+    database = _FakeDaoDatabase(
+        properties=[
+            _FakeDaoProperty("AppTitle", "Acme"),
+            _FakeDaoProperty(RuntimeError("DAO 3265: property name unreadable"), "orphan"),
+        ]
+    )
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme"}
+    assert dao_port.database_property_omissions() == [
+        "1 database property could not be read and was omitted from the startup-property catalogue"
+    ]
+
+
+def test_dao_port_reports_no_omission_warning_when_every_property_is_readable() -> None:
+    """S2 A3/S4: a fully readable catalogue adds no warning, so success stays identical."""
+    database = _FakeDaoDatabase(properties=[_FakeDaoProperty("AppTitle", "Acme")])
+    dao_port = DaoInspectionPort(_InlineDaoDispatcher(database))
+
+    # Before any read there is nothing to report.
+    assert dao_port.database_property_omissions() == []
+    assert dao_port.get_database_properties() == {"AppTitle": "Acme"}
+    assert dao_port.database_property_omissions() == []
+
+
+# ---------------------------------------------------------------------------
+# Service-side app-logic normalization: malformed container entries, startup values
+# ---------------------------------------------------------------------------
+
+
+def test_malformed_container_entries_are_filtered_and_only_name_and_dates_survive() -> None:
+    """A port's inventory is normalized to ``name`` plus readable date strings."""
+    fake = _app_logic_port(
+        container_objects={
+            "Forms": [
+                {"name": "frmMain", "last_modified": " 2024-01-02 ", "extra": "dropped"},
+                "not-an-entry",
+                {"name": None},
+                {"name": "   "},
+                {"noname": "frmMissing"},
+                {"name": "frmOrders", "last_modified": None, "date_created": 17},
+            ]
+        },
+        database_properties={},
+    )
+
+    document = inspect_with(fake, include_app_logic=True)
+
+    app_logic = document.app_logic
+    assert app_logic is not None
+    by_category = {item.category: item for item in app_logic.containers}
+    assert by_category["form_inventory"].objects.state == "observed"
+    assert by_category["form_inventory"].objects.value == [
+        {"name": "frmMain", "last_modified": "2024-01-02"},
+        {"name": "frmOrders"},
+    ]
+    # The other three containers were read and are known-empty, not failed.
+    assert [by_category[category].objects.value for category in ("report_inventory", "macro_inventory", "module_inventory")] == [[], [], []]
+    assert [by_category[category].objects.state for category in ("report_inventory", "macro_inventory", "module_inventory")] == ["observed", "observed", "observed"]
+    assert document.status == "complete"
+
+
+def test_startup_property_none_and_non_string_values_are_normalized_not_invented() -> None:
+    """A null value becomes an empty string; non-strings become their text, never ``None``."""
+    fake = _app_logic_port(
+        container_objects={},
+        database_properties={
+            "AppTitle": None,
+            "StartupForm": "frmMain",
+            "AllowFullMenus": -1,
+            "ShowNavigationPane": True,
+        },
+    )
+
+    document = inspect_with(fake, include_app_logic=True)
+
+    app_logic = document.app_logic
+    assert app_logic is not None
+    properties = {item.name: item.value for item in app_logic.startup_properties}
+    assert set(properties) == {"AppTitle", "StartupForm", "AllowFullMenus", "ShowNavigationPane"}
+    assert all(fact.state == "observed" for fact in properties.values())
+    assert properties["AppTitle"].value == ""
+    assert properties["StartupForm"].value == "frmMain"
+    assert properties["AllowFullMenus"].value == "-1"
+    assert properties["ShowNavigationPane"].value == "True"
+
+
+def test_include_app_logic_forwards_one_skipped_property_warning_without_a_status_change() -> None:
+    """S2 A3: the port's omission warning reaches ``warnings``; facts/status do not move."""
+    warning = (
+        "2 database properties could not be read and were omitted from the "
+        "startup-property catalogue (readable names: Connection)"
+    )
+    fake = _app_logic_port(
+        container_objects={},
+        database_properties={"AppTitle": "Acme", "StartupForm": "frmMain"},
+        database_property_omissions=[warning],
+    )
+
+    document = inspect_with(fake, include_app_logic=True)
+
+    # Exactly one warning, on the success path, and never a status change.
+    assert document.warnings == [warning]
+    assert document.to_dict()["warnings"] == [warning]
+    assert document.status == "complete"
+    # The readable siblings are unchanged observed facts; nothing was invented.
+    assert document.app_logic is not None
+    properties = {item.name: item.value for item in document.app_logic.startup_properties}
+    assert set(properties) == {"AppTitle", "StartupForm"}
+    assert all(fact.state == "observed" for fact in properties.values())
+
+
+def test_include_app_logic_success_carries_no_property_omission_warning() -> None:
+    """S2 A3/S4: a fully readable catalogue keeps the successful payload unchanged."""
+    fake = _app_logic_port(container_objects={}, database_properties={"AppTitle": "Acme"})
+
+    document = inspect_with(fake, include_app_logic=True)
+
+    assert document.warnings == []
+    assert document.status == "complete"
+
+
+def test_property_omission_warning_is_never_read_without_the_app_logic_opt_in() -> None:
+    """PRESERVE: default-off never reads properties, so it can never gain a warning."""
+    fake = _app_logic_port(
+        container_objects={},
+        database_properties={"AppTitle": "Acme"},
+        database_property_omissions=["1 database property could not be read"],
+    )
+
+    document = inspect_with(fake)
+
+    assert document.warnings == []
+    assert fake.app_logic_calls == []
+
+
+# --- Strict class-only diagnostics (odd/tasks/documentation-strict-error-diagnostics.md) ---
+
+_STRICT_FAKE_USER = "fakeuser123"
+_STRICT_PATH = rf"C:\Users\{_STRICT_FAKE_USER}\AppData\Local\Temp\ms_access_doc_v2_x\source.accdb"
+_STRICT_SECOND_PATH = rf"C:\Users\{_STRICT_FAKE_USER}\AppData\Local\Temp\ms_access_doc_v2_y\source.accdb"
+_STRICT_SECRET_TEXT = f"open failed for {_STRICT_PATH};PWD=hunter2secret"
+
+
+def test_read_error_reason_is_the_exception_class_only() -> None:
+    """S2/S5: a credential- and path-bearing read failure exposes its class, never its text."""
+    fake = port(tables=[TableInfo("T")], link_metadata={"T": RuntimeError(_STRICT_SECRET_TEXT)})
+
+    document = inspect_with(fake)
+
+    assert document.coverage.tables.failed["T"] == "RuntimeError"
+    assert document.tables[0].primary_key.reason == "RuntimeError"
+    assert document.status == "partial"
+    assert [table.name for table in document.tables] == ["T"]
+    serialized = json.dumps(document.to_dict())
+    assert "hunter2secret" not in serialized
+    assert _STRICT_FAKE_USER not in serialized
+
+
+def test_os_read_error_reason_keeps_only_the_numeric_code() -> None:
+    """S2/S5: an OS read failure keeps class plus numeric code, never ``strerror`` or a path."""
+    error = OSError(2, _STRICT_SECRET_TEXT)
+    error.filename2 = _STRICT_SECOND_PATH
+    fake = port(tables=[TableInfo("T")], link_metadata={"T": error})
+
+    document = inspect_with(fake)
+
+    assert document.coverage.tables.failed["T"] == "FileNotFoundError: [Errno 2]"
+    assert document.tables[0].primary_key.reason == "FileNotFoundError: [Errno 2]"
+    assert _STRICT_FAKE_USER not in json.dumps(document.to_dict())
+
+
+def test_metadata_read_failure_fallback_text_is_preserved() -> None:
+    """PRESERVE: ``_reason(None)`` keeps its authored fallback instead of a class name."""
+
+    class _NoneQueryPort(FakePort):
+        """A port that answers "no query catalogue" without raising."""
+
+        def get_queries(self) -> Any:
+            return None
+
+    document = inspect_with(_NoneQueryPort(tables=[], indexes={}, relationships=[], queries=[]))
+
+    assert document.coverage.queries.failed["queries"] == "Metadata read failed"
+    # The fallback is authored text, not a class name, and the derived status is unchanged.
+    assert document.status == "partial"

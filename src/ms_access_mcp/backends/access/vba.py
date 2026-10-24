@@ -17,6 +17,87 @@ logger = logging.getLogger(__name__)
 # Compile command IDs by Access version (most likely first)
 _COMPILE_CMD_IDS = [301, 206, 317, 232]
 
+# The Office trust-center refusal ("Programmatic access to Visual Basic Project is
+# denied", HRESULT 0x800A17B4 / Office error 6068) is the only positively recognized trust
+# refusal. It is matched by status code only: localized message text is never classified.
+TRUST_ACCESS_REFUSED_HRESULT = 0x800A17B4
+
+VBA_TRUST_PREREQUISITE = (
+    "VBProject access requires the operator to enable 'Trust access to the VBA project "
+    "object model' in the Access Trust Center; the VBA module catalogue is unavailable"
+)
+
+
+class VbaTrustRefusedError(RuntimeError):
+    """The host refuses programmatic VBProject access (operator trust setting)."""
+
+
+class VbaProjectUnavailableError(RuntimeError):
+    """The VBA project could not be read; a real failure, never a trust diagnosis."""
+
+
+def failing_hresults(error: BaseException) -> tuple[int, ...]:
+    """Return every failing HRESULT an operational COM error exposes (duck-typed).
+
+    pywin32 exposes the status as ``hresult`` and as the first positional argument. A
+    nested COM failure carries the real status as ``excepinfo[5]`` (``scode``) of
+    ``args[2]`` while ``args[0]`` may hold only the generic ``DISP_E_EXCEPTION``. Codes
+    are normalized to the unsigned 32-bit form so signed and unsigned spellings compare
+    equal; ``bool`` is never an HRESULT, and a success (severity-0) code is not a failure.
+
+    A plain ``int`` that only ``args`` carries is deliberately accepted, exactly like an
+    ``hresult`` attribute: the classification is duck-typed and is never tightened to
+    require ``hresult`` (a high-bit, severity-1 plain int is a failing HRESULT).
+
+    Args:
+        error: Any raised error; only its exposed integer statuses are inspected.
+
+    Returns:
+        Every normalized failing HRESULT, in discovery order (possibly empty).
+
+    """
+    candidates: list[object] = [getattr(error, "hresult", None)]
+    if error.args:
+        candidates.append(error.args[0])
+        if len(error.args) > 2 and isinstance(error.args[2], tuple) and len(error.args[2]) > 5:
+            candidates.append(error.args[2][5])
+    codes: list[int] = []
+    for candidate in candidates:
+        if isinstance(candidate, bool) or not isinstance(candidate, int):
+            continue
+        unsigned = candidate & 0xFFFFFFFF
+        if unsigned & 0x80000000:
+            codes.append(unsigned)
+    return tuple(codes)
+
+
+def is_vba_trust_refusal(error: BaseException) -> bool:
+    """Report whether ``error`` positively carries the VBProject trust refusal status.
+
+    Args:
+        error: The COM-shaped failure raised while reaching the VBE project.
+
+    Returns:
+        ``True`` only when a failing HRESULT equals ``0x800A17B4``.
+
+    """
+    return TRUST_ACCESS_REFUSED_HRESULT in failing_hresults(error)
+
+
+def _vb_project_failure(error: BaseException) -> Exception:
+    """Classify a strict VBE/VBProjects access failure; never invent a trust diagnosis."""
+    if is_vba_trust_refusal(error):
+        return VbaTrustRefusedError(VBA_TRUST_PREREQUISITE)
+    codes = failing_hresults(error)
+    if codes:
+        msg = (
+            f"the VBA project could not be read (unknown COM failure 0x{codes[-1]:08X}); "
+            "the catalogue is failed, not a trust refusal"
+        )
+        return VbaProjectUnavailableError(msg)
+    msg = f"the VBA project could not be read ({error}); the catalogue is failed, not a trust refusal"
+    return VbaProjectUnavailableError(msg)
+
 
 def _save_vba_module(access_app: Any, module_name: str, operation: str) -> bool:
     """Persist a successful VBE mutation before reporting success."""
@@ -46,19 +127,52 @@ def _proc_type_from_signature(signature: str) -> str:
     return "Sub"
 
 
-def get_vb_project(access_app: Any) -> Any | None:
+def get_vb_project(access_app: Any, *, strict: bool = False) -> Any | None:
     """Get the first VBA project via VBProjects enumeration.
 
-    COM VBProjects collection uses 1-based indexing.
-    Returns None if VBE is unavailable (caller handles via try/except).
+    COM VBProjects collection uses 1-based indexing. By default a VBE access failure is
+    swallowed to ``None`` after a DEBUG log (the documented behaviour of the existing
+    CRUD/form callers). With ``strict=True`` -- the documentation reader's mode -- it is
+    raised instead: a positively recognized trust refusal becomes
+    :class:`VbaTrustRefusedError`, and every other failure (corruption, an unknown COM
+    status, an empty project list) becomes :class:`VbaProjectUnavailableError`, so an
+    unknown failure is never described as a trust refusal.
+
+    Args:
+        access_app: The Access COM application object.
+        strict: Raise a classified failure instead of returning ``None``.
+
+    Returns:
+        The first VBProject, or ``None`` when nothing is readable and ``strict`` is off.
+
+    Raises:
+        VbaTrustRefusedError: The host refuses programmatic VBProject access.
+        VbaProjectUnavailableError: The VBE project is unreadable for any other reason.
+
     """
     try:
         vbe = access_app.VBE
     except Exception as exc:
+        if strict:
+            # Strict callers raise a classified failure, so the default swallow-and-DEBUG
+            # wording would describe an outcome that never happens here.
+            raise _vb_project_failure(exc) from exc
         logger.debug("vb project unavailable: %s", exc)
         return None
-    for i in range(1, vbe.VBProjects.Count + 1):
-        return vbe.VBProjects(i)
+    try:
+        count = vbe.VBProjects.Count
+        for i in range(1, count + 1):
+            return vbe.VBProjects(i)
+    except Exception as exc:
+        if strict:
+            raise _vb_project_failure(exc) from exc
+        raise
+    if strict:
+        msg = (
+            "the VBE reported no VBA project for the open database; the catalogue is "
+            "failed, not a trust refusal"
+        )
+        raise VbaProjectUnavailableError(msg)
     return None
 
 

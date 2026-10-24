@@ -13,18 +13,37 @@ import os
 import subprocess
 import sys
 import threading
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from ms_access_mcp.application import documentation_limits
+from ms_access_mcp.application.documentation import (
+    Coverage,
+    EvidenceDoc,
+    RunMetadata,
+    SourceEvidence,
+)
 from ms_access_mcp.application.documentation_runtime import DocumentationRuntime
 from ms_access_mcp.application.documentation_worker import (
     build_request,
     decode_request,
     decode_response,
+    decode_response_with_identities,
+    emit_access_identity,
     encode_request,
+    encode_response,
+    split_access_identity_frames,
+)
+from ms_access_mcp.application.process_identity import (
+    AccessTermination,
+    list_msaccess_pids,
+    process_is_alive,
+    read_msaccess_baseline,
+    read_process_identity,
+    terminate_verified_access,
 )
 from ms_access_mcp.errors import AccessMcpError
 
@@ -195,7 +214,13 @@ def test_request_round_trip_carries_the_sql_opt_in_and_defaults_absent_to_false(
 
 
 def test_worker_run_request_passes_the_flag_to_the_extraction_seam(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Actual-worker survival: the decoded flag reaches inspection, not just the request dict."""
+    """Actual-worker survival: both decoded output opt-ins reach inspection, not just the request dict.
+
+    The strict extraction-seam fake pins the full keyword contract of
+    ``inspect_open_database``; it was refreshed because the seam gained
+    ``include_app_logic`` (T6), so a dropped keyword fails this test instead of
+    silently defaulting at the seam.
+    """
     from ms_access_mcp.application import documentation_worker as worker
     from ms_access_mcp.application.database import Ok
     from ms_access_mcp.application.documentation import (
@@ -218,8 +243,18 @@ def test_worker_run_request_passes_the_flag_to_the_extraction_seam(monkeypatch: 
             seen["closed"] = True
             return Ok()
 
-    def fake_inspect(database: Any, *, tables: Any, queries: Any, include_query_sql: bool = False) -> Any:
+    def fake_inspect(
+        database: Any,
+        *,
+        tables: Any,
+        queries: Any,
+        include_query_sql: bool = False,
+        include_app_logic: bool = False,
+        include_app_logic_source: bool = False,
+    ) -> Any:
         seen["include_query_sql"] = include_query_sql
+        seen["include_app_logic"] = include_app_logic
+        seen["include_app_logic_source"] = include_app_logic_source
         return EvidenceDoc(
             run=RunMetadata("run-1", "1.0", [], []),
             source=SourceEvidence("core.accdb", "accdb", "DAO", "offline", "closed"),
@@ -228,6 +263,10 @@ def test_worker_run_request_passes_the_flag_to_the_extraction_seam(monkeypatch: 
 
     monkeypatch.setattr(worker, "DatabaseUseCases", _FakeDatabase)
     monkeypatch.setattr(worker, "inspect_open_database", fake_inspect)
+    # The opted-in request also triggers the armed Tier 2 read; fake the reader so this
+    # unit test never instantiates Access.
+    monkeypatch.setattr(worker, "read_tier2_content", lambda *_a, **_k: object())
+    monkeypatch.setattr(worker, "apply_app_logic_content", lambda document, _content: document)
     request = decode_request(
         encode_request(
             build_request(
@@ -237,6 +276,7 @@ def test_worker_run_request_passes_the_flag_to_the_extraction_seam(monkeypatch: 
                 tables=None,
                 queries=None,
                 include_query_sql=True,
+                include_app_logic=True,
             )
         )
     )
@@ -244,8 +284,56 @@ def test_worker_run_request_passes_the_flag_to_the_extraction_seam(monkeypatch: 
     payload = worker._run_request(request)
 
     assert seen["include_query_sql"] is True
+    assert seen["include_app_logic"] is True
     assert seen["closed"] is True
     assert payload["schema"] == "access.documentation.evidence/1"
+
+
+def test_worker_run_request_defaults_app_logic_off_at_the_extraction_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRESERVE: a v1 request without the key still passes an explicit ``False`` to inspection."""
+    from ms_access_mcp.application import documentation_worker as worker
+    from ms_access_mcp.application.database import Ok
+    from ms_access_mcp.application.documentation import (
+        Coverage,
+        EvidenceDoc,
+        RunMetadata,
+        SourceEvidence,
+    )
+
+    seen: dict[str, Any] = {}
+
+    class _FakeDatabase:
+        def __init__(self, *, backend: str, readonly: bool, allowed_dirs: Any) -> None:
+            return None
+
+        def open_database(self, _path: str) -> Any:
+            return Ok(data={})
+
+        def close_database(self) -> Any:
+            return Ok()
+
+    def fake_inspect(_database: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return EvidenceDoc(
+            run=RunMetadata("run-1", "1.0", [], []),
+            source=SourceEvidence("core.accdb", "accdb", "DAO", "offline", "closed"),
+            coverage=Coverage(),
+        )
+
+    monkeypatch.setattr(worker, "DatabaseUseCases", _FakeDatabase)
+    monkeypatch.setattr(worker, "inspect_open_database", fake_inspect)
+    v1_request = {
+        "db_path": "core.accdb",
+        "backend": "dao",
+        "allowed_dirs": [],
+        "tables": None,
+        "queries": None,
+        "include_query_sql": False,
+    }
+
+    worker._run_request(decode_request(encode_request(v1_request)))
+
+    assert seen["include_app_logic"] is False
 
 
 def test_runtime_inspect_threads_the_sql_opt_in_into_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -273,6 +361,64 @@ def test_runtime_inspect_threads_the_sql_opt_in_into_the_request(monkeypatch: py
     )
 
     assert seen["include_query_sql"] is True
+
+
+def test_runtime_inspect_threads_the_app_logic_opt_in_into_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The supervisor facade must not drop the app-logic opt-in before the worker request."""
+    from ms_access_mcp.application import documentation_runtime as runtime_module
+
+    real_build_request = runtime_module.build_request
+    seen: dict[str, Any] = {}
+
+    def capture(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return real_build_request(**kwargs)
+
+    monkeypatch.setattr(runtime_module, "build_request", capture)
+    records: list[subprocess.Popen[bytes]] = []
+    runtime = DocumentationRuntime(launcher=_launcher("ok", records), deadline_seconds=30)
+
+    runtime.inspect(
+        "fixture.accdb",
+        backend="dao",
+        allowed_dirs=[Path("C:/db")],
+        tables=None,
+        queries=None,
+        include_app_logic=True,
+    )
+
+    assert seen["include_app_logic"] is True
+
+
+def test_runtime_inspect_defaults_app_logic_off_in_the_worker_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRESERVE: an unset opt-in still produces a request that carries ``False``."""
+    from ms_access_mcp.application import documentation_runtime as runtime_module
+
+    real_build_request = runtime_module.build_request
+    seen: dict[str, Any] = {}
+
+    def capture(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return real_build_request(**kwargs)
+
+    monkeypatch.setattr(runtime_module, "build_request", capture)
+    records: list[subprocess.Popen[bytes]] = []
+    runtime = DocumentationRuntime(launcher=_launcher("ok", records), deadline_seconds=30)
+
+    _inspect(runtime)
+
+    assert seen["include_app_logic"] is False
+
+
+def test_runtime_facades_expose_the_app_logic_opt_in_defaulting_off() -> None:
+    """The facade signatures pin the default-off contract at the seam itself."""
+    import inspect as inspect_module
+
+    from ms_access_mcp.application import documentation_runtime as runtime_module
+
+    for callable_object in (runtime_module.DocumentationRuntime.inspect, runtime_module.run_documentation_inspection):
+        parameter = inspect_module.signature(callable_object).parameters["include_app_logic"]
+        assert parameter.default is False
 
 
 # ---------------------------------------------------------------------------
@@ -445,3 +591,955 @@ def test_request_write_to_a_child_that_never_reads_stdin_is_bounded() -> None:
     finally:
         # Close the read end so the blocked writer thread ends with a broken pipe.
         os.close(read_fd)
+
+
+# ---------------------------------------------------------------------------
+# 6. Worker -> supervisor Access ownership: ack frames plus the fail-closed kill net
+# ---------------------------------------------------------------------------
+
+ACCESS_CREATION = 133_456_789_012_345_678
+ACCESS_PID = 41_000
+ACCESS_IMAGE = "MSACCESS.EXE"
+PINNED_CLEANUP_ERROR = (
+    "Documentation inspection worker cleanup could not be established within "
+    "the {grace:g}-second cleanup grace; the owned worker may still be running "
+    "and no evidence was produced"
+)
+
+
+def _frame_bytes(
+    *,
+    pid: int = ACCESS_PID,
+    creation: int = ACCESS_CREATION,
+    image: str = ACCESS_IMAGE,
+) -> bytes:
+    """Build one flushed identity frame with the production writer."""
+    stream = io.BytesIO()
+    emit_access_identity(pid, creation, image, stream=stream)
+    return stream.getvalue()
+
+
+def _evidence_response_bytes() -> bytes:
+    """Build the minimal valid worker response the fixture child emits."""
+    document = EvidenceDoc(
+        run=RunMetadata("fixture-stub", "1.0", [], []),
+        source=SourceEvidence("fixture.accdb", "ACE", "DAO", "offline", "caller-managed"),
+        coverage=Coverage(),
+    )
+    payload = document.to_dict()
+    payload["status"] = document.status
+    return encode_response({"ok": True, "evidence": payload})
+
+
+class _FrameProcess:
+    """In-process fake child whose stdout already carries frames plus a response.
+
+    ``poll`` reports the child as already exited, so the supervisor never kills it and
+    the test observes only the Access kill net. No subprocess, COM, or pipeline runs.
+    """
+
+    returncode: int | None = 0
+
+    def __init__(self, output: bytes) -> None:
+        self.stdin = io.BytesIO()
+        self.stdout = io.BytesIO(output)
+        self.stderr = io.BytesIO(b"")
+        self.kills = 0
+
+    def poll(self) -> int:
+        return 0
+
+    def kill(self) -> None:
+        self.kills += 1
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
+class _RecordingAccessTerminator:
+    """Fake fail-closed verifier: records every call and reports a scripted outcome."""
+
+    def __init__(self, *, exited: bool) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self._exited = exited
+
+    def __call__(
+        self,
+        *,
+        pid: int,
+        creation: int,
+        image: str,
+        baseline_pids: frozenset[int],
+        grace_seconds: float,
+    ) -> AccessTermination:
+        self.calls.append(
+            {
+                "pid": pid,
+                "creation": creation,
+                "image": image,
+                "baseline_pids": baseline_pids,
+                "grace_seconds": grace_seconds,
+            }
+        )
+        return AccessTermination(
+            pid=pid,
+            verified=True,
+            terminated=True,
+            exited=self._exited,
+            detail="stub",
+        )
+
+
+def _owned_access_runtime(
+    process: _FrameProcess,
+    terminator: _RecordingAccessTerminator | _DetailedAccessTerminator,
+    *,
+    baseline: set[int] | None = None,
+    baseline_reader: Any = None,
+    grace: float = 0.05,
+) -> DocumentationRuntime:
+    return DocumentationRuntime(
+        launcher=lambda: process,  # type: ignore[arg-type,return-value]
+        deadline_seconds=30,
+        cleanup_grace_seconds=grace,
+        access_pid_lister=lambda: {4242} if baseline is None else baseline,
+        access_baseline_reader=baseline_reader,
+        access_terminator=terminator,
+    )
+
+
+def test_ack_frame_is_recorded_and_the_owned_access_pid_is_terminated() -> None:
+    process = _FrameProcess(_frame_bytes() + _evidence_response_bytes())
+    terminator = _RecordingAccessTerminator(exited=True)
+
+    document = _inspect(_owned_access_runtime(process, terminator, baseline={999}))
+
+    assert document.status == "complete"
+    assert len(terminator.calls) == 1
+    call = terminator.calls[0]
+    assert call["pid"] == ACCESS_PID
+    assert call["creation"] == ACCESS_CREATION
+    assert call["image"] == ACCESS_IMAGE
+    assert call["baseline_pids"] == frozenset({999})
+    # Float-boundary tolerance: grace = max(deadline - now, 0) can exceed the
+    # injected 0.05 by scheduler epsilon; the pin is "bounded by the injected
+    # grace", not exact float equality at the boundary.
+    assert 0.0 < call["grace_seconds"] <= 0.05 + 1e-6
+
+
+def test_v1_response_without_ack_frames_decodes_unchanged_and_never_fires_the_kill_net() -> None:
+    body = _evidence_response_bytes()
+    terminator = _RecordingAccessTerminator(exited=True)
+
+    document = _inspect(_owned_access_runtime(_FrameProcess(body), terminator))
+
+    assert document.status == "complete"
+    assert terminator.calls == []
+    frames, remaining = split_access_identity_frames(body)
+    assert frames == []
+    assert remaining == body
+    assert decode_response(body) == decode_response_with_identities(body)[1]
+
+
+def test_verified_access_survivor_after_the_grace_fails_cleanup_with_the_pinned_error() -> None:
+    """The pinned failure wording is kept and extended with the verifier detail (A2)."""
+    process = _FrameProcess(_frame_bytes() + _evidence_response_bytes())
+    terminator = _RecordingAccessTerminator(exited=False)
+
+    with pytest.raises(AccessMcpError) as excinfo:
+        _inspect(_owned_access_runtime(process, terminator, grace=0.05))
+
+    assert len(terminator.calls) == 1
+    assert str(excinfo.value).startswith(PINNED_CLEANUP_ERROR.format(grace=0.05))
+    assert "stub" in str(excinfo.value)
+
+
+class _DetailedAccessTerminator:
+    """Fail-closed verifier double with one scripted outcome per announced PID."""
+
+    def __init__(self, outcomes: dict[int, tuple[bool, str]]) -> None:
+        self.calls: list[int] = []
+        self._outcomes = outcomes
+
+    def __call__(
+        self,
+        *,
+        pid: int,
+        creation: int,
+        image: str,
+        baseline_pids: frozenset[int],
+        grace_seconds: float,
+    ) -> AccessTermination:
+        self.calls.append(pid)
+        exited, detail = self._outcomes[pid]
+        return AccessTermination(
+            pid=pid,
+            verified=True,
+            terminated=True,
+            exited=exited,
+            detail=detail,
+        )
+
+
+class _KillRaisingProcess:
+    """Fake owned child that never exits and whose ``kill()`` itself raises."""
+
+    returncode: int | None = None
+
+    def __init__(self, error: Exception) -> None:
+        self.stdin = io.BytesIO()
+        self.stdout = io.BytesIO(b"")
+        self.stderr = io.BytesIO(b"")
+        self.kills = 0
+        self._error = error
+
+    def poll(self) -> None:
+        return None
+
+    def kill(self) -> None:
+        self.kills += 1
+        raise self._error
+
+    def wait(self, timeout: float | None = None) -> int:
+        raise subprocess.TimeoutExpired("worker", timeout)
+
+
+# --- S2 A1: a failed baseline listing is visible on the successful inspect path ---
+
+
+# RED/GREEN guard for the silent WP2 A1 site: a failed ``tasklist`` baseline probe used
+# to collapse into the same empty set as a genuinely empty baseline, so the successful
+# inspect path could not tell "nothing was running" from "could not look".
+def test_a_failed_baseline_listing_adds_one_sanitized_warning_and_keeps_kills_denied() -> None:
+    process = _FrameProcess(_frame_bytes() + _evidence_response_bytes())
+    terminator = _RecordingAccessTerminator(exited=True)
+    runner = _RaisingRunner(OSError("tasklist unavailable: C:/Users/secret/tasklist.exe"))
+
+    document = _inspect(
+        _owned_access_runtime(
+            process, terminator, baseline_reader=partial(read_msaccess_baseline, runner=runner)
+        )
+    )
+
+    assert len(document.warnings) == 1
+    warning = document.warnings[0]
+    # Sanitized: the error class is reported, the raw message (which may carry paths or
+    # credentials) never is.
+    assert "OSError" in warning
+    assert "C:/Users/secret/tasklist.exe" not in warning
+    # Containment is unchanged: the unreadable baseline is still the empty baseline that
+    # only ever *denies* a kill, and the announced PID still reaches the verifier once.
+    assert len(terminator.calls) == 1
+    assert terminator.calls[0]["baseline_pids"] == frozenset()
+    assert terminator.calls[0]["pid"] == ACCESS_PID
+
+
+def test_a_successful_baseline_listing_adds_no_warning_even_when_it_is_empty() -> None:
+    """A1: no warning on the success path when the listing itself succeeded."""
+    process = _FrameProcess(_evidence_response_bytes())
+    terminator = _RecordingAccessTerminator(exited=True)
+    runner = _RawTasklistRunner(
+        "INFO: No tasks are running which match the specified criteria.\n"
+    )
+
+    document = _inspect(
+        _owned_access_runtime(
+            process, terminator, baseline_reader=partial(read_msaccess_baseline, runner=runner)
+        )
+    )
+
+    assert document.warnings == []
+    assert terminator.calls == []
+
+
+# --- S2 A2: an un-establishable cleanup reports the per-PID verifier detail ---
+
+
+def test_unestablished_access_cleanup_message_carries_every_pid_detail() -> None:
+    first, second = ACCESS_PID, ACCESS_PID + 1
+    output = _frame_bytes(pid=first) + _frame_bytes(pid=second) + _evidence_response_bytes()
+    first_detail = (
+        f"identity-verified Access PID {first} survived the 0.05-second cleanup grace "
+        "after taskkill /F /PID"
+    )
+    second_detail = (
+        f"live identity of announced Access PID {second} is unreadable and the process is "
+        "still running; no kill was attempted"
+    )
+    terminator = _DetailedAccessTerminator(
+        {first: (False, first_detail), second: (False, second_detail)}
+    )
+
+    with pytest.raises(AccessMcpError) as excinfo:
+        _inspect(
+            _owned_access_runtime(
+                _FrameProcess(output), terminator, grace=0.05  # type: ignore[arg-type]
+            )
+        )
+
+    message = str(excinfo.value)
+    assert message.startswith(PINNED_CLEANUP_ERROR.format(grace=0.05))
+    assert first_detail in message
+    assert second_detail in message
+    # Containment itself is unchanged: exactly one verifier attempt per recorded PID.
+    assert terminator.calls == [first, second]
+
+
+def test_unestablished_child_cleanup_message_carries_the_swallowed_kill_error_class() -> None:
+    process = _KillRaisingProcess(OSError("access denied: C:/Windows/System32/taskkill"))
+    runtime = DocumentationRuntime(
+        launcher=lambda: process,  # type: ignore[arg-type,return-value]
+        deadline_seconds=0.1,
+        cleanup_grace_seconds=0.05,
+    )
+
+    with pytest.raises(AccessMcpError) as excinfo:
+        _inspect(runtime)
+
+    message = str(excinfo.value)
+    assert message.startswith(PINNED_CLEANUP_ERROR.format(grace=0.05))
+    # Sanitized: only the swallowed error's class name, never its message.
+    assert "OSError" in message
+    assert "C:/Windows/System32/taskkill" not in message
+    # The one bounded retry is unchanged: two kill attempts, then the same explicit failure.
+    assert process.kills == 2
+
+
+# PRESERVE: without new evidence the cleanup failure message stays byte-identical.
+def test_unestablishable_child_cleanup_keeps_the_pinned_message_without_extra_detail() -> None:
+    process = _UnreapableProcess()
+    runtime = DocumentationRuntime(
+        launcher=lambda: process,  # type: ignore[arg-type,return-value]
+        deadline_seconds=0.1,
+        cleanup_grace_seconds=0.05,
+    )
+
+    with pytest.raises(AccessMcpError) as excinfo:
+        _inspect(runtime)
+
+    assert str(excinfo.value) == PINNED_CLEANUP_ERROR.format(grace=0.05)
+    assert process.kills == 2
+
+
+# --- S3 H4 residual (original "killnet gaps"): partial identity-frame recording ---
+
+
+def test_partial_identity_frames_still_record_and_terminate_every_complete_pid() -> None:
+    """A damaged trailing frame must not cost an already-recorded Access PID its reap."""
+    first, second, truncated = ACCESS_PID, ACCESS_PID + 1, ACCESS_PID + 2
+    # A complete frame prefix without its terminating newline: the stream is damaged, the
+    # PIDs announced before the damage are still owned Access instances.
+    damaged = _frame_bytes(pid=truncated)[:-7]
+    output = (
+        _frame_bytes(pid=first)
+        + _frame_bytes(pid=second)
+        + damaged
+        + _evidence_response_bytes()
+    )
+    terminator = _RecordingAccessTerminator(exited=True)
+
+    with pytest.raises(AccessMcpError, match="malformed"):
+        _inspect(_owned_access_runtime(_FrameProcess(output), terminator))
+
+    # Every complete frame was recorded and reaped once, in stream order.
+    assert [call["pid"] for call in terminator.calls] == [first, second]
+    # The truncated frame never yields an identity, so it can never aim a kill at a PID
+    # that was not fully announced.
+    assert truncated not in [call["pid"] for call in terminator.calls]
+    frames, remaining = split_access_identity_frames(output)
+    assert [frame.pid for frame in frames] == [first, second]
+    assert remaining == damaged + _evidence_response_bytes()
+
+
+# --- process_identity: the fail-closed verifier itself (scripted runner, no live kill) ---
+
+
+def _tasklist_line(pid: int = ACCESS_PID) -> str:
+    return f'"MSACCESS.EXE","{pid}","Console","1","100,000 K"\n'
+
+
+class _CommandRunner:
+    """Scripted ``subprocess`` double: records argv and returns fixed probe output."""
+
+    def __init__(
+        self,
+        *,
+        creation: int = ACCESS_CREATION,
+        process_name: str = "MSACCESS",
+        alive: bool = True,
+        alive_after_kill: bool = False,
+        powershell_ok: bool = True,
+    ) -> None:
+        self.calls: list[list[str]] = []
+        self.creation = creation
+        self.process_name = process_name
+        self.alive = alive
+        self.alive_after_kill = alive_after_kill
+        self.powershell_ok = powershell_ok
+        self.killed = False
+
+    def __call__(self, args: Any, timeout: float) -> subprocess.CompletedProcess[str]:
+        call = [str(argument) for argument in args]
+        self.calls.append(call)
+        if call[0] == "taskkill":
+            self.killed = True
+            return subprocess.CompletedProcess(call, 0, "", "")
+        if call[0] == "powershell":
+            if not self.powershell_ok:
+                return subprocess.CompletedProcess(call, 1, "", "probe failed")
+            return subprocess.CompletedProcess(call, 0, f"{self.creation}|{self.process_name}", "")
+        if call[0] == "tasklist":
+            alive = self.alive_after_kill if self.killed else self.alive
+            if not alive:
+                return subprocess.CompletedProcess(call, 0, "INFO: No tasks are running\n", "")
+            return subprocess.CompletedProcess(call, 0, _tasklist_line(), "")
+        msg = f"unexpected probe command: {call[0]}"
+        raise AssertionError(msg)
+
+
+def _taskkill_calls(runner: _CommandRunner) -> list[list[str]]:
+    return [call for call in runner.calls if call[0] == "taskkill"]
+
+
+class _RawTasklistRunner:
+    """Returns one fixed ``tasklist`` stdout so the liveness parse can be probed directly."""
+
+    def __init__(self, stdout: str) -> None:
+        self.calls: list[list[str]] = []
+        self.stdout = stdout
+
+    def __call__(self, args: Any, timeout: float) -> subprocess.CompletedProcess[str]:
+        call = [str(argument) for argument in args]
+        self.calls.append(call)
+        return subprocess.CompletedProcess(call, 0, self.stdout, "")
+
+
+@pytest.mark.parametrize("pid", [0, -1, True, "123", 1.0])
+def test_read_process_identity_rejects_a_pid_that_is_not_a_positive_integer(pid: Any) -> None:
+    runner = _CommandRunner()
+
+    with pytest.raises(ValueError):
+        read_process_identity(pid, runner=runner)  # type: ignore[arg-type]
+
+    assert runner.calls == []
+
+
+def test_process_is_alive_matches_the_pid_column_of_a_real_shaped_tasklist_row() -> None:
+    runner = _RawTasklistRunner(_tasklist_line())
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is True  # type: ignore[arg-type]
+    assert runner.calls == [["tasklist", "/FI", f"PID eq {ACCESS_PID}", "/FO", "CSV", "/NH"]]
+
+
+def test_process_is_alive_parses_the_default_tasklist_table_columns() -> None:
+    runner = _RawTasklistRunner(f"MSACCESS.EXE    {ACCESS_PID} Console       1     100,000 K\n")
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is True  # type: ignore[arg-type]
+
+
+def test_process_is_alive_ignores_pid_digits_outside_the_pid_column() -> None:
+    runner = _RawTasklistRunner(
+        f'"MSACCESS.EXE","{ACCESS_PID + 1}","Console","1","{ACCESS_PID} K"\n'
+    )
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is False  # type: ignore[arg-type]
+
+
+def test_process_is_alive_is_not_alive_when_only_a_banner_mentions_the_pid() -> None:
+    runner = _RawTasklistRunner(
+        f'INFO: No tasks are running which match the PID eq {ACCESS_PID} criteria.\n'
+    )
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is False  # type: ignore[arg-type]
+
+
+def test_list_msaccess_pids_parses_tasklist_csv_and_never_kills() -> None:
+    runner = _CommandRunner()
+    runner.calls.clear()
+
+    pids = list_msaccess_pids(runner=runner)  # type: ignore[arg-type]
+
+    assert pids == {ACCESS_PID}
+    assert _taskkill_calls(runner) == []
+    assert runner.calls[0][:3] == ["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE"]
+
+
+def test_verified_identity_kills_exactly_the_announced_pid_and_never_uses_im() -> None:
+    runner = _CommandRunner(alive_after_kill=False)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        baseline_pids=frozenset(),
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.2,
+    )
+
+    assert outcome.verified is True
+    assert outcome.terminated is True
+    assert outcome.exited is True
+    assert _taskkill_calls(runner) == [["taskkill", "/F", "/PID", str(ACCESS_PID)]]
+    assert "/IM" not in {argument for call in runner.calls for argument in call}
+
+
+def test_verified_survivor_after_the_grace_is_reported_as_not_exited() -> None:
+    runner = _CommandRunner(alive_after_kill=True)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.terminated is True
+    assert outcome.exited is False
+    assert "grace" in outcome.detail
+    assert len(_taskkill_calls(runner)) == 1
+
+
+def test_creation_mismatch_reports_and_never_calls_taskkill() -> None:
+    runner = _CommandRunner(creation=ACCESS_CREATION + 1)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.verified is False
+    assert outcome.terminated is False
+    assert outcome.exited is True
+    assert _taskkill_calls(runner) == []
+    assert "creation" in outcome.detail
+
+
+def test_live_image_mismatch_reports_and_never_calls_taskkill() -> None:
+    runner = _CommandRunner(process_name="WINWORD")
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.terminated is False
+    assert outcome.exited is True
+    assert _taskkill_calls(runner) == []
+    assert "WINWORD.EXE" in outcome.detail
+
+
+def test_announced_image_must_be_msaccess_exe_before_any_probe() -> None:
+    runner = _CommandRunner()
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image="WINWORD.EXE",
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.terminated is False
+    assert outcome.exited is True
+    assert runner.calls == []
+
+
+def test_a_baseline_pid_is_never_probed_or_killed() -> None:
+    runner = _CommandRunner()
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        baseline_pids=frozenset({ACCESS_PID}),
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.terminated is False
+    assert outcome.exited is True
+    assert runner.calls == []
+    assert _taskkill_calls(runner) == []
+
+
+@pytest.mark.parametrize("pid", [0, -1, True])
+def test_an_invalid_announced_pid_is_never_probed_or_killed(pid: Any) -> None:
+    runner = _CommandRunner()
+
+    outcome = terminate_verified_access(
+        pid=pid,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.terminated is False
+    assert outcome.exited is True
+    assert runner.calls == []
+    assert _taskkill_calls(runner) == []
+
+
+def test_an_unreadable_identity_that_is_still_alive_is_reported_unresolved() -> None:
+    runner = _CommandRunner(powershell_ok=False, alive=True)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.verified is False
+    assert outcome.terminated is False
+    assert outcome.exited is False
+    assert _taskkill_calls(runner) == []
+    assert "unreadable" in outcome.detail
+
+
+def test_an_unreadable_identity_that_already_exited_needs_no_kill() -> None:
+    runner = _CommandRunner(powershell_ok=False, alive=False)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.terminated is False
+    assert outcome.exited is True
+    assert _taskkill_calls(runner) == []
+
+
+class _RaisingRunner:
+    """Records the argv it is handed and then fails the probe.
+
+    Used for the three unreadable-probe outcomes: a failed enumeration is an empty
+    baseline, a failed liveness probe is "still alive", and a failed identity probe is
+    an unreadable identity. None of them may authorize a kill.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: Any, timeout: float) -> subprocess.CompletedProcess[str]:
+        self.calls.append([str(argument) for argument in args])
+        raise self.error
+
+
+class _TaskkillFailingRunner(_CommandRunner):
+    """Identity-verifiable runner whose ``taskkill /F /PID`` invocation itself fails."""
+
+    def __init__(self, *, error: Exception | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.error = OSError("taskkill could not be started") if error is None else error
+
+    def __call__(self, args: Any, timeout: float) -> subprocess.CompletedProcess[str]:
+        call = [str(argument) for argument in args]
+        if call[0] == "taskkill":
+            self.calls.append(call)
+            # A kill *was* attempted, so the post-kill liveness answer applies even
+            # though the invocation itself failed.
+            self.killed = True
+            raise self.error
+        return super().__call__(args, timeout)
+
+
+class _PollingRunner:
+    """Scripted runner whose ``tasklist`` liveness answers die after N live probes."""
+
+    def __init__(self, *, alive_probes: int) -> None:
+        self.alive_probes = alive_probes
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: Any, timeout: float) -> subprocess.CompletedProcess[str]:
+        call = [str(argument) for argument in args]
+        self.calls.append(call)
+        if call[0] == "powershell":
+            return subprocess.CompletedProcess(call, 0, f"{ACCESS_CREATION}|MSACCESS", "")
+        if call[0] == "taskkill":
+            return subprocess.CompletedProcess(call, 0, "", "")
+        if call[0] == "tasklist":
+            if self.alive_probes > 0:
+                self.alive_probes -= 1
+                return subprocess.CompletedProcess(call, 0, _tasklist_line(), "")
+            return subprocess.CompletedProcess(call, 0, "INFO: No tasks are running\n", "")
+        msg = f"unexpected probe command: {call[0]}"
+        raise AssertionError(msg)
+
+
+class _FakeClock:
+    """Deterministic ``time`` double: monotonic advances per read, sleep never blocks."""
+
+    def __init__(self, step: float = 0.1) -> None:
+        self.step = step
+        self.now = 0.0
+        self.reads = 0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        self.reads += 1
+        value = self.now
+        self.now += self.step
+        return value
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+
+
+def test_a_failed_taskkill_that_left_the_process_running_is_not_exited() -> None:
+    """A failed kill is reported as such; the liveness probe decides ``exited``."""
+    runner = _TaskkillFailingRunner(alive_after_kill=True)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=5.0,
+    )
+
+    assert outcome.pid == ACCESS_PID
+    assert outcome.verified is True
+    assert outcome.terminated is False
+    assert outcome.exited is False
+    assert outcome.detail == (
+        f"identity-verified Access PID {ACCESS_PID} termination failed (OSError); "
+        "the process is still running"
+    )
+    # No grace poll runs on the failure path: exactly one liveness probe answers it.
+    assert [call[0] for call in runner.calls] == ["powershell", "taskkill", "tasklist"]
+    assert _taskkill_calls(runner) == [["taskkill", "/F", "/PID", str(ACCESS_PID)]]
+
+
+def test_a_failed_taskkill_that_already_exited_reports_no_observable_process() -> None:
+    runner = _TaskkillFailingRunner(alive_after_kill=False)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=5.0,
+    )
+
+    assert outcome.verified is True
+    assert outcome.terminated is False
+    assert outcome.exited is True
+    assert outcome.detail == (
+        f"identity-verified Access PID {ACCESS_PID} termination failed (OSError); "
+        "the process is not observable"
+    )
+    assert [call[0] for call in runner.calls] == ["powershell", "taskkill", "tasklist"]
+
+
+def test_a_positive_grace_poll_reports_exited_after_one_live_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grace loop polls deterministically: live, bounded wait, then dead."""
+    from ms_access_mcp.application import process_identity as identity_module
+
+    clock = _FakeClock()
+    monkeypatch.setattr(identity_module, "time", clock)
+    runner = _PollingRunner(alive_probes=1)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=ACCESS_IMAGE,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.5,
+    )
+
+    assert outcome.verified is True
+    assert outcome.terminated is True
+    assert outcome.exited is True
+    assert outcome.detail == f"identity-verified Access PID {ACCESS_PID} terminated by PID-scoped taskkill"
+    # One probe stayed alive, one bounded wait, one probe found the process gone.
+    assert [call[0] for call in runner.calls] == ["powershell", "taskkill", "tasklist", "tasklist"]
+    assert len(clock.sleeps) == 1
+    assert 0 < clock.sleeps[0] <= 0.5
+
+
+def test_list_msaccess_pids_skips_banners_other_images_and_malformed_rows() -> None:
+    """Only the PID column of an ``MSACCESS.EXE`` row is a baseline PID."""
+    stdout = "".join(
+        (
+            "INFO: No tasks are running which match the specified criteria.\n",
+            '"EXCEL.EXE","99","Console","1","1,000 K"\n',
+            '"MSACCESS.EXE","not-a-pid","Console","1","1 K"\n',
+            '"MSACCESS.EXE"\n',
+            f'"MSACCESS.EXE","{ACCESS_PID}","Console","1","100,000 K"\n',
+            '"MSACCESS.EXE","0x1f","Console","1","1 K"\n',
+        )
+    )
+    runner = _RawTasklistRunner(stdout)
+
+    assert list_msaccess_pids(runner=runner) == {ACCESS_PID}  # type: ignore[arg-type]
+    assert runner.calls == [["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE", "/FO", "CSV", "/NH"]]
+
+
+def test_list_msaccess_pids_reports_an_empty_baseline_when_the_probe_raises() -> None:
+    runner = _RaisingRunner(OSError("tasklist is unavailable"))
+
+    assert list_msaccess_pids(runner=runner) == set()  # type: ignore[arg-type]
+    assert runner.calls == [["tasklist", "/FI", "IMAGENAME eq MSACCESS.EXE", "/FO", "CSV", "/NH"]]
+
+
+# S2 A1 companion: the listing outcome distinguishes "could not look" from "nothing ran",
+# while the public ``list_msaccess_pids`` keeps its exact previous behavior.
+def test_read_msaccess_baseline_reports_a_failed_listing_apart_from_an_empty_one() -> None:
+    failed = read_msaccess_baseline(runner=_RaisingRunner(OSError("tasklist is unavailable")))  # type: ignore[arg-type]
+    empty = read_msaccess_baseline(
+        runner=_RawTasklistRunner("INFO: No tasks are running which match the specified criteria.\n")  # type: ignore[arg-type]
+    )
+    populated = read_msaccess_baseline(runner=_CommandRunner())  # type: ignore[arg-type]
+
+    assert failed.error_class == "OSError"
+    assert failed.pids == frozenset()
+    assert empty.error_class is None
+    assert empty.pids == frozenset()
+    assert populated.error_class is None
+    assert populated.pids == frozenset({ACCESS_PID})
+    # PRESERVE: the public lister still returns exactly the companion's PID set, and a
+    # failed probe still yields the empty set it always did.
+    assert list_msaccess_pids(runner=_CommandRunner()) == set(populated.pids)  # type: ignore[arg-type]
+    assert list_msaccess_pids(runner=_RaisingRunner(OSError("gone"))) == set()  # type: ignore[arg-type]
+
+
+def test_process_is_alive_treats_an_unreadable_probe_as_still_alive() -> None:
+    """Unknown liveness is never "gone": cleanup must not be assumed established."""
+    runner = _RaisingRunner(OSError("tasklist is unavailable"))
+
+    assert process_is_alive(ACCESS_PID, runner=runner) is True  # type: ignore[arg-type]
+    assert runner.calls == [["tasklist", "/FI", f"PID eq {ACCESS_PID}", "/FO", "CSV", "/NH"]]
+
+
+def test_read_process_identity_reports_none_when_the_probe_raises() -> None:
+    runner = _RaisingRunner(OSError("powershell is unavailable"))
+
+    assert read_process_identity(ACCESS_PID, runner=runner) is None  # type: ignore[arg-type]
+    assert runner.calls == [
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"$p = Get-Process -Id {ACCESS_PID} -ErrorAction Stop; "
+            "'{0}|{1}' -f $p.StartTime.ToFileTime(), $p.ProcessName",
+        ]
+    ]
+
+
+# ---------------------------------------------------------------------------
+# T7: Tier 2 source opt-in plumbing and Err precedence
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_inspect_threads_the_source_opt_in_into_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The supervisor must carry ``include_app_logic_source`` into the worker request."""
+    from ms_access_mcp.application import documentation_runtime as runtime_module
+
+    real_build_request = runtime_module.build_request
+    seen: dict[str, Any] = {}
+
+    def capture(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return real_build_request(**kwargs)
+
+    monkeypatch.setattr(runtime_module, "build_request", capture)
+    records: list[subprocess.Popen[bytes]] = []
+    runtime = DocumentationRuntime(launcher=_launcher("ok", records), deadline_seconds=30)
+
+    runtime.inspect(
+        "fixture.accdb",
+        backend="dao",
+        allowed_dirs=[Path("C:/db")],
+        tables=None,
+        queries=None,
+        include_app_logic=True,
+        include_app_logic_source=True,
+    )
+
+    assert seen["include_app_logic"] is True
+    assert seen["include_app_logic_source"] is True
+
+
+def test_runtime_rejects_source_opt_in_without_app_logic_before_spawning() -> None:
+    """Requirement 6: source opt-in without the catalogue opt-in is a usage error.
+
+    The review must abort before any owned child is spawned, so no Access instance can
+    ever be created for a contradictory request.
+    """
+    records: list[subprocess.Popen[bytes]] = []
+    runtime = DocumentationRuntime(launcher=_launcher("ok", records), deadline_seconds=30)
+
+    with pytest.raises(AccessMcpError, match="include_app_logic"):
+        runtime.inspect(
+            "fixture.accdb",
+            backend="dao",
+            allowed_dirs=[Path("C:/db")],
+            tables=None,
+            queries=None,
+            include_app_logic_source=True,
+        )
+
+    assert records == []
+
+
+def test_runtime_facades_expose_the_source_opt_in_defaulting_off() -> None:
+    """The source opt-in is default-off at every facade seam."""
+    import inspect as inspect_module
+
+    from ms_access_mcp.application import documentation_runtime as runtime_module
+
+    for callable_object in (runtime_module.DocumentationRuntime.inspect, runtime_module.run_documentation_inspection):
+        parameter = inspect_module.signature(callable_object).parameters["include_app_logic_source"]
+        assert parameter.default is False
+
+
+# --- Evidence path hardening (odd/tasks/documentation-evidence-path-hardening.md) ---
+
+
+@pytest.mark.parametrize(
+    ("image", "runner_kwargs", "expected_name"),
+    [
+        (r"C:\Users\fakeuser123\Apps\WINWORD.EXE", {}, "WINWORD.EXE"),
+        (
+            r"C:\Users\fakeuser123\Apps\MSACCESS.EXE",
+            {"creation": ACCESS_CREATION + 1},
+            "MSACCESS.EXE",
+        ),
+    ],
+    ids=["announced-image-refusal", "identity-mismatch-refusal"],
+)
+def test_termination_detail_names_only_the_image_file_name(
+    image: str, runner_kwargs: dict[str, Any], expected_name: str
+) -> None:
+    """S4: refusal details name the executable file only, never its directory."""
+    runner = _CommandRunner(**runner_kwargs)
+
+    outcome = terminate_verified_access(
+        pid=ACCESS_PID,
+        creation=ACCESS_CREATION,
+        image=image,
+        runner=runner,  # type: ignore[arg-type]
+        grace_seconds=0.0,
+    )
+
+    assert outcome.terminated is False
+    assert _taskkill_calls(runner) == []
+    assert expected_name in outcome.detail
+    assert "fakeuser123" not in outcome.detail
+    assert r"C:\Users" not in outcome.detail

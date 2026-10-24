@@ -16,9 +16,17 @@ source path, resolves credentials, opens the database, and performs passive extr
   the ordinary server/CLI open does, and the allowed-directory guard runs inside the
   child through the same ``DatabaseUseCases`` open path.
 * The response is one JSON object written to stdout and flushed once. A known
-  application failure is reported as ``{"ok": false, "error": <scrubbed message>}`` with
-  exit status 0 so the parent can surface the exact reason; a crash or unparseable
+  application failure is reported as ``{"ok": false, "error": <error class>}`` (plus a
+  numeric OS code when there is one; never the exception text) with
+  exit status 0 so the parent can surface a stable diagnostic; a crash or unparseable
   stdout is a non-zero exit the parent maps to a generic failure.
+* **Owned-Access announcement.** An armed (app-logic) read instantiates
+  ``Access.Application``, which a parent kill cannot reap through this Python child.
+  Before such a read opens any source, the child emits exactly one flushed
+  ``@@ACCESS_IDENTITY@@ {json}`` frame line (``emit_access_identity``) naming the Access
+  PID, creation time, and image it owns. Frames precede the single final response object
+  on the same stdout stream; the supervisor records them and reaps those PIDs, and a
+  response that carries no frame decodes byte-identically to the v1 protocol.
 
 The bounded-IPC constants live in ``documentation_limits`` and are shared with the
 parent supervisor, so both sides agree on the framing and byte budgets.
@@ -30,16 +38,18 @@ import json
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from ..errors import AccessMcpError
 from .database import DatabaseUseCases, Err
-from .documentation import redact_connection_secrets
+from .documentation import redact_connection_secrets, safe_documentation_error_reason
+from .documentation_app_logic import apply_app_logic_content, read_tier2_content
 from .documentation_inspect import inspect_open_database
 from .documentation_limits import REQUEST_MAX_BYTES, ensure_evidence_within_limit
 
 _ALLOWED_BACKENDS = frozenset({"auto", "dao", "odbc"})
 _RESPONSE_ENCODING = "utf-8"
+_ACCESS_IDENTITY_PREFIX = b"@@ACCESS_IDENTITY@@ "
 
 
 def build_request(
@@ -50,6 +60,8 @@ def build_request(
     tables: list[str] | None,
     queries: list[str] | None,
     include_query_sql: bool = False,
+    include_app_logic: bool = False,
+    include_app_logic_source: bool = False,
 ) -> dict[str, Any]:
     """Build the structured request handed to the child (no credentials, no executable)."""
     normalized_backend = str(backend).strip().casefold()
@@ -66,6 +78,8 @@ def build_request(
         "tables": None if tables is None else [str(name) for name in tables],
         "queries": None if queries is None else [str(name) for name in queries],
         "include_query_sql": bool(include_query_sql),
+        "include_app_logic": bool(include_app_logic),
+        "include_app_logic_source": bool(include_app_logic_source),
     }
 
 
@@ -118,6 +132,16 @@ def decode_request(data: bytes) -> dict[str, Any]:
         msg = "Documentation worker request field 'include_query_sql' must be a boolean"
         raise AccessMcpError(msg)
     request["include_query_sql"] = include_query_sql
+    include_app_logic = request.get("include_app_logic", False)
+    if not isinstance(include_app_logic, bool):
+        msg = "Documentation worker request field 'include_app_logic' must be a boolean"
+        raise AccessMcpError(msg)
+    request["include_app_logic"] = include_app_logic
+    include_app_logic_source = request.get("include_app_logic_source", False)
+    if not isinstance(include_app_logic_source, bool):
+        msg = "Documentation worker request field 'include_app_logic_source' must be a boolean"
+        raise AccessMcpError(msg)
+    request["include_app_logic_source"] = include_app_logic_source
     return request
 
 
@@ -140,6 +164,95 @@ def decode_response(data: bytes) -> dict[str, Any]:
         msg = "Documentation worker response must be an object with a boolean 'ok'"
         raise AccessMcpError(msg)
     return payload
+
+
+class AccessIdentity(NamedTuple):
+    """Identity of one Access instance the child owns and the supervisor must reap."""
+
+    pid: int
+    creation: int
+    image: str
+
+
+def emit_access_identity(pid: int, creation: int, image: str, *, stream: Any = None) -> None:
+    """Write one flushed ``@@ACCESS_IDENTITY@@`` frame line to the protocol stdout.
+
+    This is the armed-open (T7) hook: the reader calls it exactly once per
+    ``Access.Application`` instance it creates, immediately after capturing that
+    instance's PID/creation/image and **before** opening any source, so the supervisor
+    can reap the instance even when the Python child is killed at the deadline.
+
+    The frame must reach the protocol stdout, not the ``sys.stdout`` that
+    ``_run_request`` redirects to stderr, so the default target is the raw process
+    stdout; ``stream`` exists for in-process tests. A missing protocol stream is a hard
+    failure: opening an armed source without a recorded identity would orphan Access.
+    """
+    target: Any = sys.__stdout__ if stream is None else stream
+    buffer: Any = getattr(target, "buffer", target)
+    if buffer is None:
+        msg = (
+            "Documentation worker cannot announce the owned Access identity: the protocol "
+            "stdout stream is unavailable, so no armed source may be opened"
+        )
+        raise AccessMcpError(msg)
+    frame = {
+        "access_pid": int(pid),
+        "access_creation": int(creation),
+        "access_image": str(image),
+    }
+    body = json.dumps(frame, ensure_ascii=True, separators=(",", ":")).encode(_RESPONSE_ENCODING)
+    buffer.write(_ACCESS_IDENTITY_PREFIX + body + b"\n")
+    buffer.flush()
+
+
+def _parse_access_identity_frame(line: bytes) -> AccessIdentity | None:
+    """Parse one complete frame line; an invalid frame is reported, never skipped."""
+    if not line.startswith(_ACCESS_IDENTITY_PREFIX):
+        return None
+    try:
+        payload = json.loads(line[len(_ACCESS_IDENTITY_PREFIX) :].decode(_RESPONSE_ENCODING))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    pid = payload.get("access_pid")
+    creation = payload.get("access_creation")
+    image = payload.get("access_image")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    if isinstance(creation, bool) or not isinstance(creation, int) or creation <= 0:
+        return None
+    if not isinstance(image, str) or not image.strip():
+        return None
+    return AccessIdentity(pid=pid, creation=creation, image=image)
+
+
+def split_access_identity_frames(data: bytes) -> tuple[list[AccessIdentity], bytes]:
+    """Split complete leading identity frames from the final response body.
+
+    Each frame is one newline-terminated ``@@ACCESS_IDENTITY@@ {json}`` line. Parsing
+    stops at the first incomplete or invalid line and returns the remaining bytes
+    untouched, so a damaged frame is rejected as a malformed response instead of being
+    silently skipped. A v1 payload without frames is returned byte-identically.
+    """
+    frames: list[AccessIdentity] = []
+    remaining = data
+    while remaining.startswith(_ACCESS_IDENTITY_PREFIX):
+        newline = remaining.find(b"\n")
+        if newline < 0:
+            break
+        identity = _parse_access_identity_frame(remaining[:newline])
+        if identity is None:
+            break
+        frames.append(identity)
+        remaining = remaining[newline + 1 :]
+    return frames, remaining
+
+
+def decode_response_with_identities(data: bytes) -> tuple[list[AccessIdentity], dict[str, Any]]:
+    """Decode the final response, recording (and skipping) any preceding identity frames."""
+    identities, body = split_access_identity_frames(data)
+    return identities, decode_response(body)
 
 
 def _read_stdin_request(stream: Any) -> bytes:
@@ -169,7 +282,17 @@ def _run_request(request: dict[str, Any]) -> dict[str, Any]:
             tables=request.get("tables"),
             queries=request.get("queries"),
             include_query_sql=request.get("include_query_sql", False),
+            include_app_logic=request.get("include_app_logic", False),
+            include_app_logic_source=request.get("include_app_logic_source", False),
         )
+        if request.get("include_app_logic", False):
+            # Tier 2 is the only armed read: the reader copies the source, opens the copy
+            # under ForceDisable, and announces the owned Access identity before the open.
+            content = read_tier2_content(
+                db_path,
+                include_source=request.get("include_app_logic_source", False),
+            )
+            document = apply_app_logic_content(document, content)
     finally:
         database.close_database()
     payload = document.to_dict()
@@ -190,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = _run_request(request)
         response = {"ok": True, "evidence": payload}
     except BaseException as error:  # noqa: BLE001 - any child failure becomes a safe Err
-        message = redact_connection_secrets(str(error).strip() or type(error).__name__)
+        message = redact_connection_secrets(safe_documentation_error_reason(error))
         response = {"ok": False, "error": message or "Documentation inspection failed"}
     try:
         sys.stdout.buffer.write(encode_response(response))
