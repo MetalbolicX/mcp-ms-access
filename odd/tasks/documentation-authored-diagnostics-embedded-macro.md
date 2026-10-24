@@ -35,7 +35,7 @@ Merge/push/PR remain the user's decisions.
 
 - T1 | S2,S3,S4,S7 | worker + parent, strict TDD; Risk item 2 → independent verify PASS | commit: `f441778` `fix(documentation): restore authored diagnostic detail without runtime text` (S4 pin rides here: it is a formatter test)
 - T2 | S5 | worker, test-first | commit: `fix(documentation): reset property omissions at each read`
-- T3 | S6,S7 | inline live run (D: scratch `db/fixtures/embedded-macro-requal/`) | commit: —
+- T3 | S6,S7 | worker live run (D: scratch `db/fixtures/embedded-macro-requal/`, removed) + parent spot check; QUALIFIED (fixture scope) | commit: `docs(odd): re-qualify the startup-form embedded event macro with evidence`
 - T4 | S1 | close: qualification, assess/review, ledger | commit: —
 
 ## Justification (S1)
@@ -135,3 +135,46 @@ Dropped (with reason):
   Corrected counts: full unit suite 2251 passed / 3 skipped after the parent's +3 tests (L3/L4 counts
   were mid-implementation snapshots). S4 commits with T1 (formatter test); T2 commits S5 alone.
   Risk: item 2 (sanitization boundary: what text may leave the process) → verified independently.
+- L6 (2026-10-23): committed T1 `f441778` (617+/71-, 10 files; one behavior kept whole because a
+  high-risk unit gets its own commit — over the ~400-line guideline, disclosed) and T2 `fad30e7`
+  (33+, S5 alone). T1 alone (S5 stashed) 2250 passed / 3 skipped; both 2251 / 3. Slice boundary:
+  the hook's 9,783-line count is measured from `origin/main` and includes the 41 unpushed v2 commits
+  already merged into local `main`; this branch's slices are T1 and T2 (and T3's evidence commit).
+- L7 (2026-10-23): T3 (S6) live re-qualification — **QUALIFIED (fixture scope)**. The 2026-10-17
+  harness was extracted to `db/fixtures/embedded-macro-requal/` (paths re-pointed, safety envelope
+  unchanged) and the invented-keyword ladder E0-E4 was replaced by the real SaveAsText grammar:
+  F0 placeholder-only diagnostic, F1 `OnLoadEmMacro = Begin` property block (`Version =196611`,
+  `ColumnsShown =8`, one anonymous `Action ="OpenQuery"` / `Argument =` block, and a
+  `Comment ="_AXL:…"` block carrying `For="frmCanary" Event="OnLoad"` wrapped onto the live-captured
+  80-character quoted continuations), F2 the same AXL on one line, F3 without the AXL block, F4 with
+  `ColumnsShown =0`. Insert order is macro-block-then-placeholder because the archived evidence
+  shows a property assignment placed after the placeholder is rejected (`Expected: 'End'. Found:
+  EmbeddedMacro.`, E2) while a block opener there is accepted (E0). All five candidates imported and
+  read back `"[Embedded Macro]"`; F1 was installed by the stricter first-match bar (import +
+  design-view readback + intact form + `OnLoadEmMacro`/`OpenQuery`/`qryAppendCanary` in Access' own
+  re-export, matrix-build roundtrip sha256 `03ac8e6a…`; installed form text `37d614b3…`). F1 and F2
+  re-exported byte-identically (Access
+  normalised the single-line AXL to the wrapped form), F3 kept legacy rows only, F4 kept
+  `ColumnsShown =0`. `--self-check` clean (28 synthetic verdict cases); `--build-only` ok (its
+  fixture and evidence preserved as `fixture-buildonly/` and `evidence/build_only_*`); `--all`
+  PASS exit `0` in 176.6 s: POS 3/3 exactly `[{ProbeID:1, Label:'EMBEDDED_MACRO'}]`, FD 3/3 `[]`,
+  and the new PRODUCT cell (the shipped `AppLogicReader` behind `read_tier2_content`, own
+  `AutomationSecurity=3` readback 3, own identity proof and Job Object, `scratch_root` under the run
+  directory) 3/3 `[]` on the copy the reader itself opened (retained after it closed and reaped
+  Access), with the source copy still untouched and the trigger present on every retained copy.
+  Safety: baseline and final `MSACCESS.EXE` PID sets both empty, zero survivors, zero kills (every
+  reap graceful), zero `.laccdb` residue, canonical hashes unchanged (11 files), zero observed
+  dialogs. Evidence archive `odd/evidence/documentation-v2-embedded-macro-requal-20261023.zip`
+  (text only): 177 files, 739,941 bytes uncompressed, 203,217 zip bytes, sha256
+  `939dbfc64a98805d4b286c6d94d568eca5b96dd67ea00aeeb4b7d1e1284f2e1e`. S7 doc updates
+  (spec §8, coverage matrix, README) are not part of this entry.
+- L8 (2026-10-23): parent spot check of T3 — archive SHA-256 `939dbfc6…e1e` recomputed and matched;
+  no `MSACCESS.EXE` running; zero `.laccdb`/`.ldb` in the scratch root; `evidence/summary.json`
+  `status PASS`, per-run `rows_after_count` POS 1/1/1 (exact canary row), FD 0/0/0, PRODUCT 0/0/0,
+  every `security_readback` equal to the requested level. Correction to L7: on the PRODUCT runs the
+  harness could NOT read the source copy afterwards (`rows_after_source_copy_read_ok false`); the
+  verdict rests on the retained file the reader itself opened (`is_the_product_opened_file true`,
+  readable, 0 rows), which is the observation that decides suppression. S7: spec §8.2 records the
+  re-qualified gate beside the 2026-10-17 block, §8.3 now claims only the measured trigger (startup-
+  form embedded `OnLoad` macro QUALIFIED; embedded macros on other events/controls UNQUALIFIED), and
+  README names the embedded `OnLoad` macro under startup-code non-execution. Scratch root removed.

@@ -1017,7 +1017,8 @@ Qualification records engine version/bitness, host requirements, passive/read-on
 |---|---|---|
 | T3 containment (Job Object + PID kill net) | GATE PASSED, 9/9 cells | `odd/evidence/documentation-v2-containment-20261017.zip` (sha `d5eb52eb…f81`) |
 | T4 content reads (References 1-based, `SaveAsText` form/report/macro, VBA-trust read) | GATE PASSED, 9/9 cells / 13/13 checks | `odd/evidence/documentation-v2-content-reads-20261017.zip` (sha `7d4006a6…e64`) |
-| T5 embedded event macros | BLOCKED-with-evidence (L14); vector stays UNQUALIFIED | `odd/evidence/documentation-v2-embedded-blocked-20261017.zip` (sha `c37f7640…0d4`) |
+| T5 embedded event macros (2026-10-17) | BLOCKED-with-evidence (L14): every candidate used an invented block keyword, so Access rejected it at import | `odd/evidence/documentation-v2-embedded-blocked-20261017.zip` (sha `c37f7640…0d4`) |
+| T5 embedded event macros, re-qualified (2026-10-23) | GATE PASSED, 9/9 cells: positive control (`AutomationSecurity=1`) inserted the canary row 3/3; force-disable 3/3 and the shipped `AppLogicReader` 3/3 left it empty | `odd/evidence/documentation-v2-embedded-macro-requal-20261023.zip` (sha `939dbfc6…e1e`) |
 
 ### 8.3 App-logic coverage matrix (fixture scope, measured runtime only)
 
@@ -1031,7 +1032,8 @@ runtimes are safe.
 | AutoExec `RunCode` → VBA | QUALIFIED (fixture scope) |
 | Startup-form `OnLoad` expression → VBA | QUALIFIED (fixture scope) |
 | AutoExec `OpenQuery` (non-VBA action) | QUALIFIED (fixture scope) |
-| Embedded event macros | UNQUALIFIED (blocked, L14; ground truth unavailable) |
+| Startup-form embedded `OnLoad` macro (`OpenQuery`, non-VBA) | QUALIFIED (fixture scope; re-qualified 2026-10-23 with the real `OnLoadEmMacro` export grammar) |
+| Embedded macros on other events or controls | UNQUALIFIED (only the startup-form `OnLoad` trigger was measured) |
 | AutoKeys | UNSUPPORTED (no input synthesis; never claimed suppressed) |
 | `SaveAsText` / References / VBA-trust reads | QUALIFIED (T4) |
 | Any other Access runtime/version | UNQUALIFIED (single-host scope; facts report `unavailable`) |
