@@ -641,10 +641,12 @@ def test_unreadable_index_capability_is_unsupported_not_failed() -> None:
     assert table.kind == "local"
     assert [field.name for field in table.fields] == ["id"]
     assert table.primary_key.state == "unavailable"
-    # S2 strict diagnostics: a capability gap is still ``unavailable``, but its text is
-    # suppressed like any other exception text.
-    assert table.primary_key.reason == "InspectionCapabilityUnavailableError"
-    assert document.coverage.tables.unsupported["T"] == "InspectionCapabilityUnavailableError"
+    # S2 S3: a capability gap is still ``unavailable``; an authored literal reason is
+    # rendered after the class, and no other exception text ever is.
+    assert table.primary_key.reason == "InspectionCapabilityUnavailableError: indexes are not exposed"
+    assert document.coverage.tables.unsupported["T"] == (
+        "InspectionCapabilityUnavailableError: indexes are not exposed"
+    )
     assert document.coverage.tables.failed == {}
 
 
@@ -829,14 +831,20 @@ def test_odbc_port_reports_every_app_logic_category_unavailable_with_the_engine_
     assert app_logic is not None
     assert len(app_logic.containers) == 4
     assert all(item.objects.state == "unavailable" for item in app_logic.containers)
-    # S2 strict diagnostics: the engine-limitation text is exception text, so the fact
-    # names the capability-gap class instead; ``unavailable`` still carries the meaning.
-    assert all(item.objects.reason == "InspectionCapabilityUnavailableError" for item in app_logic.containers)
+    # S2 S3: the engine-limitation literal is authored, so it is rendered after the class;
+    # ``unavailable`` still carries the meaning.
+    containers_reason = (
+        "InspectionCapabilityUnavailableError: Access ODBC does not expose DAO Containers; "
+        "engine-level container inventory requires the DAO engine"
+    )
+    assert all(item.objects.reason == containers_reason for item in app_logic.containers)
     assert app_logic.startup_properties
     assert all(item.value.state == "unavailable" for item in app_logic.startup_properties)
-    assert all(
-        item.value.reason == "InspectionCapabilityUnavailableError" for item in app_logic.startup_properties
+    properties_reason = (
+        "InspectionCapabilityUnavailableError: Access ODBC does not expose DAO database "
+        "properties; startup properties require the DAO engine"
     )
+    assert all(item.value.reason == properties_reason for item in app_logic.startup_properties)
     assert document.status == "partial"
 
 

@@ -641,8 +641,11 @@ def test_worker_keeps_a_containment_failure_a_hard_error(
 
     assert exit_code == 0
     assert response["ok"] is False
-    # S2 strict diagnostics: the envelope carries the class, not the raised message.
-    assert response["error"] == "ContainmentError"
+    # S2/S3: the envelope carries the authored containment literal after the class name.
+    assert response["error"] == (
+        "ContainmentError: Documentation app-logic reader set AutomationSecurity=3 but read "
+        "back a different value; the inspection aborted without opening any source"
+    )
     assert "evidence" not in response
     assert session.opened is False
     assert database.closed is True
@@ -890,3 +893,65 @@ def test_worker_catch_all_keeps_only_the_numeric_os_code(
     assert response == {"ok": False, "error": "FileNotFoundError: [Errno 2]"}
     assert _STRICT_FAKE_USER not in json.dumps(response)
     assert identities == []
+
+
+# --- Authored request validation detail (odd/tasks/documentation-authored-diagnostics-embedded-macro.md) ---
+
+
+def test_a_rejected_backend_reaches_the_envelope_with_its_authored_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S3: the sanctioned backends are spelled out as an authored literal."""
+    request = {**_armed_request(tmp_path / "core.accdb"), "backend": "nonsense"}
+
+    exit_code, identities, response = _run_protocol(monkeypatch, request)
+
+    assert exit_code == 0
+    assert identities == []
+    assert response == {
+        "ok": False,
+        "error": "WorkerRequestError: Documentation worker request backend must be one of auto, dao, odbc",
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ("tables", "Documentation worker request field 'tables' must be a list of strings or null"),
+        ("queries", "Documentation worker request field 'queries' must be a list of strings or null"),
+    ],
+)
+def test_a_rejected_list_field_reaches_the_envelope_with_its_authored_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, expected: str
+) -> None:
+    """S3: one authored literal per field names it, without interpolating the value."""
+    request = {**_armed_request(tmp_path / "core.accdb"), field: [1]}
+
+    exit_code, _identities, response = _run_protocol(monkeypatch, request)
+
+    assert exit_code == 0
+    assert response == {"ok": False, "error": f"WorkerRequestError: {expected}"}
+
+
+def test_an_open_rejection_message_stays_class_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRESERVE S2: the open rejection text may carry the database path, so it is dropped."""
+    from ms_access_mcp.application.database import Err
+
+    class _RejectingDatabase:
+        def open_database(self, _path: str) -> object:
+            return Err(f"{_STRICT_PATH} is outside the allowed directories")
+
+        def close_database(self) -> None:
+            return None
+
+    monkeypatch.setattr(documentation_worker, "DatabaseUseCases", lambda **_kwargs: _RejectingDatabase())
+    source = tmp_path / "core.accdb"
+    source.write_bytes(b"not-a-real-access-file")
+
+    exit_code, _identities, response = _run_protocol(monkeypatch, _armed_request(source))
+
+    assert exit_code == 0
+    assert response == {"ok": False, "error": "AccessMcpError"}
+    assert _STRICT_FAKE_USER not in json.dumps(response)

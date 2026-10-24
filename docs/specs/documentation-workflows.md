@@ -893,9 +893,9 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   class-only reason) on `AppLogicContent.warnings`, which the merge adds to the document
   warnings. A successful removal adds no warning, so a successful run's evidence and
   Markdown stay byte-identical.
-- **Diagnostic reasons are class-only, never exception text.** Documentation evidence,
-  warnings, and the worker's error envelope are shareable, so the four diagnostic
-  boundaries that render an exception reason go through one shared formatter
+- **Diagnostic reasons are class-only, never runtime exception text.** Documentation
+  evidence, warnings, and the worker's error envelope are shareable, so the four
+  diagnostic boundaries that render an exception reason go through one shared formatter
   (`documentation.safe_documentation_error_reason`): the Tier 2 app-logic reader's reason
   (including the scratch-residue warning, whose class prefix is not duplicated), the
   Tier 1/Tier 2 inspection reason (which keeps its authored `None` fallback text), the
@@ -912,6 +912,24 @@ Qualification records engine version/bitness, host requirements, passive/read-on
   rule for exception reasons at those boundaries, not universal sanitization of every
   evidence field, and it deliberately loses the raw exception detail: an operator
   diagnosing a failure reads the class and numeric code, not a driver message.
+- **Authored detail is the one exception, and it is literal-only.** A class-only reason
+  alone could not say *which* check failed, so a project-defined exception that subclasses
+  `documentation.AuthoredDiagnostic` carries an authored, compile-time literal detail that
+  renders as `<Class>: <detail>`. Three adoption sites use it: `ContainmentError` (the six
+  containment raises, so the user-facing worker error names the failed check),
+  `InspectionCapabilityUnavailableError` (so an ODBC capability fact reads
+  `InspectionCapabilityUnavailableError: Access ODBC SQLForeignKeys is unsupported (IM001) …`
+  instead of only a class name), and `WorkerRequestError` (child-side request validation,
+  so a rejected field is named). The rule is enforced twice: `detail` is typed
+  `LiteralString`, so pyright (which gates `src`) rejects an f-string or any other runtime
+  value at the raise site, and the formatter additionally requires `type(detail) is str`
+  and a non-empty value, so a `str` subclass with a hostile `__format__`/`__str__`/`__repr__`
+  or an empty string falls back to the class-only reason. A chained `__cause__` is appended
+  as `(cause: <class-only reason>)` — one level only, never the cause's own authored
+  detail, and never an implicit `__context__`. Runtime text still never passes: a
+  message that needs a runtime value (an observed `AutomationSecurity` readback, a
+  container name, the IPC byte budget, a backend error, a database path) stays a plain
+  `AccessMcpError` message and renders class-only.
 - **Failure visibility uses the existing channels only.** The four formerly silent
   failure sites surface as sanitized warnings on the existing `EvidenceDoc.warnings` /
   `AppLogicContent.warnings` lists, or as error-message enrichment. No logging framework,

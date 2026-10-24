@@ -6,7 +6,7 @@ import contextlib
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Final, LiteralString, Protocol
 from uuid import uuid4
 
 from ..backends.schema_inspector import QueryParameterInfo, SchemaInspector
@@ -14,6 +14,7 @@ from ..errors import AccessMcpError
 from ..models import FieldInfo, IndexInfo, QueryInfo, RelationshipInfo, TableInfo
 from .documentation import (
     AppLogicEvidence,
+    AuthoredDiagnostic,
     ContainerInventoryEvidence,
     Coverage,
     EvidenceDoc,
@@ -126,8 +127,14 @@ class InspectionCapabilities:
         return self.unavailable.get(capability, "").strip() or None
 
 
-class InspectionCapabilityUnavailableError(RuntimeError):
-    """Raised by an inspection port method for a capability it cannot expose at all."""
+class InspectionCapabilityUnavailableError(AuthoredDiagnostic, RuntimeError):
+    """Raised by an inspection port method for a capability it cannot expose at all.
+
+    The detail is an authored literal that becomes part of a user-facing ``unavailable``
+    reason (for example ``<Class>: Access ODBC SQLForeignKeys is unsupported (IM001) ...``),
+    so a capability gap says what the engine cannot do instead of only naming a class.
+    Runtime text -- a container name, a driver message, a path -- is never passed here.
+    """
 
 
 class InspectionPort(Protocol):
@@ -330,28 +337,30 @@ _ODBC_PARAMETER_COLUMN_TYPE = 1
 # returning zero SQLColumns rows (without raising) for a local table means the column
 # read failed. This is never an observed-empty schema. Linked (SYNONYM) tables are not
 # read at all, so this failure path only applies to a local table whose read failed.
-_ODBC_NO_COLUMNS_REASON = (
+_ODBC_NO_COLUMNS_REASON: Final[LiteralString] = (
     "ODBC driver returned no columns for a listed local table; "
     "the column read failed"
 )
 
 # A SYNONYM is a linked table. SQLColumns/SQLStatistics on it can contact the linked
 # source, so neither is called and the table is reported with an explicit gap instead.
-_ODBC_LINKED_TABLE_REASON = (
+_ODBC_LINKED_TABLE_REASON: Final[LiteralString] = (
     "ODBC exposes the linked table as a SYNONYM only; its columns and indexes are not "
     "read because the linked source is never resolved or contacted"
 )
 
 # Any other SQLTables row type is not provably a local table. Fail closed: do not read
 # columns or statistics, because an unknown type might be backed by another source.
-_ODBC_UNCLASSIFIED_TABLE_REASON = (
+_ODBC_UNCLASSIFIED_TABLE_REASON: Final[LiteralString] = (
     "ODBC SQLTables reported a table type that is not a known local table; column and "
     "index reads are refused rather than risk contacting an unknown source"
 )
 
 # Probed on the Access ODBC driver: every property below is invisible through ODBC and
 # must reach evidence as an explicit `unavailable` reason, never as a fabricated value.
-_ODBC_UNAVAILABLE: dict[str, str] = {
+# The values are authored literals because they are raised as
+# ``InspectionCapabilityUnavailableError`` detail and rendered to the user.
+_ODBC_UNAVAILABLE: dict[str, LiteralString] = {
     CAP_FIELD_REQUIRED: (
         "Access ODBC SQLColumns reports NULLABLE for every column and does not expose the DAO Required property"
     ),
@@ -497,9 +506,10 @@ class OdbcInspectionPort:
 
     def list_container_objects(self, container_name: str) -> list[dict[str, Any]]:
         """Refuse a DAO Containers read: ODBC exposes no container catalogue."""
+        del container_name  # the refusal is the same for every DAO container
         raise InspectionCapabilityUnavailableError(
-            f"Access ODBC does not expose the DAO {container_name} container; "
-            "engine-level container inventory requires the DAO engine"
+            "Access ODBC does not expose DAO Containers; engine-level container inventory "
+            "requires the DAO engine"
         )
 
     def get_database_properties(self) -> dict[str, str]:
@@ -936,7 +946,7 @@ def _select_objects(kind: str, eligible: list[Any], requested: list[str] | None)
 
 
 def _reason(error: Exception | None) -> str:
-    """One class-only diagnostic reason (S2), with the authored fallback for ``None``."""
+    """One diagnostic reason (S2/S3), with the authored fallback for ``None``."""
     if error is None:
         return "Metadata read failed"
     return redact_connection_secrets(safe_documentation_error_reason(error))
@@ -1020,8 +1030,8 @@ def _read_app_logic(port: InspectionPort) -> tuple[AppLogicEvidence, list[str]]:
 
     Every container reads in its own exception boundary and every startup property is
     its own fact, so one failed read never erases another category. An engine that
-    cannot expose DAO Containers/properties at all (ODBC) is ``unavailable`` with a
-    class-only reason, never a fabricated empty list. The returned
+    cannot expose DAO Containers/properties at all (ODBC) is ``unavailable`` with the
+    capability's authored reason, never a fabricated empty list. The returned
     warnings are the port's sanitized property-omission warnings (S2 A3); they are
     empty whenever the property catalogue was read completely.
     """
