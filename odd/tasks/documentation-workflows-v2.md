@@ -1,6 +1,6 @@
 # ODD feature: documentation-workflows-v2 — IMPLEMENTATION AUTHORIZED
 
-Status: COMPLETE 2026-10-18 (L18) � all nine tasks closed (T5 blocked-with-evidence by design). Runtime qualification is fixture-scope on the measured Access 16.0 host. Merge/push/PR are the user�s decisions.
+Status: COMPLETE 2026-10-18 (L18) � all nine tasks closed (T5 re-qualified 2026-10-23 in `8922fb3`; evidence sha `939dbfc6...e1e`). Runtime qualification is fixture-scope on the measured Access 16.0 host. Merge/push/PR are the user�s decisions.
 Branch: `feat/documentation-v2-app-logic` from `main` @ `7a51681`.
 
 ## Goal

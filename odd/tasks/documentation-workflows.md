@@ -1,7 +1,8 @@
 # ODD feature: documentation-workflows (v1)
 
-Status: IMPLEMENTATION IN PROGRESS on `feat/documentation-workflows` (from docs tip 287a186);
-delivery strategy: `feature-branch-chain` (user-selected 2026-10-08); docs slice = PR candidate 1.
+Status: COMPLETE - merged to `main` in `36df7dd` ("merge documentation workflows: fixtures,
+evidence pipeline, ODBC/filtered/startup qualification"). The delivery strategy below was
+`feature-branch-chain` (user-selected 2026-10-08); the docs slice was PR candidate 1.
 
 ## Goal
 

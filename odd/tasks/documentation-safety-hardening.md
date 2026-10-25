@@ -1,6 +1,9 @@
 # Documentation safety hardening (.accdb only)
-Status: blocked after T4b worker timeout; .mdb qualification excluded; branch feat/documentation-safety-hardening.
-Baseline: 36df7dd; parent coordinates bounded subagents; no push/merge authorization. Earlier DONE units were verified before partial T4b edits; the current combined working tree is unverified.
+Status: SUPERSEDED - the header block written at the T4b timeout is obsolete; the program resumed
+and shipped four file-granular work-unit commits on `feat/documentation-safety-hardening` at
+baseline `36df7dd` (`ddc9696` ledger, `e354e5a` fixtures, `bf738e0` inspection hardening,
+`9f1855a` spec sync), all merged into `main` (L27). Legacy Jet `.mdb` qualification stays
+excluded by program scope.
 
 ## Specs
 S1. User: "Lets explore the number #2 missing items" and "Lets plan the steps to harden this items". The accepted plan covers remaining documentation qualification gaps, preserving v1's closed/offline, passive, no-linked-contact, honest-evidence contracts in docs/specs/documentation-workflows.md.

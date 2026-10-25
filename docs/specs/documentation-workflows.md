@@ -842,9 +842,16 @@ reintroduce the only inventoried route to instantiation-level code.
   `odd/tasks/sqlite-odbc-link-qualification.md`). No other ODBC driver or non-Access
   source is claimed: each source/driver combination needs its own controlled evidence
   (§7.2 initial-status rule), and the fail-closed unknown-table-type path stays unit-only.
-- **CI skips the opt-in suites.** CI sets no `ACCESS_*` variables, so the documentation
-  fixtures, deadline, and startup-control suites skip there; they must be run explicitly
-  on a Windows/Access host. This is explicitly open, not fixed in this program.
+- **Opt-in documentation suites run only on an Access runner.** The documentation
+  fixtures, deadline, startup-control, tripwire, encrypted-reopen, SQLite-ODBC-link, and
+  stored-credential-link suites are marked `com_integration` and gated by
+  `ACCESS_DOCUMENTATION_FIXTURES_TEST`. `ci.yml`'s `[self-hosted, windows, access]` job sets
+  that variable and runs `-m "com_integration or odbc_integration"`, so those suites are
+  exercised there; the `windows-latest` unit job and any runner without Access still skip
+  them. The claim above that CI sets no `ACCESS_*` variables was wrong and is corrected
+  here: the open item is only that the suites cannot run on a plain hosted runner, so they
+  must also be run explicitly on a Windows/Access host before publishing documentation
+  evidence.
 - **MCP pre-decode transport bounds.** The §6.3 caps are application-level and do not
   bound the JSON-RPC payload before decoding; server-global transport protection remains
   out of scope (S7).

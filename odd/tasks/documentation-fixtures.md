@@ -1,6 +1,8 @@
 # Documentation fixtures
-Status: paused after user routing correction; uncommitted drafts retained, no databases built.
-Branch: feat/documentation-workflows; startup-code execution is not authorized.
+Status: COMPLETE - the drafts this ledger once held landed as commits on the merged
+`feat/documentation-workflows` branch (`36df7dd`): `ac5d117` generator, `d5b0da0` startup-code
+fixture, `e354e5a` execution-vector fixtures. The log closes T3 (L21-L22) and the engine-level
+read-only gap (T12, L23).
 
 ## Specs
 S1. "Continue" — continue the accepted generator, expected-results manifest, and opt-in integration-test deliverables described in L4.
