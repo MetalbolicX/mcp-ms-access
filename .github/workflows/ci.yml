@@ -3,8 +3,12 @@
 # COM/ODBC gates (G1, G3-G7, G9-G11, G13) are LOCAL-ONLY for hosted
 # runners: GitHub-hosted machines have no Microsoft Access. The
 # `com-integration` job below runs ONLY on a self-hosted runner labeled
-# `windows, access` and stays skipped everywhere else; register such a
-# runner (a Windows machine with Access + ACE installed) to activate it.
+# `windows, access`, and it is gated on the repository variable
+# `ACCESS_RUNNER_ENABLED`: with no such runner registered, GitHub would
+# queue the job for 24 hours and then cancel it, leaving every push with
+# a permanently open run. Register a Windows machine with Access + ACE,
+# then set `ACCESS_RUNNER_ENABLED=true` (Settings -> Variables) to
+# activate it.
 # The full qualification matrix (including the g13 chaos harness)
 # remains an operator-triggered local run.
 #
@@ -57,6 +61,9 @@ jobs:
 
   com-integration:
     name: COM integration (self-hosted Access)
+    # Dormant until a runner exists (see the header): without this gate a job with no
+    # matching runner waits 24 hours and is cancelled, which keeps the run open forever.
+    if: vars.ACCESS_RUNNER_ENABLED == 'true'
     runs-on: [self-hosted, windows, access]
     timeout-minutes: 45
 
